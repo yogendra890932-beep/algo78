@@ -397,8 +397,8 @@ class WSGateway:
                     "_snapshot": channel,
                     "data": snapshot,
                 })
-        except Exception as e:
-            print(f"[WS:{user_id}] Connection error: {e}")
+            except Exception as e:
+                print(f"[WS:{user_id}] Connection error: {e}")
 
     async def _get_shared_oc(self, symbol: str, expiry: str) -> dict:
         r = get_async_redis()
