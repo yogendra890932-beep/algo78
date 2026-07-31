@@ -246,8 +246,18 @@ class SharedMarketDataService:
         now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")[:23]
         timestamp = now.timestamp()
 
-        ltp = feed.get("ltp")
-        ltq = feed.get("ltq", 0)
+        ltp = None
+        ltq = 0.0
+        full = feed.get("fullFeed", feed)
+        if isinstance(full, dict):
+            if full.get("marketFF", {}).get("ltpc"):
+                ltpc = full["marketFF"]["ltpc"]
+                ltp = ltpc.get("ltp")
+                ltq = ltpc.get("ltq") or 0.0
+            elif full.get("indexFF", {}).get("ltpc"):
+                ltp = full["indexFF"]["ltpc"].get("ltp")
+            elif full.get("ltp"):
+                ltp = full["ltp"]
 
         if ltp is None:
             return
