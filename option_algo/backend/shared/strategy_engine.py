@@ -227,7 +227,6 @@ class SharedStrategyEngine:
         if time.time() - self._last_regime_log > 300:
             print(f"{_now()} [strategy:{self.symbol}] Regime={self._regime.regime}")
             self._last_regime_log = time.time()
-
         allowed = self._regime.get_allowed_strategies("CE")
 
         # Evaluate all strategies
@@ -264,6 +263,11 @@ class SharedStrategyEngine:
         # Publish signals
         self._prev_direction = direction
 
+        ltp = float(df_1m["close"].iloc[-1])
+        print(f"{_now()} [strategy:{self.symbol}] Evaluate 1m "
+              f"dir={direction} regime={self._regime.regime} "
+              f"bars={len(df_1m)} ltp={ltp} signals={len(signals)}")
+
         for signal in signals:
             self._publish_signal(signal)
 
@@ -279,6 +283,10 @@ class SharedStrategyEngine:
     def _publish_signal(self, signal: dict):
         """Publish a signal to Redis Pub/Sub and Stream with retry."""
         signal_id = signal.get("id", "")
+
+        print(f"{_now()} [strategy:{self.symbol}] SIGNAL {signal.get('strategy','')} "
+              f"{signal.get('opt_type','')} @ {signal.get('entry_price')} "
+              f"SL {signal.get('stop_loss')} regime={signal.get('regime','')}")
 
         if hasattr(self, "_last_published_id") and signal_id and signal_id == getattr(self, "_last_published_id", ""):
             return
@@ -296,6 +304,8 @@ class SharedStrategyEngine:
                 if attempt > 0:
                     print(f"{_now()} [strategy:{self.symbol}] "
                           f"Signal published after {attempt} retries")
+                else:
+                    print(f"{_now()} [strategy:{self.symbol}] Signal published OK")
                 break
             except Exception as e:
                 if attempt < 3:

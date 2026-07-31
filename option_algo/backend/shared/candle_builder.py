@@ -251,6 +251,10 @@ class SharedCandleBuilder:
         if len(self._1m_bars) > MAX_1M_BARS:
             self._1m_bars = self._1m_bars[-MAX_1M_BARS:]
 
+        print(f"{_now()} [candle:{self.symbol}] 1m close {self._cur_1m_min} "
+              f"O={candle['open']} H={candle['high']} L={candle['low']} "
+              f"C={candle['close']} V={candle['volume']}")
+
         return candle
 
     def _close_5m_bar(self, minute_str: str):
@@ -281,6 +285,10 @@ class SharedCandleBuilder:
         self._5m_bars.append(candle_5m)
         if len(self._5m_bars) > MAX_5M_BARS:
             self._5m_bars = self._5m_bars[-MAX_5M_BARS:]
+
+        print(f"{_now()} [candle:{self.symbol}] 5m close {minute_str} "
+              f"O={candle_5m['open']} H={candle_5m['high']} L={candle_5m['low']} "
+              f"C={candle_5m['close']} V={candle_5m['volume']}")
 
         # Save 5m to Redis immediately
         self._r.set(shared_candles_5m(self.symbol),

@@ -212,6 +212,7 @@ class SharedMarketDataService:
         print(f"{_now()} [shared_md:{self.symbol}] Instrument token: {self._token}")
         self._additional_tokens: set = set()
         self._tokens_lock = threading.Lock()
+        self._last_tick_log: float = 0.0
 
     def start(self):
         self._streamer.subscribe_token(self._token, self._on_tick)
@@ -259,6 +260,11 @@ class SharedMarketDataService:
             "ts": now_str,
             "timestamp": timestamp,
         }
+
+        now_t = time.time()
+        if now_t - self._last_tick_log >= 5:
+            self._last_tick_log = now_t
+            print(f"{_now()} [shared_md:{self.symbol}] tick LTP={tick['ltp']} LTQ={tick['ltq']}")
 
         try:
             r.xadd(shared_tick_stream(self.symbol), {"data": json.dumps(tick)}, maxlen=TICK_STREAM_MAXLEN)

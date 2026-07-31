@@ -98,6 +98,14 @@ class SharedIndicatorEngine:
         with self._update_lock:
             self._store(indicators, interval)
 
+        ema9  = indicators.get("ema_9", "-")
+        rsi   = indicators.get("rsi_7", "-")
+        atr   = indicators.get("atr_14", "-")
+        vwap  = indicators.get("vwap", "-")
+        print(f"{_now()} [ind:{self.symbol}] {interval} recompute "
+              f"bars={indicators.get('bars')} last_close={indicators.get('last_close')} "
+              f"ema9={ema9} rsi={rsi} atr={atr} vwap={vwap}")
+
     def _calculate_all(self, df: pd.DataFrame, interval: str) -> dict:
         """Calculate all indicators from a DataFrame."""
         if df.empty:

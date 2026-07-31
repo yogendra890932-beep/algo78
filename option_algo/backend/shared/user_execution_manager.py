@@ -193,19 +193,25 @@ class UserExecutionManager:
 
         allowed_types = strategy_map.get(sig_strategy, "")
         if cfg_strategy not in ("all", "both") and allowed_types not in (cfg_strategy, "all"):
+            print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} — "
+                  f"filter={cfg_strategy}")
             return
 
         # Risk check
         if not self._risk_ok():
+            print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} — risk limit hit")
             return
 
         # Trading hours check
         if not self._trading_hours_ok():
+            print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} — outside trading hours")
             return
 
         # Already in a position for this symbol?
         with self._positions_lock:
             if self._positions:
+                print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} — "
+                      f"position already open ({list(self._positions)})")
                 return  # One position at a time
 
         # Calculate quantity based on user config
@@ -219,6 +225,10 @@ class UserExecutionManager:
 
         lot_size = get_lot_size(sig_symbol, custom_ls)
         qty = num_lots * lot_size
+
+        print(f"{_now()} [exec:u{self.user_id}] Signal {sig_strategy} {sig_symbol} "
+              f"{signal.get('opt_type','')} @ {signal.get('entry_price')} "
+              f"SL {signal.get('stop_loss')} qty={qty} ({num_lots} lots x {lot_size})")
 
         # Build the signal with user-specific quantities
         enriched_signal = {
@@ -243,6 +253,7 @@ class UserExecutionManager:
     def _route_execution(self, signal: dict):
         """Route signal to Paper / Semi-Auto / Auto execution."""
         execution_mode = self.config.get("execution_mode", "PAPER")
+        print(f"{_now()} [exec:u{self.user_id}] Route signal → mode={execution_mode}")
 
         if execution_mode == "PAPER" or self.paper_mode:
             self._execute_paper(signal)
@@ -289,6 +300,9 @@ class UserExecutionManager:
 
         self._record_entry()
 
+        print(f"{_now()} [exec:u{self.user_id}] PAPER ENTRY {symbol} {strategy} "
+              f"@ {entry_price} SL {stop_loss} qty={qty}")
+
         # Notify
         if self.on_trade:
             self.on_trade({
@@ -330,6 +344,9 @@ class UserExecutionManager:
             loop.close()
 
             if self.on_trade and result.status.value == "PENDING_APPROVAL":
+                print(f"{_now()} [exec:u{self.user_id}] SEMI_AUTO pending "
+                      f"trade#{result.pending_trade_id} {signal.get('symbol')} "
+                      f"{signal.get('strategy')} @ {signal.get('entry_price')}")
                 self.on_trade({
                     "event": "PENDING_TRADE",
                     "user_id": self.user_id,

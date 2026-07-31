@@ -164,7 +164,12 @@ class SharedMarketStructureEngine:
                 self._premium_analyzed_min = now_min
 
                 if result is not None:
-                    self._store_result("1m", self._serialize_structure_result(result))
+                    ser = self._serialize_structure_result(result)
+                    self._store_result("1m", ser)
+                    print(f"{_now()} [structure:{self.symbol}] Premium 1m "
+                          f"trend={ser['trend']['direction']}/{ser['trend']['strength']} "
+                          f"phase={ser['phase']} conf={ser['confidence_score']} "
+                          f"pb={ser['pullback']['type']} rec={ser['recovery']['status']}")
             except Exception as e:
                 print(f"{_now()} [structure:{self.symbol}] Premium err: {e}")
 
@@ -207,7 +212,11 @@ class SharedMarketStructureEngine:
                 self._last_underlying_min = now_min
 
                 if result is not None:
-                    self._store_result("5m", self._serialize_underlying_result(result))
+                    ser = self._serialize_underlying_result(result)
+                    self._store_result("5m", ser)
+                    print(f"{_now()} [structure:{self.symbol}] Underlying 5m "
+                          f"trend={ser['trend']} bias={ser['market_bias']} "
+                          f"phase={ser['market_phase']} conf={ser['confidence']}")
             except Exception as e:
                 print(f"{_now()} [structure:{self.symbol}] Under err: {e}")
 
