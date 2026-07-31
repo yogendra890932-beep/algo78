@@ -299,7 +299,15 @@ class SharedWorkerOrchestrator:
     def _post_async(self, coro):
         """Schedule a coroutine on the main asyncio event loop."""
         if coro and self._main_loop and self._main_loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+            future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+
+            def _on_done(fut):
+                try:
+                    fut.result()
+                except Exception:
+                    traceback.print_exc()
+
+            future.add_done_callback(_on_done)
 
     # ================================================================
     # SHARED SERVICE MANAGEMENT
@@ -434,9 +442,20 @@ class SharedWorkerOrchestrator:
             return {"ok": False, "error": f"Unknown action: {action}"}
 
     def _handle_start(self, user_id: int) -> dict:
-        from backend.shared.shared_worker import resolve_start_inputs_sync
+        from backend.services.bot_config_builder import resolve_start_inputs
 
-        config, access_token, error = resolve_start_inputs_sync(user_id)
+        if not self._main_loop or not self._main_loop.is_running():
+            print(f"{_now()} [shared-orch:start] Main loop not running — start deferred")
+            return {"ok": False, "error": "Worker not ready"}
+
+        fut = asyncio.run_coroutine_threadsafe(
+            resolve_start_inputs(user_id), self._main_loop
+        )
+        try:
+            config, access_token, error = fut.result(timeout=15)
+        except Exception as e:
+            return {"ok": False, "error": f"start failed: {e}"}
+
         print(f"{_now()} [shared-orch:start] user={user_id} token_preview={access_token[:20] + '...' + access_token[-10:] if access_token and len(access_token) > 30 else '***'}")
         if error:
             return {"ok": False, "error": error}
@@ -720,23 +739,3 @@ class _MockEngine:
 # ================================================================
 # SYNC HELPERS
 # ================================================================
-
-def resolve_start_inputs_sync(user_id: int):
-    """Synchronous wrapper for resolve_start_inputs."""
-    import asyncio as _asyncio
-    from backend.services.bot_config_builder import resolve_start_inputs
-
-    loop = _asyncio.new_event_loop()
-    _asyncio.set_event_loop(loop)
-    try:
-        config, access_token, error = loop.run_until_complete(
-            resolve_start_inputs(user_id)
-        )
-        loop.close()
-        return config, access_token, error
-    except Exception as e:
-        try:
-            loop.close()
-        except Exception:
-            pass
-        return None, None, str(e)

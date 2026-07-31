@@ -321,9 +321,8 @@ class UserExecutionManager:
     def _execute_semi_auto(self, signal: dict):
         """Create a pending trade record for user approval."""
         try:
-            import asyncio
             from backend.services.execution_layer import (
-                TradeSignal, SemiAutoExecutor, execution_router,
+                TradeSignal, execution_router,
             )
 
             trade_signal = TradeSignal(
@@ -336,12 +335,7 @@ class UserExecutionManager:
                 strategy_name=signal.get("strategy", ""),
             )
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(
-                execution_router.execute(self.user_id, trade_signal)
-            )
-            loop.close()
+            result = execution_router.execute_sync(self.user_id, trade_signal)
 
             if self.on_trade and result.status.value == "PENDING_APPROVAL":
                 print(f"{_now()} [exec:u{self.user_id}] SEMI_AUTO pending "
