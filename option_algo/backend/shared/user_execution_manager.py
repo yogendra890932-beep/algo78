@@ -69,6 +69,7 @@ class UserExecutionManager:
         self._stop_event = threading.Event()
         self._paused = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._monitor_thread: Optional[threading.Thread] = None
         self._r = get_redis_sync()
 
         # Position state per symbol
@@ -103,6 +104,14 @@ class UserExecutionManager:
         )
         self._thread.start()
         print(f"{_now()} [exec:u{self.user_id}] Started for symbols: {self.symbols}")
+
+        # Position monitor — checks SL/target against the latest market LTP
+        # so paper positions auto-exit instead of staying open forever.
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, daemon=True,
+            name=f"exec-monitor-{self.user_id}",
+        )
+        self._monitor_thread.start()
 
         # ── Telegram command bot (mirrors legacy engine_v6.TradingEngine) ──
         # Register engine wrappers so /status,/sl,/target,/squareoff,/pnl etc.
@@ -339,6 +348,8 @@ class UserExecutionManager:
                 except (TypeError, ValueError):
                     pass
             risk = abs(float(entry_ltp) - float(stop_loss)) if entry_ltp and stop_loss else 0
+            target = round(float(entry_ltp) + risk * self.config.get("target_rr", 1.3), 2) \
+                if risk else 0
             self._positions[symbol] = {
                 "entry_price": entry_price,
                 "qty": qty,
@@ -354,8 +365,9 @@ class UserExecutionManager:
                 "strike": signal.get("strike"),
                 "instrument_key": signal.get("instrument_key", ""),
                 "expiry": signal.get("expiry", ""),
-                "target": round(float(entry_ltp) + risk * self.config.get("target_rr", 1.3), 2)
-                          if risk else 0,
+                "target": target,
+                "near_target": round(target * (1 - self.config.get("target_near_pct", 0.003)), 2)
+                                if target else 0,
             }
 
         self._record_entry()
@@ -393,6 +405,9 @@ class UserExecutionManager:
                 stop_loss=signal.get("stop_loss", 0),
                 quantity=signal.get("quantity", 0),
                 strategy_name=signal.get("strategy", ""),
+                instrument_key=signal.get("instrument_key") or "",
+                trading_symbol=signal.get("trading_symbol") or signal.get("symbol"),
+                strike=signal.get("strike"),
             )
 
             result = execution_router.execute_sync(self.user_id, trade_signal)
@@ -420,6 +435,117 @@ class UserExecutionManager:
     def _execute_auto(self, signal: dict):
         """Execute live trade automatically."""
         print(f"{_now()} [exec:u{self.user_id}] Auto execution not yet implemented in shared mode")
+
+    # ================================================================
+    # POSITION MONITORING (SL / target auto-exit)
+    # ================================================================
+
+    def _monitor_loop(self):
+        """Periodically check open positions for SL / target hits."""
+        while not self._stop_event.wait(2.0):
+            try:
+                self._monitor_positions()
+            except Exception as e:
+                print(f"{_now()} [exec:u{self.user_id}] Monitor error: {e}")
+
+    def _monitor_positions(self):
+        if self._paused.is_set():
+            return
+        with self._positions_lock:
+            symbols = list(self._positions.keys())
+        for sym in symbols:
+            try:
+                self._monitor_symbol(sym)
+            except Exception as e:
+                print(f"{_now()} [exec:u{self.user_id}] Monitor {sym} error: {e}")
+
+    def _monitor_symbol(self, sym: str):
+        with self._positions_lock:
+            pos = self._positions.get(sym)
+            if not pos:
+                return
+            pos = dict(pos)
+        if not self.paper_mode:
+            return
+
+        # Current LTP: prefer the position's option contract from the
+        # shared tick buffer, fall back to the last signal LTP.
+        ltp = self._last_ltp.get(sym)
+        ik = pos.get("instrument_key")
+        if ik:
+            try:
+                from backend.shared.market_data_service import read_latest_tick
+                tick = read_latest_tick(sym, ik)
+                if tick and tick.get("ltp"):
+                    ltp = float(tick["ltp"])
+            except Exception:
+                pass
+        if not ltp:
+            return
+
+        # Stop-loss hit
+        sl_id = pos.get("sl_order_id")
+        if sl_id:
+            from backend.services.paper_trading import get_paper_book
+            fill = get_paper_book(self.user_id).check_sl_filled(sl_id, ltp)
+            if fill:
+                self._close_position(sym, fill, "SL_HIT")
+                return
+
+        # Target hit (exit at current LTP)
+        near = pos.get("near_target") or pos.get("target")
+        if near and ltp >= float(near):
+            self._close_position(sym, ltp, "TARGET_HIT")
+
+    def _close_position(self, symbol: str, exit_price: float, status: str):
+        """Close a position: cancel SL, compute P&L, notify, publish snapshot."""
+        with self._positions_lock:
+            pos = self._positions.pop(symbol, None)
+        if not pos:
+            return
+
+        if pos.get("sl_order_id") and self.paper_mode:
+            try:
+                from backend.services.paper_trading import get_paper_book
+                get_paper_book(self.user_id).cancel_order(pos["sl_order_id"])
+            except Exception:
+                pass
+
+        entry = pos.get("entry_price", 0)
+        if not exit_price:
+            exit_price = self._last_ltp.get(symbol) or entry
+        qty = pos.get("qty", 0)
+        try:
+            pnl = round((float(exit_price) - float(entry)) * qty, 2) if entry else 0
+        except (TypeError, ValueError):
+            pnl = 0
+        self._record_pnl(pnl)
+
+        if self.on_trade:
+            self.on_trade({
+                "event": "EXIT",
+                "user_id": self.user_id,
+                "mode": "paper" if self.paper_mode else "live",
+                "symbol": symbol,
+                "trading_symbol": pos.get("trading_symbol", symbol),
+                "entry_price": entry,
+                "exit_price": exit_price,
+                "sl_trigger": pos.get("sl_trigger", 0),
+                "target": pos.get("target", 0),
+                "qty": qty,
+                "pnl": pnl,
+                "status": status,
+                "strategy": pos.get("strategy", ""),
+                "opt_type": pos.get("opt_type", ""),
+                "strike": pos.get("strike"),
+                "expiry": pos.get("expiry", ""),
+                "instrument_key": pos.get("instrument_key", ""),
+                "entry_ts": pos.get("entry_ts", datetime.utcnow()),
+            })
+
+        print(f"{_now()} [exec:u{self.user_id}] EXIT {symbol} {status} "
+              f"@ {exit_price} pnl={pnl}")
+        self._push_position_snapshot(symbol)
 
     # ================================================================
     # RISK MANAGEMENT
@@ -639,20 +765,32 @@ class _MockEngine:
     # ── Order placement (paper mode — same path as _execute_paper) ─
 
     def _place_order(self, side: str, qty: int, order_type: str = "MARKET",
-                     trigger: float = None) -> Optional[str]:
+                     trigger: float = None,
+                     instrument_key: str = None) -> Optional[str]:
         if not self.paper_mode:
             raise NotImplementedError(
                 "Live order placement is not available in shared mode")
         from backend.services.paper_trading import get_paper_book
         paper = get_paper_book(self._mgr.user_id)
         ltp = self._mgr._last_ltp.get(self.symbol, 0)
-        ik = self.cfg.get("underlying_token", "")
+        ik = (instrument_key
+              or (self.position or {}).get("instrument_key")
+              or self.cfg.get("underlying_token", ""))
         tag = f"paper:{self._mgr.user_id}"
         if order_type == "SL-M":
             order = paper.place_sl_order(side, qty, trigger, ik, tag)
         else:
             order = paper.place_market_order(side, qty, ltp, ik, tag)
         return order.get("order_id")
+
+    def _seed_ltp(self, price: float):
+        """Seed the manager's LTP cache for this symbol (used by the
+        approve path so paper fills are realistic even without a tick)."""
+        try:
+            if price:
+                self._mgr._last_ltp[self.symbol] = float(price)
+        except (TypeError, ValueError):
+            pass
 
     def _get_fill_price(self, order_id: str) -> Optional[float]:
         from backend.services.paper_trading import get_paper_book
@@ -716,48 +854,9 @@ class _MockEngine:
         self.squareoff()
 
     def squareoff(self):
-        with self._mgr._positions_lock:
-            pos = self._mgr._positions.pop(self.symbol, None)
-            if not pos:
-                return
-
-        # Cancel SL then market-exit (mirror legacy squareoff)
-        if pos.get("sl_order_id") and self.paper_mode:
-            try:
-                from backend.services.paper_trading import get_paper_book
-                get_paper_book(self._mgr.user_id).cancel_order(pos["sl_order_id"])
-            except Exception:
-                pass
-
-        ltp = self._mgr._last_ltp.get(self.symbol) or pos.get("entry_price", 0)
-        exit_price = ltp
-        qty = pos.get("qty", 0)
-        entry = pos.get("entry_price", 0)
-        pnl = round((exit_price - entry) * qty, 2) if entry else 0
-
-        if self._mgr.on_trade:
-            self._mgr.on_trade({
-                "event": "EXIT",
-                "user_id": self._mgr.user_id,
-                "mode": "paper" if self.paper_mode else "live",
-                "symbol": self.symbol,
-                "trading_symbol": pos.get("trading_symbol", self.symbol),
-                "entry_price": entry,
-                "exit_price": exit_price,
-                "sl_trigger": pos.get("sl_trigger", 0),
-                "target": pos.get("target", 0),
-                "qty": qty,
-                "pnl": pnl,
-                "status": "MANUAL_SQUAREOFF",
-                "strategy": pos.get("strategy", ""),
-                "opt_type": pos.get("opt_type", ""),
-                "strike": pos.get("strike"),
-                "expiry": pos.get("expiry", ""),
-                "instrument_key": pos.get("instrument_key", ""),
-                "entry_ts": pos.get("entry_ts", datetime.utcnow()),
-            })
-
-        self._mgr._push_position_snapshot(self.symbol)
+        ltp = self._mgr._last_ltp.get(self.symbol) or (
+            self.position or {}).get("entry_price", 0)
+        self._mgr._close_position(self.symbol, ltp, "MANUAL_SQUAREOFF")
 
 
 # ================================================================

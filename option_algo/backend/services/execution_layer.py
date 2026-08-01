@@ -137,6 +137,12 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
         if getattr(eng, "symbol", None) != signal.symbol:
             continue
 
+        # Shared-mode wrappers expose _seed_ltp; seed LTP from the signal
+        # so paper fills are realistic even without a live tick yet.
+        seed = getattr(eng, "_seed_ltp", None)
+        if seed and signal.entry_price:
+            seed(signal.entry_price)
+
         num_lots = getattr(eng, "symbol_lots",
                            max(1, int(eng.cfg.get("order_qty", 1))))
         custom_ls = eng.cfg.get("custom_lot_sizes") or {}
@@ -145,7 +151,12 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
         if getattr(eng, "_regime", None) and eng._regime.regime == "VOLATILE":
             qty = max(lot_size, (num_lots // 2) * lot_size)
 
-        eid = eng._place_order("BUY", qty)
+        # Only shared-mode wrappers accept an explicit instrument_key.
+        kw = {}
+        if signal.instrument_key and getattr(eng, "_seed_ltp", None) is not None:
+            kw["instrument_key"] = signal.instrument_key
+
+        eid = eng._place_order("BUY", qty, **kw)
         if not eid:
             return None
         fill = eng._get_fill_price(eid)
@@ -153,7 +164,7 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
             return None
 
         sl_id = eng._place_order("SELL", qty, order_type="SL-M",
-                                 trigger=signal.stop_loss)
+                                 trigger=signal.stop_loss, **kw)
         if not sl_id:
             eng._place_order("SELL", qty)
             return None
@@ -190,19 +201,20 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
                            signal.trading_symbol or signal.symbol,
                            signal.opt_type or "", fill, signal.stop_loss,
                            target, qty, signal.strategy_name or "", mode)
-        eng.on_trade({
-            "event": "ENTRY", "user_id": user_id, "mode": mode,
-            **eng.position,
-        })
-        eng.on_trade({
-            "event": "SIGNAL_APPROVED", "user_id": user_id,
-            "mode": mode, "symbol": signal.symbol,
-            "trading_symbol": signal.trading_symbol,
-            "opt_type": signal.opt_type,
-            "strike": signal.strike,
-            "entry_price": fill,
-            "pending_trade_id": trade_id,
-        })
+        if eng.on_trade:
+            eng.on_trade({
+                "event": "ENTRY", "user_id": user_id, "mode": mode,
+                **eng.position,
+            })
+            eng.on_trade({
+                "event": "SIGNAL_APPROVED", "user_id": user_id,
+                "mode": mode, "symbol": signal.symbol,
+                "trading_symbol": signal.trading_symbol,
+                "opt_type": signal.opt_type,
+                "strike": signal.strike,
+                "entry_price": fill,
+                "pending_trade_id": trade_id,
+            })
         return eid
 
     print(f"[execution_layer] No engine available for approved trade "
