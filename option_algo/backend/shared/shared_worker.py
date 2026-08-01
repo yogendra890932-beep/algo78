@@ -61,7 +61,7 @@ from backend.shared.symbol_manager import (
     get_subscriber_count,
 )
 from backend.shared.user_execution_manager import (
-    UserExecutionManager, UserExecutionRegistry, user_registry,
+    UserExecutionRegistry, user_registry,
 )
 from backend.shared.redis_infra import worker_heartbeat, worker_health_key
 from backend.db.models import BotStatus
@@ -277,24 +277,13 @@ class SharedWorkerOrchestrator:
         """Return a list of mock 'engine' objects for command handlers like modify_sl.
 
         In the shared architecture, modify_sl/squareoff/etc. need access to
-        position/order data. This returns a simplified wrapper around the
-        UserExecutionManager's position state.
+        position/order data. This returns live engine wrappers (one per
+        symbol) around the UserExecutionManager's position state.
         """
         mgr = self._user_registry._managers.get(user_id)
         if not mgr:
             return []
-
-        engines = []
-        with mgr._positions_lock:
-            for sym, pos in mgr._positions.items():
-                wrapper = _MockEngine(
-                    symbol=sym,
-                    position=pos,
-                    paper_mode=pos.get("paper_mode", True),
-                    manager=mgr,
-                )
-                engines.append(wrapper)
-        return engines
+        return mgr._engine_wrappers()
 
     def _post_async(self, coro):
         """Schedule a coroutine on the main asyncio event loop."""
@@ -438,8 +427,63 @@ class SharedWorkerOrchestrator:
             return self._handle_pause_resume(user_id, False)
         elif action == "update_token":
             return self._handle_update_token(user_id, payload)
+        elif action == "approve_pending_trade":
+            return self._handle_approve_pending_trade(user_id, payload)
+        elif action == "reject_pending_trade":
+            return self._handle_reject_pending_trade(user_id, payload)
         else:
             return {"ok": False, "error": f"Unknown action: {action}"}
+
+    def _handle_approve_pending_trade(self, user_id: int, payload: dict) -> dict:
+        """Approve a pending trade and execute it (Telegram / approve buttons)."""
+        from backend.services.execution_layer import (
+            pending_trade_manager as ptm, place_order_from_engines,
+        )
+
+        trade_id = payload.get("trade_id")
+        if not trade_id:
+            return {"ok": False, "error": "trade_id required"}
+
+        engines = self.get_engines_for_user(user_id)
+
+        def _place_order_from_signal(signal):
+            return place_order_from_engines(
+                user_id, engines, signal, trade_id=trade_id)
+
+        try:
+            result = ptm.approve_sync(
+                trade_id, user_id, _place_order_from_signal)
+        except Exception as e:
+            return {"ok": False, "error": f"Approval failed: {e}"}
+
+        if result.status.value == "EXECUTED":
+            return {
+                "ok": True, "status": "approved",
+                "message": result.message, "trade_id": result.trade_id,
+            }
+        elif result.status.value == "EXPIRED":
+            return {"ok": False, "error": result.message}
+        else:
+            return {"ok": False, "error": result.message}
+
+    def _handle_reject_pending_trade(self, user_id: int, payload: dict) -> dict:
+        """Reject a pending trade (Telegram / reject buttons)."""
+        from backend.services.execution_layer import (
+            pending_trade_manager as ptm,
+        )
+
+        trade_id = payload.get("trade_id")
+        if not trade_id:
+            return {"ok": False, "error": "trade_id required"}
+
+        try:
+            result = ptm.reject_sync(trade_id, user_id)
+        except Exception as e:
+            return {"ok": False, "error": f"Rejection failed: {e}"}
+
+        if result.status.value == "REJECTED":
+            return {"ok": True, "status": "rejected", "message": result.message}
+        return {"ok": False, "error": result.message}
 
     def _handle_start(self, user_id: int) -> dict:
         from backend.services.bot_config_builder import resolve_start_inputs
@@ -630,110 +674,6 @@ class SharedWorkerOrchestrator:
                 print(f"{_now()} [shared-orch] No active symbols to restore")
         except Exception as e:
             print(f"{_now()} [shared-orch] State recovery failed: {e}")
-
-
-class _MockEngine:
-    """Minimal engine wrapper for modify_sl/target/squareoff commands.
-
-    In the shared architecture, there is no SymbolEngine per user.
-    This provides a compatible interface for command handlers that
-    need to modify SL/target/squareoff on a user's open position.
-    """
-
-    def __init__(self, symbol: str, position: dict, paper_mode: bool, manager: UserExecutionManager):
-        self.symbol = symbol
-        self.position = position
-        self.paper_mode = paper_mode
-        self._mgr = manager
-        self.sl_order_id = position.get("sl_order_id")
-        self._tg_token = manager._tg_token
-        self._tg_chat = manager._tg_chat
-        self.cfg = manager.config
-        self.on_trade = manager.on_trade
-        self.opt_type = position.get("opt_type", "")
-        self.strike = position.get("strike")
-
-    def _modify_sl_from_telegram(self, new_sl: float):
-        """Modify stop loss from Telegram command."""
-        self.modify_sl(new_sl)
-
-    def modify_sl(self, new_sl: float):
-        """Modify the stop loss for an open position."""
-        with self._mgr._positions_lock:
-            pos = self._mgr._positions.get(self.symbol)
-            if not pos:
-                return
-            pos["sl_trigger"] = new_sl
-
-        if self.sl_order_id and not self.paper_mode:
-            pass  # Real order mod would go here
-
-        self._mgr._push_position_snapshot(self.symbol)
-
-        if self._mgr.on_trade:
-            self._mgr.on_trade({
-                "event": "SL_TRAIL",
-                "user_id": self._mgr.user_id,
-                "mode": "paper" if self.paper_mode else "live",
-                "symbol": self.symbol,
-                "trading_symbol": pos.get("trading_symbol", self.symbol),
-                "new_sl": new_sl,
-                "ltp": pos.get("entry_price", 0),
-                "opt_type": pos.get("opt_type", ""),
-                "strike": pos.get("strike"),
-            })
-
-    def _modify_target_from_telegram(self, new_target: float):
-        self.modify_target(new_target)
-
-    def modify_target(self, new_target: float):
-        """Modify the target for an open position."""
-        with self._mgr._positions_lock:
-            pos = self._mgr._positions.get(self.symbol)
-            if not pos:
-                return
-            pos["target"] = new_target
-            near_pct = self._mgr.config.get("target_near_pct", 0.003)
-            pos["near_target"] = round(new_target * (1 - near_pct), 2)
-
-        self._mgr._push_position_snapshot(self.symbol)
-
-    def _squareoff_from_telegram(self):
-        self.squareoff()
-
-    def squareoff(self):
-        """Square off an open position."""
-        with self._mgr._positions_lock:
-            pos = self._mgr._positions.pop(self.symbol, None)
-            if not pos:
-                return
-
-        if self._mgr.on_trade:
-            entry = pos.get("entry_price", 0)
-            exit_price = pos.get("entry_price", 0)
-            pnl = 0
-            self._mgr.on_trade({
-                "event": "EXIT",
-                "user_id": self._mgr.user_id,
-                "mode": "paper" if self.paper_mode else "live",
-                "symbol": self.symbol,
-                "trading_symbol": pos.get("trading_symbol", self.symbol),
-                "entry_price": entry,
-                "exit_price": exit_price,
-                "sl_trigger": pos.get("sl_trigger", 0),
-                "target": pos.get("target", 0),
-                "qty": pos.get("qty", 0),
-                "pnl": pnl,
-                "status": "MANUAL_SQUAREOFF",
-                "strategy": pos.get("strategy", ""),
-                "opt_type": pos.get("opt_type", ""),
-                "strike": pos.get("strike"),
-                "expiry": pos.get("expiry", ""),
-                "instrument_key": pos.get("instrument_key", ""),
-                "entry_ts": pos.get("entry_ts", datetime.utcnow()),
-            })
-
-        self._mgr._push_position_snapshot(self.symbol)
 
 
 # ================================================================

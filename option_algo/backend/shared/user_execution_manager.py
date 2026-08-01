@@ -75,6 +75,9 @@ class UserExecutionManager:
         self._positions: dict[str, dict] = {}
         self._positions_lock = threading.Lock()
 
+        # Last known LTP per symbol (used by the Telegram /status command)
+        self._last_ltp: dict[str, float] = {}
+
         # Risk tracking
         self._trades_today: int = 0
         self._net_pnl_today: float = 0.0
@@ -101,6 +104,27 @@ class UserExecutionManager:
         self._thread.start()
         print(f"{_now()} [exec:u{self.user_id}] Started for symbols: {self.symbols}")
 
+        # ── Telegram command bot (mirrors legacy engine_v6.TradingEngine) ──
+        # Register engine wrappers so /status,/sl,/target,/squareoff,/pnl etc.
+        # can act on this user, and start the getUpdates polling thread.
+        if self._tg_token and self._tg_chat:
+            try:
+                from backend.services.telegram_bot import (
+                    register_engines, start_polling,
+                )
+                register_engines(self.user_id, self._engine_wrappers())
+                start_polling(self.user_id, self._tg_token, self._tg_chat,
+                              self._stop_event)
+                from backend.services import telegram_alerts as tg
+                tg.alert_bot_started(
+                    self._tg_token, self._tg_chat,
+                    ",".join(sorted(self.symbols)),
+                    self.config.get("strategy", "all"),
+                    "paper" if self.paper_mode else "live",
+                )
+            except Exception as e:
+                print(f"{_now()} [exec:u{self.user_id}] Telegram setup error: {e}")
+
     def stop(self):
         """Stop execution and cleanup."""
         self._stop_event.set()
@@ -109,6 +133,19 @@ class UserExecutionManager:
         # Remove subscriptions
         for sym in self.symbols:
             remove_subscriber(self.user_id, sym)
+
+        # ── Telegram cleanup (mirrors legacy engine_v6.TradingEngine) ──
+        try:
+            from backend.services.telegram_bot import unregister_engines
+            unregister_engines(self.user_id)
+            if self._tg_token and self._tg_chat:
+                from backend.services import telegram_alerts as tg
+                tg.alert_bot_stopped(
+                    self._tg_token, self._tg_chat,
+                    ",".join(sorted(self.symbols)),
+                )
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] Telegram cleanup error: {e}")
 
         print(f"{_now()} [exec:u{self.user_id}] Stopped")
 
@@ -173,6 +210,14 @@ class UserExecutionManager:
         sig_symbol = signal.get("symbol", "")
         if sig_symbol.upper() not in self.symbols:
             return
+        sig_symbol = sig_symbol.upper()
+
+        entry_ltp = signal.get("entry_price")
+        if entry_ltp:
+            try:
+                self._last_ltp[sig_symbol] = float(entry_ltp)
+            except (TypeError, ValueError):
+                pass
 
         sig_strategy = signal.get("strategy", "")
 
@@ -233,6 +278,7 @@ class UserExecutionManager:
         # Build the signal with user-specific quantities
         enriched_signal = {
             **signal,
+            "symbol": sig_symbol,
             "user_id": self.user_id,
             "quantity": qty,
             "lot_size": lot_size,
@@ -286,6 +332,13 @@ class UserExecutionManager:
         )
 
         with self._positions_lock:
+            entry_ltp = signal.get("entry_price", 0)
+            if entry_ltp:
+                try:
+                    self._last_ltp[symbol.upper()] = float(entry_ltp)
+                except (TypeError, ValueError):
+                    pass
+            risk = abs(float(entry_ltp) - float(stop_loss)) if entry_ltp and stop_loss else 0
             self._positions[symbol] = {
                 "entry_price": entry_price,
                 "qty": qty,
@@ -296,6 +349,13 @@ class UserExecutionManager:
                 "symbol": symbol,
                 "entry_order_id": entry_id.get("order_id") if entry_id else None,
                 "sl_order_id": sl_id.get("order_id") if sl_id else None,
+                "trading_symbol": signal.get("trading_symbol") or signal.get("symbol"),
+                "opt_type": signal.get("opt_type"),
+                "strike": signal.get("strike"),
+                "instrument_key": signal.get("instrument_key", ""),
+                "expiry": signal.get("expiry", ""),
+                "target": round(float(entry_ltp) + risk * self.config.get("target_rr", 1.3), 2)
+                          if risk else 0,
             }
 
         self._record_entry()
@@ -370,6 +430,15 @@ class UserExecutionManager:
             self._maybe_reset_risk()
             self._trades_today += 1
 
+    def _risk_snapshot(self) -> dict:
+        """Account-wide risk snapshot (used by the Telegram /pnl command)."""
+        with self._risk_lock:
+            self._maybe_reset_risk()
+            return {
+                "trades_today": self._trades_today,
+                "net_pnl_today": self._net_pnl_today,
+            }
+
     def _record_pnl(self, pnl: float):
         with self._risk_lock:
             self._maybe_reset_risk()
@@ -417,6 +486,278 @@ class UserExecutionManager:
             ]
 
         set_positions_sync(self.user_id, positions)
+
+    def _engine_wrappers(self) -> list:
+        """
+        Return one engine-like wrapper per symbol this user trades.
+
+        The wrappers expose the same interface as the legacy
+        engine_v6.TradingEngine so the Telegram command bot
+        (/status,/sl,/target,/squareoff,/pause,/resume,/pnl and the
+        approve/reject command path) works identically in shared mode.
+        They read live state from this manager, so positions and
+        pause state are always current.
+        """
+        return [_MockEngine(sym, self) for sym in sorted(self.symbols)]
+
+
+# ================================================================
+# SHARED-MODE ENGINE WRAPPER (Telegram command bot support)
+# ================================================================
+
+class _RiskProxy:
+    """Live risk snapshot proxy — mimics engine_v6's risk.snapshot()."""
+
+    def __init__(self, mgr: "UserExecutionManager"):
+        self._mgr = mgr
+
+    def snapshot(self) -> dict:
+        return self._mgr._risk_snapshot()
+
+    def record_entry(self):
+        self._mgr._record_entry()
+
+
+class _MockEngine:
+    """
+    Symbol-level engine wrapper for shared mode.
+
+    Mirrors the interface of backend.engine.engine_v6.TradingEngine so
+    the shared-mode UserExecutionManager can be driven from Telegram
+    exactly like legacy mode (getUpdates polling + command registry).
+    `position` and friends are live — they always reflect the
+    manager's current state.
+    """
+
+    def __init__(self, symbol: str, manager: "UserExecutionManager"):
+        self.symbol = symbol
+        self._mgr = manager
+
+    # ── Live state (delegates to the manager) ────────────────────
+
+    @property
+    def paper_mode(self) -> bool:
+        return self._mgr.paper_mode
+
+    @property
+    def cfg(self) -> dict:
+        return self._mgr.config
+
+    @property
+    def position(self) -> Optional[dict]:
+        with self._mgr._positions_lock:
+            pos = self._mgr._positions.get(self.symbol)
+            return dict(pos) if pos else None
+
+    @position.setter
+    def position(self, value: dict):
+        with self._mgr._positions_lock:
+            self._mgr._positions[self.symbol] = value
+
+    @property
+    def _paused(self) -> bool:
+        return self._mgr.is_paused
+
+    @_paused.setter
+    def _paused(self, value: bool):
+        if value:
+            self._mgr._paused.set()
+        else:
+            self._mgr._paused.clear()
+
+    @property
+    def _cur_candle(self) -> dict:
+        return {"close": self._mgr._last_ltp.get(self.symbol)}
+
+    @property
+    def _risk(self) -> _RiskProxy:
+        return _RiskProxy(self._mgr)
+
+    @property
+    def on_trade(self):
+        return self._mgr.on_trade
+
+    # ── Attributes used by the approve / place-order path ─────────
+
+    @property
+    def symbol_lots(self) -> int:
+        return max(1, int(self.cfg.get("order_qty", 1)))
+
+    @property
+    def _regime(self):
+        return None
+
+    @property
+    def _tg_token(self) -> str:
+        return self._mgr._tg_token
+
+    @property
+    def _tg_chat(self) -> str:
+        return self._mgr._tg_chat
+
+    @property
+    def sl_order_id(self):
+        pos = self.position
+        return pos.get("sl_order_id") if pos else None
+
+    @sl_order_id.setter
+    def sl_order_id(self, value):
+        with self._mgr._positions_lock:
+            pos = self._mgr._positions.get(self.symbol)
+            if pos is not None:
+                pos["sl_order_id"] = value
+
+    @property
+    def opt_type(self) -> str:
+        pos = self.position
+        return (pos or {}).get("opt_type", "")
+
+    @property
+    def strike(self):
+        pos = self.position
+        return (pos or {}).get("strike")
+
+    @property
+    def instrument_key(self) -> str:
+        pos = self.position
+        if pos and pos.get("instrument_key"):
+            return pos["instrument_key"]
+        return self.cfg.get("underlying_token", "")
+
+    @property
+    def trading_symbol(self) -> str:
+        pos = self.position
+        if pos and pos.get("trading_symbol"):
+            return pos["trading_symbol"]
+        return self.symbol
+
+    @property
+    def expiry(self) -> str:
+        pos = self.position
+        return (pos or {}).get("expiry", "")
+
+    # ── Order placement (paper mode — same path as _execute_paper) ─
+
+    def _place_order(self, side: str, qty: int, order_type: str = "MARKET",
+                     trigger: float = None) -> Optional[str]:
+        if not self.paper_mode:
+            raise NotImplementedError(
+                "Live order placement is not available in shared mode")
+        from backend.services.paper_trading import get_paper_book
+        paper = get_paper_book(self._mgr.user_id)
+        ltp = self._mgr._last_ltp.get(self.symbol, 0)
+        ik = self.cfg.get("underlying_token", "")
+        tag = f"paper:{self._mgr.user_id}"
+        if order_type == "SL-M":
+            order = paper.place_sl_order(side, qty, trigger, ik, tag)
+        else:
+            order = paper.place_market_order(side, qty, ltp, ik, tag)
+        return order.get("order_id")
+
+    def _get_fill_price(self, order_id: str) -> Optional[float]:
+        from backend.services.paper_trading import get_paper_book
+        order = get_paper_book(self._mgr.user_id).get_order(order_id)
+        if not order:
+            return None
+        return order.get("fill_price")
+
+    # ── Command handlers (mirror legacy engine methods) ───────────
+
+    def _modify_sl_from_telegram(self, new_sl: float):
+        self.modify_sl(new_sl)
+
+    def modify_sl(self, new_sl: float):
+        with self._mgr._positions_lock:
+            pos = self._mgr._positions.get(self.symbol)
+            if not pos:
+                return
+            pos["sl_trigger"] = new_sl
+
+        if self.sl_order_id and self.paper_mode:
+            try:
+                from backend.services.paper_trading import get_paper_book
+                get_paper_book(self._mgr.user_id).modify_sl_order(
+                    self.sl_order_id, new_sl)
+            except Exception:
+                pass
+
+        self._mgr._push_position_snapshot(self.symbol)
+
+        if self._mgr.on_trade:
+            pos = self.position or {}
+            self._mgr.on_trade({
+                "event": "SL_TRAIL",
+                "user_id": self._mgr.user_id,
+                "mode": "paper" if self.paper_mode else "live",
+                "symbol": self.symbol,
+                "trading_symbol": pos.get("trading_symbol", self.symbol),
+                "new_sl": new_sl,
+                "ltp": self._mgr._last_ltp.get(
+                    self.symbol, pos.get("entry_price", 0)),
+                "opt_type": pos.get("opt_type", ""),
+                "strike": pos.get("strike"),
+            })
+
+    def _modify_target_from_telegram(self, new_target: float):
+        self.modify_target(new_target)
+
+    def modify_target(self, new_target: float):
+        with self._mgr._positions_lock:
+            pos = self._mgr._positions.get(self.symbol)
+            if not pos:
+                return
+            pos["target"] = new_target
+            near_pct = self._mgr.config.get("target_near_pct", 0.003)
+            pos["near_target"] = round(new_target * (1 - near_pct), 2)
+
+        self._mgr._push_position_snapshot(self.symbol)
+
+    def _squareoff_from_telegram(self):
+        self.squareoff()
+
+    def squareoff(self):
+        with self._mgr._positions_lock:
+            pos = self._mgr._positions.pop(self.symbol, None)
+            if not pos:
+                return
+
+        # Cancel SL then market-exit (mirror legacy squareoff)
+        if pos.get("sl_order_id") and self.paper_mode:
+            try:
+                from backend.services.paper_trading import get_paper_book
+                get_paper_book(self._mgr.user_id).cancel_order(pos["sl_order_id"])
+            except Exception:
+                pass
+
+        ltp = self._mgr._last_ltp.get(self.symbol) or pos.get("entry_price", 0)
+        exit_price = ltp
+        qty = pos.get("qty", 0)
+        entry = pos.get("entry_price", 0)
+        pnl = round((exit_price - entry) * qty, 2) if entry else 0
+
+        if self._mgr.on_trade:
+            self._mgr.on_trade({
+                "event": "EXIT",
+                "user_id": self._mgr.user_id,
+                "mode": "paper" if self.paper_mode else "live",
+                "symbol": self.symbol,
+                "trading_symbol": pos.get("trading_symbol", self.symbol),
+                "entry_price": entry,
+                "exit_price": exit_price,
+                "sl_trigger": pos.get("sl_trigger", 0),
+                "target": pos.get("target", 0),
+                "qty": qty,
+                "pnl": pnl,
+                "status": "MANUAL_SQUAREOFF",
+                "strategy": pos.get("strategy", ""),
+                "opt_type": pos.get("opt_type", ""),
+                "strike": pos.get("strike"),
+                "expiry": pos.get("expiry", ""),
+                "instrument_key": pos.get("instrument_key", ""),
+                "entry_ts": pos.get("entry_ts", datetime.utcnow()),
+            })
+
+        self._mgr._push_position_snapshot(self.symbol)
 
 
 # ================================================================

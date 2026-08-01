@@ -436,86 +436,13 @@ def _handle_approve_pending_trade(user_id: int, payload: dict,
 
     engines = _get_engines(user_id)
 
-    from backend.services.execution_layer import pending_trade_manager as ptm
+    from backend.services.execution_layer import (
+        pending_trade_manager as ptm, place_order_from_engines,
+    )
 
     def _place_order_from_signal(signal):
-        for eng in engines:
-            if eng.symbol == signal.symbol:
-                num_lots = getattr(eng, 'symbol_lots',
-                                   max(1, int(eng.cfg.get("order_qty", 1))))
-                custom_ls = eng.cfg.get("custom_lot_sizes") or {}
-                lot_size = get_lot_size_from_engine(eng.symbol, custom_ls)
-                qty = num_lots * lot_size
-                if getattr(eng, '_regime', None) and eng._regime.regime == "VOLATILE":
-                    qty = max(lot_size, (num_lots // 2) * lot_size)
-
-                eid = eng._place_order("BUY", qty)
-                if not eid:
-                    return None
-                fill = eng._get_fill_price(eid)
-                if not fill:
-                    return None
-
-                sl_id = eng._place_order("SELL", qty, order_type="SL-M",
-                                         trigger=signal.stop_loss)
-                if not sl_id:
-                    eng._place_order("SELL", qty)
-                    return None
-
-                rr = eng.cfg.get("target_rr", 1.3)
-                risk = abs(fill - signal.stop_loss)
-                target = round(fill + risk * rr, 2)
-                near_pct = eng.cfg.get("target_near_pct", 0.003)
-                eng.position = {
-                    "entry_price": fill, "qty": qty,
-                    "entry_order_id": eid, "sl_order_id": sl_id,
-                    "sl_trigger": signal.stop_loss, "target": target,
-                    "near_target": round(target * (1 - near_pct), 2),
-                    "strategy": signal.strategy_name or signal.strategy or "",
-                    "entry_ts": datetime.now(timezone.utc).replace(tzinfo=None),
-                    "instrument_key": signal.instrument_key or eng.instrument_key,
-                    "trading_symbol": signal.trading_symbol or eng.trading_symbol,
-                    "opt_type": signal.opt_type or eng.opt_type,
-                    "strike": signal.strike or eng.strike,
-                    "paper_mode": eng.paper_mode, "symbol": signal.symbol,
-                    "regime": getattr(eng, '_regime', None).regime
-                              if getattr(eng, '_regime', None) else "",
-                }
-                eng.sl_order_id = sl_id
-                eng.trailing_sl = signal.stop_loss
-                eng._sl_mod_ts = time.time()
-                eng._risk.record_entry()
-                eng._last_entry_price = fill
-
-                mode = "paper" if eng.paper_mode else "live"
-                if eng._tg_token and eng._tg_chat and eng.cfg.get("telegram_on_entry", True):
-                    from backend.services import telegram_alerts as tg
-                    tg.alert_entry(eng._tg_token, eng._tg_chat,
-                                   signal.trading_symbol or signal.symbol,
-                                   signal.opt_type or "", fill, signal.stop_loss,
-                                   target, qty, signal.strategy_name or "", mode)
-                eng.on_trade({
-                    "event": "ENTRY", "user_id": user_id, "mode": mode,
-                    **eng.position,
-                })
-                eng.on_trade({
-                    "event": "SIGNAL_APPROVED", "user_id": user_id,
-                    "mode": mode, "symbol": signal.symbol,
-                    "trading_symbol": signal.trading_symbol,
-                    "opt_type": signal.opt_type,
-                    "strike": signal.strike,
-                    "entry_price": fill,
-                    "pending_trade_id": trade_id,
-                })
-                return eid
-
-        _log(f"No engine available for approved trade #{trade_id} "
-             f"on {signal.symbol}")
-        return None
-
-    def get_lot_size_from_engine(sym: str, custom_ls: dict) -> int:
-        from backend.engine.engine_v6 import get_lot_size
-        return get_lot_size(sym, custom_ls)
+        return place_order_from_engines(
+            user_id, engines, signal, trade_id=trade_id)
 
     if main_loop is not None:
         fut = asyncio.run_coroutine_threadsafe(
