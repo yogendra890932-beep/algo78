@@ -480,6 +480,22 @@ async def update_config(
             else ExecutionMode.AUTO.value
         )
 
+    if "execution_mode" in fields and user.role != UserRole.admin:
+        from backend.db.models import SubscriptionStatus
+        from backend.services.subscription_service import get_current_subscription
+
+        sub = await get_current_subscription(db, user.id)
+        if (
+            sub is not None
+            and sub.status == SubscriptionStatus.trial
+            and fields["execution_mode"] != ExecutionMode.PAPER.value
+        ):
+            raise HTTPException(
+                402,
+                "Free trial only allows Paper Trading — Semi Auto and Fully Automatic "
+                "require a paid plan. Please subscribe to continue.",
+            )
+
     for field, value in fields.items():
         setattr(cfg, field, value)
 

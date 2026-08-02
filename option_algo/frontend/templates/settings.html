@@ -965,12 +965,46 @@
     handleUpstoxCallbackParams();
     loadAccountStatus();
     loadMultiSymbol();
+
+    document.querySelectorAll('input[name="execution_mode"]').forEach(radio => {
+      radio.addEventListener('change', async () => {
+        if (radio.value !== 'PAPER' && await isTrialUser()) {
+          showMsg('mode-msg',
+            '⚠️ Semi Auto and Fully Automatic require a paid plan. Saving will open the subscription page.',
+            'error');
+        } else {
+          document.getElementById('mode-msg').textContent = '';
+        }
+      });
+    });
   });
+
+  let _subCache = null;
+  async function getSubscription() {
+    if (_subCache) return _subCache;
+    const r = await apiFetch('/api/subscription/me');
+    if (!r || !r.ok) return null;
+    _subCache = await r.json();
+    return _subCache;
+  }
+
+  async function isTrialUser() {
+    const sub = await getSubscription();
+    return !!sub && sub.is_trial === true;
+  }
 
   async function saveExecutionMode() {
     let execMode = 'PAPER';
     if (document.getElementById('mode-semi').checked) execMode = 'SEMI_AUTO';
     else if (document.getElementById('mode-auto').checked) execMode = 'AUTO';
+
+    if (execMode !== 'PAPER' && await isTrialUser()) {
+      showMsg('mode-msg',
+        '⚠️ Semi Auto and Fully Automatic trading require a paid plan. Redirecting to subscription…',
+        'error');
+      setTimeout(() => { window.location.href = '/billing?upgrade=1'; }, 1200);
+      return;
+    }
 
     const r = await apiFetch('/api/users/config',
       {

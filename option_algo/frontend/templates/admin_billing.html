@@ -1392,12 +1392,16 @@ let dtManualPayments;
 
 async function loadManualPayments() {
   const r = await apiFetch('/api/admin/manual-payments');
-  if (!r || !r.ok) { document.querySelector('#manualPaymentsTable tbody').innerHTML = '<tr><td colspan="9" class="text-muted text-center py-3">Failed to load</td></tr>'; return; }
+  if (!r || !r.ok) {
+    allManualPayments = [];
+    renderManualPaymentsTable('Failed to load manual payments');
+    return;
+  }
   allManualPayments = await r.json();
   renderManualPaymentsTable();
 }
 
-function renderManualPaymentsTable() {
+function renderManualPaymentsTable(emptyMessage) {
   document.querySelector('#manualPaymentsTable tbody').innerHTML = allManualPayments.map(p => {
     const statusClass = p.status === 'pending_verification' ? 'pending_verification' : p.status === 'approved' || p.status === 'success' ? 'approved' : p.status === 'rejected' ? 'rejected' : p.status;
     const screenshotHtml = p.screenshot_path
@@ -1421,10 +1425,14 @@ function renderManualPaymentsTable() {
       <td><span class="status-pill ${statusClass}">${p.status}</span></td>
       <td>${actionsHtml}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" class="text-muted text-center py-3">No manual payments yet</td></tr>';
+  }).join('');
 
   if ($.fn.dataTable.isDataTable('#manualPaymentsTable')) { $('#manualPaymentsTable').DataTable().destroy(); }
-  dtManualPayments = $('#manualPaymentsTable').DataTable({ pageLength: 10, order: [[6, 'desc']] });
+  dtManualPayments = $('#manualPaymentsTable').DataTable({
+    pageLength: 10,
+    order: [[6, 'desc']],
+    language: { emptyTable: emptyMessage || 'No manual payments yet' },
+  });
 }
 
 async function approveManualPayment(id) {

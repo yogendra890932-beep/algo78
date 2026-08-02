@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.db.database import get_db
-from backend.db.models import User, BotConfig
+from backend.db.models import User, BotConfig, UserRole
 from backend.services.auth_service import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
@@ -95,7 +95,8 @@ async def _create_user_and_config(db: AsyncSession, email: str,
                                    google_id: Optional[str] = None,
                                    avatar_url: Optional[str] = None,
                                    pre_verified: bool = False,
-                                   mobile_number: Optional[str] = None) -> User:
+                                   mobile_number: Optional[str] = None,
+                                   role: UserRole = UserRole.user) -> User:
     user = User(
         email           = email,
         hashed_password = hashed_pw or "",
@@ -104,7 +105,8 @@ async def _create_user_and_config(db: AsyncSession, email: str,
         google_id       = google_id,
         avatar_url      = avatar_url,
         email_verified  = pre_verified,
-        is_active       = pre_verified,   # active immediately only for Google sign-in
+        is_active       = pre_verified,   # active immediately only for Google sign-in / admin
+        role            = role,
     )
     if not pre_verified:
         user.email_verify_token   = generate_verify_token()
@@ -135,6 +137,10 @@ async def _maybe_start_trial(db: AsyncSession, user: User, request: Optional[Req
     from backend.services.subscription_service import start_trial
     from backend.services.audit_log import log_event
     from backend.services.billing_notifications import notify
+
+    if user.role == UserRole.admin:
+        # Admins are never trial-limited — no subscription required.
+        return
 
     sub = await start_trial(db, user)
     if sub is None:
@@ -190,6 +196,29 @@ async def login(request: Request, form: OAuth2PasswordRequestForm = Depends(),
                 db: AsyncSession = Depends(get_db)):
     res  = await db.execute(select(User).where(User.email == form.username))
     user = res.scalar_one_or_none()
+
+    # ── Admin login (ADMIN_EMAIL / ADMIN_PASSWORD from env) ──
+    # Logging in with the server's configured admin email + password
+    # auto-provisions an admin account: role=admin, verified, active.
+    if form.username.strip().lower() == settings.ADMIN_EMAIL.strip().lower():
+        import hmac
+
+        if not hmac.compare_digest(form.password, settings.ADMIN_PASSWORD):
+            raise HTTPException(401, "Invalid credentials")
+        if not user:
+            user = await _create_user_and_config(
+                db, settings.ADMIN_EMAIL, "Administrator",
+                hash_password(settings.ADMIN_PASSWORD),
+                pre_verified=True, role=UserRole.admin)
+        else:
+            user.role          = UserRole.admin
+            user.email_verified = True
+            user.is_active      = True
+            db.add(user)
+            await db.commit()
+        await _maybe_start_trial(db, user, request)
+        return _issue_tokens(user)
+
     if not user:
         raise HTTPException(401, "Invalid credentials")
     if user.google_id and not user.hashed_password:

@@ -308,6 +308,86 @@ def test_redis_client_config():
 
 
 # ================================================================
+# TEST 8: Trial users blocked from non-paper config
+# ================================================================
+
+def test_trial_config_guard():
+    print("\n=== Test: Trial users cannot save non-paper mode ===")
+    src = _read_src("backend/routers/all_routers.py")
+
+    if _has_function_with_code(src, "update_config", "SubscriptionStatus.trial"):
+        _ok("update_config checks trial subscription")
+    else:
+        _fail("update_config missing trial subscription check")
+
+    if _has_function_with_code(src, "update_config", "fields[\"execution_mode\"] != ExecutionMode.PAPER.value"):
+        _ok("update_config rejects non-PAPER execution_mode for trial users")
+    else:
+        _fail("update_config missing non-PAPER trial rejection")
+
+    if _has_function_with_code(src, "update_config", "get_current_subscription"):
+        _ok("update_config fetches current subscription")
+    else:
+        _fail("update_config missing get_current_subscription call")
+
+    settings_src = _read_src("frontend/templates/settings.html")
+    if "/api/subscription/me" in settings_src:
+        _ok("settings page checks subscription status")
+    else:
+        _fail("settings page missing subscription check")
+
+    if "/billing?upgrade=1" in settings_src:
+        _ok("settings page redirects trial users to billing")
+    else:
+        _fail("settings page missing billing redirect")
+
+
+# ================================================================
+# TEST 9: Admin login auto-provisions admin account
+# ================================================================
+
+def test_admin_login():
+    print("\n=== Test: Admin login (ADMIN_EMAIL/ADMIN_PASSWORD) ===")
+    src = _read_src("backend/routers/auth.py")
+
+    if "settings.ADMIN_EMAIL.strip().lower()" in src:
+        _ok("login recognizes the configured ADMIN_EMAIL")
+    else:
+        _fail("login does not check ADMIN_EMAIL")
+
+    if "hmac.compare_digest(form.password, settings.ADMIN_PASSWORD)" in src:
+        _ok("admin password validated against ADMIN_PASSWORD")
+    else:
+        _fail("admin password not validated against ADMIN_PASSWORD")
+
+    if "role=UserRole.admin" in src:
+        _ok("admin login assigns admin role")
+    else:
+        _fail("admin login does not assign admin role")
+
+    if "pre_verified=True, role=UserRole.admin" in src:
+        _ok("admin account auto-created verified + active")
+    else:
+        _fail("admin account not auto-provisioned verified/active")
+
+    if "user.email_verified = True" in src and "user.is_active      = True" in src:
+        _ok("existing admin row promoted to verified + active")
+    else:
+        _fail("existing admin row not promoted to verified/active")
+
+    if "if user.role == UserRole.admin:" in src:
+        _ok("admins are skipped from trial subscription")
+    else:
+        _fail("admin trial skip missing")
+
+    index_src = _read_src("frontend/templates/index.html")
+    if "id=\"r-admin\"" not in index_src:
+        _ok("no admin checkbox on register form")
+    else:
+        _fail("admin checkbox still present on register form")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -328,6 +408,8 @@ def run_all_tests():
     test_websocket_auth_hardening()
     test_command_handler_update_token()
     test_redis_client_config()
+    test_trial_config_guard()
+    test_admin_login()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

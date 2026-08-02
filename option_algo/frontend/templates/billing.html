@@ -786,6 +786,13 @@ document.addEventListener('DOMContentLoaded', () => {
   loadBillingProfile();
   loadPayments();
   loadInvoices();
+
+  if (new URLSearchParams(window.location.search).get('upgrade') === '1') {
+    setTimeout(() => {
+      const pricing = document.getElementById('pricingGrid');
+      if (pricing) pricing.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 700);
+  }
 });
 </script>
 {% endblock %}
