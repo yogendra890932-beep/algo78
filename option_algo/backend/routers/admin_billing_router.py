@@ -51,6 +51,7 @@ _PLAN_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,29}$")
 class SymbolLimitIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=20)
     lot_limit: int = Field(default=1, ge=1)
+    is_main: bool = False
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -96,7 +97,8 @@ def _plan_out(plan: SubscriptionPlan) -> dict:
         "description": plan.description, "monthly_price": float(plan.monthly_price),
         "gst_percentage": float(plan.gst_percentage), "duration_days": plan.duration_days,
         "is_contact_sales": plan.is_contact_sales, "is_active": plan.is_active,
-        "symbols": [{"symbol": s.symbol, "lot_limit": s.lot_limit} for s in plan.symbols],
+        "symbols": [{"symbol": s.symbol, "lot_limit": s.lot_limit, "is_main": s.is_main}
+                    for s in plan.symbols],
     }
 
 
@@ -119,7 +121,8 @@ async def create_plan(body: PlanIn, admin=Depends(get_admin_user), db: AsyncSess
         await repo.create(plan)
         for sym in body.symbols:
             await repo.add_symbol(SubscriptionPlanSymbol(
-                plan_id=plan.id, symbol=sym.symbol.upper(), lot_limit=sym.lot_limit))
+                plan_id=plan.id, symbol=sym.symbol.upper(), lot_limit=sym.lot_limit,
+                is_main=sym.is_main))
         await db.commit()
     except Exception:
         await db.rollback()
@@ -146,13 +149,16 @@ async def update_plan(plan_id: int, body: PlanIn, admin=Depends(get_admin_user),
     db.add(plan)
     try:
         await repo.delete_symbols(plan_id)
+        await db.flush()
         for sym in body.symbols:
             await repo.add_symbol(SubscriptionPlanSymbol(
-                plan_id=plan_id, symbol=sym.symbol.upper(), lot_limit=sym.lot_limit))
+                plan_id=plan_id, symbol=sym.symbol.upper(), lot_limit=sym.lot_limit,
+                is_main=sym.is_main))
         await db.commit()
     except Exception:
         await db.rollback()
         raise HTTPException(409, "A plan with that plan_code already exists")
+    await db.refresh(plan, ["symbols"])
     plan = await repo.get_by_id(plan_id)
     billing_cache.refresh(force=True)
     return _plan_out(plan)

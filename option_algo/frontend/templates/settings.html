@@ -734,11 +734,28 @@
 </style>
 
 <script>
+  async function populateMainSymbols() {
+    const sel = document.getElementById('c-symbol');
+    const saved = sel.value || 'NIFTY';
+    let mains = [];
+    try {
+      const sub = await getSubscription();
+      mains = (sub && sub.main_symbols && sub.main_symbols.length) ? sub.main_symbols : [];
+    } catch (e) { /* fall back to static list */ }
+    const options = mains.length ? mains : ['NIFTY','BANKNIFTY','FINNIFTY','MIDCPNIFTY'];
+    sel.innerHTML = options.map(s => `<option value="${s}">${s}</option>`).join('');
+    if (saved && options.indexOf(saved) === -1) {
+      sel.innerHTML += `<option value="${saved}">${saved}</option>`;
+    }
+    sel.value = options.indexOf(saved) === -1 ? (saved || options[0]) : saved;
+  }
+
   async function loadConfig() {
     const r = await apiFetch('/api/users/config');
     if (!r || !r.ok) return;
     const c = await r.json();
 
+    await populateMainSymbols();
     document.getElementById('c-symbol').value = c.underlying_symbol || 'NIFTY';
     document.getElementById('c-strategy').value = c.strategy || 'both';
     document.getElementById('c-qty').value = c.order_qty;

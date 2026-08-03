@@ -80,6 +80,7 @@ async def _subscription_out(db: AsyncSession, sub: Optional[Subscription]) -> di
     if sub is None:
         return {"status": "none", "plan": None}
     symbols = await subscription_service.symbols_and_limits_for_subscription(db, sub)
+    main_symbols = await subscription_service.main_symbols_for_subscription(db, sub)
     plan_name = None
     if sub.plan_id:
         res = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == sub.plan_id))
@@ -91,6 +92,7 @@ async def _subscription_out(db: AsyncSession, sub: Optional[Subscription]) -> di
         "is_trial": sub.status == SubscriptionStatus.trial,
         "start_date": sub.start_date.isoformat(), "end_date": sub.end_date.isoformat(),
         "remaining_days": remaining, "allowed_symbols": symbols,
+        "main_symbols": main_symbols,
         "pending_plan_id": sub.pending_plan_id,
     }
 

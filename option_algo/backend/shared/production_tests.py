@@ -388,6 +388,99 @@ def test_admin_login():
 
 
 # ================================================================
+# TEST 10: Plan symbol picker fallback + fresh update response
+# ================================================================
+
+def test_plan_symbol_picker():
+    print("\n=== Test: Plan symbol picker + plan update ===")
+    page = _read_src("frontend/templates/admin_billing.html")
+
+    if "DEFAULT_PLAN_SYMBOLS" in page and "known.add(t.symbol)" in page:
+        _ok("symbol picker falls back to known symbols")
+    else:
+        _fail("symbol picker missing default-symbol fallback")
+
+    if 'id="plan-symbol-list"' in page:
+        _ok("symbol input is a datalist combo (pick or type additional symbols)")
+    else:
+        _fail("symbol input missing datalist combo")
+
+    if ".trim().toUpperCase()" in page:
+        _ok("typed symbols are trimmed and uppercased")
+    else:
+        _fail("typed symbols not normalized")
+
+    if "planMainSymbol" in page and "addExtraPlanSymbol" in page:
+        _ok("plan editor separates main symbol from additional symbols")
+    else:
+        _fail("plan editor missing main/additional symbol split")
+
+    router = _read_src("backend/routers/admin_billing_router.py")
+    if 'db.refresh(plan, ["symbols"])' in router:
+        _ok("plan update refreshes symbols before responding")
+    else:
+        _fail("plan update does not refresh symbols")
+
+
+# ================================================================
+# TEST 11: Main-symbol options (plan marks candidates, user picks one)
+# ================================================================
+
+def test_main_symbol_options():
+    print("\n=== Test: Plan main-symbol options ===")
+    models = _read_src("backend/db/models.py")
+    if 'is_main: Mapped[bool]' in models or "is_main" in models and "Boolean" in models:
+        _ok("SubscriptionPlanSymbol carries is_main flag")
+    else:
+        _fail("SubscriptionPlanSymbol missing is_main flag")
+
+    router = _read_src("backend/routers/admin_billing_router.py")
+    if "is_main: bool = False" in router:
+        _ok("SymbolLimitIn accepts is_main")
+    else:
+        _fail("SymbolLimitIn missing is_main field")
+
+    if '"is_main": s.is_main' in router:
+        _ok("plan API returns is_main per symbol")
+    else:
+        _fail("_plan_out does not expose is_main")
+
+    if "is_main=sym.is_main" in router and router.count("is_main=sym.is_main") >= 2:
+        _ok("plan create and update both persist is_main")
+    else:
+        _fail("plan create/update do not persist is_main")
+
+    sub_router = _read_src("backend/routers/subscription_router.py")
+    if '"main_symbols": main_symbols' in sub_router:
+        _ok("subscription /me exposes main_symbols")
+    else:
+        _fail("subscription /me missing main_symbols")
+
+    svc = _read_src("backend/services/subscription_service.py")
+    if "def main_symbols_for_subscription" in svc:
+        _ok("main_symbols_for_subscription helper exists")
+    else:
+        _fail("main_symbols_for_subscription helper missing")
+
+    if "return [r.symbol.upper() for r in rows]" in svc:
+        _ok("legacy plans without main flags fall back to all symbols")
+    else:
+        _fail("legacy plan fallback missing")
+
+    page = _read_src("frontend/templates/settings.html")
+    if "sub.main_symbols" in page and "populateMainSymbols" in page:
+        _ok("user settings main-symbol select sourced from plan main options")
+    else:
+        _fail("settings page does not build main-symbol select from plan")
+
+    admin_page = _read_src("frontend/templates/admin_billing.html")
+    if "planMainSymbols" in admin_page and "is_main: true" in admin_page:
+        _ok("admin editor marks multiple main symbols")
+    else:
+        _fail("admin editor missing multi main-symbol marking")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -410,6 +503,8 @@ def run_all_tests():
     test_redis_client_config()
     test_trial_config_guard()
     test_admin_login()
+    test_plan_symbol_picker()
+    test_main_symbol_options()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

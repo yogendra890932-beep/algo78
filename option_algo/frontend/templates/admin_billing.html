@@ -130,6 +130,7 @@
 .plan-card .price small{font-size:12px; font-weight:500; color:var(--muted)}
 .plan-symbols{display:flex; flex-wrap:wrap; gap:6px; margin:10px 0}
 .symbol-badge{background:rgba(59,130,246,.12); color:#60a5fa; padding:3px 8px; border-radius:8px; font-size:11px; font-weight:600}
+.symbol-badge.main{background:rgba(16,185,129,.14); color:#34d399}
 .plan-actions{display:flex; gap:6px; flex-wrap:wrap; margin-top:14px}
 .plan-actions button{font-size:11.5px; padding:5px 9px}
 
@@ -385,12 +386,25 @@
               <div class="col-md-3"><label>Description</label><input class="form-control form-control-sm" id="plan-desc"></div>
             </div>
             <div class="row g-2 align-items-end mt-1">
-              <div class="col-md-3"><label>Add Symbol</label>
-                <select class="form-select form-select-sm" id="plan-symbol-picker"></select>
+              <div class="col-md-3"><label>Main Symbols <small class="text-muted">(options the user picks one from)</small></label>
+                <input class="form-control form-control-sm" id="plan-symbol-picker" list="plan-symbol-list"
+                       placeholder="Main option (e.g. NIFTY)" autocomplete="off"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault(); addPlanSymbol();}"/>
+                <datalist id="plan-symbol-list"></datalist>
               </div>
               <div class="col-md-2"><label>Lot Limit</label><input type="number" class="form-control form-control-sm" id="plan-symbol-lot" value="1"></div>
-              <div class="col-md-2"><button type="button" class="btn btn-sm btn-outline-soft w-100" onclick="addPlanSymbol()">+ Add</button></div>
+              <div class="col-md-2"><button type="button" class="btn btn-sm btn-outline-soft w-100" onclick="addPlanSymbol()">+ Add Main Option</button></div>
               <div class="col-md-5" id="plan-symbol-draft"></div>
+            </div>
+            <div class="row g-2 align-items-end mt-2">
+              <div class="col-md-3"><label>Additional Symbols <small class="text-muted">(traded simultaneously with main)</small></label>
+                <input class="form-control form-control-sm" id="plan-extra-symbol-picker" list="plan-symbol-list"
+                       placeholder="Pick or type additional symbol" autocomplete="off"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault(); addExtraPlanSymbol();}"/>
+              </div>
+              <div class="col-md-2"><label>Lot Limit</label><input type="number" class="form-control form-control-sm" id="plan-extra-symbol-lot" value="1"></div>
+              <div class="col-md-2"><button type="button" class="btn btn-sm btn-outline-soft w-100" onclick="addExtraPlanSymbol()">+ Add</button></div>
+              <div class="col-md-5" id="plan-extra-symbol-draft"></div>
             </div>
             <div class="d-flex gap-3 align-items-center mt-3">
               <div class="form-check"><input class="form-check-input" type="checkbox" id="plan-contact-sales"><label class="form-check-label">Contact Sales Only</label></div>
@@ -764,7 +778,7 @@ function animateCount(el, target) {
 
 // ── Global state (populated by loadAll) ─────────────────────────
 let allUsers = [], allPlans = [], allCustomSubs = [], allLeads = [], allSubscriptions = [],
-    allPayments = [], allInvoices = [], allStreamerSymbols = [], planSymbolDraft = [];
+    allPayments = [], allInvoices = [], allStreamerSymbols = [], planMainSymbols = [], planSymbolDraft = [];
 let dtUsers, dtPayments, dtInvoices;
 
 async function loadAll() {
@@ -974,7 +988,7 @@ async function openUserDrawer(userId) {
   const plan = userSub && userSub.plan_id ? allPlans.find(p => p.id === userSub.plan_id) : null;
   document.getElementById('tab-perms').innerHTML = plan
     ? `<div class="mb-2">Trading permissions derived from plan <b>${plan.name}</b>:</div>
-       <div class="plan-symbols">${plan.symbols.map(s => `<span class="symbol-badge">${s.symbol} · max ${s.lot_limit} lot(s)</span>`).join('')}</div>`
+       <div class="plan-symbols">${plan.symbols.map(s => `<span class="symbol-badge ${s.is_main ? 'main' : ''}">${s.is_main ? '★ ' : ''}${s.symbol} · max ${s.lot_limit} lot(s)</span>`).join('')}</div>`
     : '<div class="text-muted">No plan-based trading permissions (trial = paper trading only, or no active plan)</div>';
 
   const logs = await (await apiFetch(`/api/admin/billing/users/${userId}/audit-logs`))?.json().catch(() => []);
@@ -1073,27 +1087,51 @@ async function convertTrialPrompt(id) {
 }
 
 // ── Plans ────────────────────────────────────────────────────────
+const DEFAULT_PLAN_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
+
 async function loadStreamerSymbolsForPicker() {
+  const known = new Set(DEFAULT_PLAN_SYMBOLS);
   const r = await apiFetch('/api/admin/streamer-tokens');
-  if (!r || !r.ok) return;
-  allStreamerSymbols = await r.json();
-  document.getElementById('plan-symbol-picker').innerHTML = allStreamerSymbols.map(t => `<option value="${t.symbol}">${t.symbol}</option>`).join('');
+  if (r && r.ok) {
+    const tokens = await r.json();
+    tokens.forEach(t => { if (t.symbol) known.add(t.symbol); });
+  }
+  document.getElementById('plan-symbol-list').innerHTML =
+    [...known].map(s => `<option value="${s}"></option>`).join('');
 }
 
 function renderPlanSymbolDraft() {
-  document.getElementById('plan-symbol-draft').innerHTML = planSymbolDraft.map((s, idx) =>
+  document.getElementById('plan-symbol-draft').innerHTML = planMainSymbols.map((s, idx) =>
+    `<span class="symbol-badge main me-1">★ ${s.symbol}: ${s.lot_limit} <a href="#" onclick="event.preventDefault(); removeMainSymbol(${idx})" class="text-danger ms-1">×</a></span>`
+  ).join('') || '<span class="text-muted small">No main symbols yet</span>';
+}
+function renderExtraPlanSymbolDraft() {
+  document.getElementById('plan-extra-symbol-draft').innerHTML = planSymbolDraft.map((s, idx) =>
     `<span class="symbol-badge me-1">${s.symbol}: ${s.lot_limit} <a href="#" onclick="event.preventDefault(); removeDraftSymbol(${idx})" class="text-danger ms-1">×</a></span>`
-  ).join('') || '<span class="text-muted small">No symbols yet</span>';
+  ).join('') || '<span class="text-muted small">No additional symbols yet</span>';
 }
 function addPlanSymbol() {
-  const symbol = document.getElementById('plan-symbol-picker').value;
+  const symbol = document.getElementById('plan-symbol-picker').value.trim().toUpperCase();
   const lot = parseInt(document.getElementById('plan-symbol-lot').value, 10) || 1;
   if (!symbol) return;
+  planMainSymbols = planMainSymbols.filter(s => s.symbol !== symbol);
+  planMainSymbols.push({ symbol, lot_limit: lot });
+  planSymbolDraft = planSymbolDraft.filter(s => s.symbol !== symbol);
+  document.getElementById('plan-symbol-picker').value = '';
+  renderPlanSymbolDraft();
+  renderExtraPlanSymbolDraft();
+}
+function addExtraPlanSymbol() {
+  const symbol = document.getElementById('plan-extra-symbol-picker').value.trim().toUpperCase();
+  const lot = parseInt(document.getElementById('plan-extra-symbol-lot').value, 10) || 1;
+  if (!symbol || planMainSymbols.some(s => s.symbol === symbol)) return;
   planSymbolDraft = planSymbolDraft.filter(s => s.symbol !== symbol);
   planSymbolDraft.push({ symbol, lot_limit: lot });
-  renderPlanSymbolDraft();
+  document.getElementById('plan-extra-symbol-picker').value = '';
+  renderExtraPlanSymbolDraft();
 }
-function removeDraftSymbol(idx) { planSymbolDraft.splice(idx, 1); renderPlanSymbolDraft(); }
+function removeDraftSymbol(idx) { planSymbolDraft.splice(idx, 1); renderExtraPlanSymbolDraft(); }
+function removeMainSymbol(idx) { planMainSymbols.splice(idx, 1); renderPlanSymbolDraft(); }
 
 function resetPlanForm() {
   ['plan-edit-id','plan-code','plan-name','plan-price','plan-desc'].forEach(id => document.getElementById(id).value = '');
@@ -1101,7 +1139,8 @@ function resetPlanForm() {
   document.getElementById('plan-duration').value = '30';
   document.getElementById('plan-contact-sales').checked = false;
   document.getElementById('plan-active').checked = true;
-  planSymbolDraft = []; renderPlanSymbolDraft();
+  planMainSymbols = []; planSymbolDraft = [];
+  renderPlanSymbolDraft(); renderExtraPlanSymbolDraft();
 }
 
 async function loadPlans() {
@@ -1121,7 +1160,9 @@ function renderPlansGrid() {
       <div class="text-muted small">${p.plan_code}${p.description ? ' · ' + p.description : ''}</div>
       <div class="price">${p.is_contact_sales ? 'Contact Sales' : fmtMoney(p.monthly_price)}${!p.is_contact_sales ? '<small>/mo + ' + p.gst_percentage + '% GST</small>' : ''}</div>
       <div class="text-muted small">Duration: ${p.duration_days} days</div>
-      <div class="plan-symbols">${p.symbols.map(s => `<span class="symbol-badge">${s.symbol} · ${s.lot_limit} lot(s)</span>`).join('') || '<span class="text-muted small">No symbols configured</span>'}</div>
+      <div class="plan-symbols">
+        ${p.symbols.length ? p.symbols.map(s => `<span class="symbol-badge ${s.is_main ? 'main' : ''}">${s.is_main ? '★ ' : ''}${s.symbol} · ${s.lot_limit} lot(s)</span>`).join('') : '<span class="text-muted small">No symbols configured</span>'}
+      </div>
       <div class="plan-actions">
         <button class="btn btn-sm btn-outline-soft" onclick="editPlan(${p.id})"><i class="fa-solid fa-pen"></i> Edit</button>
         <button class="btn btn-sm btn-outline-soft" onclick="duplicatePlan(${p.id})"><i class="fa-solid fa-copy"></i> Duplicate</button>
@@ -1142,8 +1183,14 @@ function editPlan(id) {
   document.getElementById('plan-desc').value = p.description || '';
   document.getElementById('plan-contact-sales').checked = p.is_contact_sales;
   document.getElementById('plan-active').checked = p.is_active;
-  planSymbolDraft = p.symbols.map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit }));
-  renderPlanSymbolDraft();
+  const mains = p.symbols.filter(s => s.is_main);
+  planMainSymbols = (mains.length ? mains : (p.symbols.length ? [p.symbols[0]] : []))
+    .map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit }));
+  const mainSet = new Set(planMainSymbols.map(s => s.symbol));
+  planSymbolDraft = p.symbols
+    .filter(s => !s.is_main && !mainSet.has(s.symbol))
+    .map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit }));
+  renderPlanSymbolDraft(); renderExtraPlanSymbolDraft();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1158,7 +1205,7 @@ function duplicatePlan(id) {
 
 async function togglePlanActive(id) {
   const p = allPlans.find(x => x.id === id); if (!p) return;
-  const body = { ...p, is_active: !p.is_active, symbols: p.symbols.map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit })) };
+  const body = { ...p, is_active: !p.is_active, symbols: p.symbols.map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit, is_main: s.is_main })) };
   const r = await apiFetch(`/api/admin/billing/plans/${id}`, { method: 'PUT', body: JSON.stringify(body) });
   if (r?.ok) { toast.fire({ icon: 'success', title: p.is_active ? 'Plan disabled' : 'Plan enabled' }); loadPlans(); }
 }
@@ -1190,7 +1237,8 @@ async function savePlan(ev) {
     duration_days: parseInt(document.getElementById('plan-duration').value, 10) || 30,
     is_contact_sales: isContactSales,
     is_active: document.getElementById('plan-active').checked,
-    symbols: planSymbolDraft,
+    symbols: planMainSymbols.map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit, is_main: true }))
+      .concat(planSymbolDraft.map(s => ({ symbol: s.symbol, lot_limit: s.lot_limit, is_main: false }))),
   };
   const url = id ? `/api/admin/billing/plans/${id}` : '/api/admin/billing/plans';
   await withButtonBusy('plan-save-btn', 'Saving…', async () => {

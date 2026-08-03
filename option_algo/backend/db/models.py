@@ -393,6 +393,11 @@ class SubscriptionPlanSymbol(Base):
     )
     symbol: Mapped[str] = mapped_column(String(20))
     lot_limit: Mapped[int] = mapped_column(Integer, default=1)
+    # True = subscriber can pick this as their single main symbol
+    # (a plan may mark one or more symbols as main options; the user
+    # chooses only one of them). False = additional symbol, traded
+    # simultaneously alongside the chosen main symbol.
+    is_main: Mapped[bool] = mapped_column(Boolean, default=False)
 
     __table_args__ = (UniqueConstraint("plan_id", "symbol", name="uq_plan_symbol"),)
 

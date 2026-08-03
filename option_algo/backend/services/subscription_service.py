@@ -71,6 +71,25 @@ async def symbols_and_limits_for_subscription(db: AsyncSession, sub: Subscriptio
     return {}
 
 
+async def main_symbols_for_subscription(db: AsyncSession, sub: Subscription) -> list:
+    """
+    Returns the plan's main-symbol options — the symbols the user may
+    pick as their single main symbol. Falls back to ALL plan symbols
+    when none are explicitly flagged as main (legacy plans).
+    """
+    if not sub.plan_id:
+        return []
+    res = await db.execute(
+        select(SubscriptionPlanSymbol).where(SubscriptionPlanSymbol.plan_id == sub.plan_id))
+    rows = list(res.scalars().all())
+    if not rows:
+        return []
+    mains = [r.symbol.upper() for r in rows if r.is_main]
+    if mains:
+        return mains
+    return [r.symbol.upper() for r in rows]
+
+
 # ── Activation / renewal / plan changes ────────────────────────
 
 async def activate_subscription(db: AsyncSession, user_id: int, *, plan_id: Optional[int] = None,
