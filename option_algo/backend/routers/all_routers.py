@@ -8,6 +8,7 @@
 #   /ws         — WebSocket live feed
 # ================================================================
 
+import json
 import re
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
@@ -480,21 +481,66 @@ async def update_config(
             else ExecutionMode.AUTO.value
         )
 
-    if "execution_mode" in fields and user.role != UserRole.admin:
+    if user.role != UserRole.admin:
         from backend.db.models import SubscriptionStatus
-        from backend.services.subscription_service import get_current_subscription
+        from backend.services.subscription_service import (
+            get_current_subscription,
+            validate_plan_config,
+        )
 
-        sub = await get_current_subscription(db, user.id)
-        if (
-            sub is not None
-            and sub.status == SubscriptionStatus.trial
-            and fields["execution_mode"] != ExecutionMode.PAPER.value
-        ):
-            raise HTTPException(
-                402,
-                "Free trial only allows Paper Trading — Semi Auto and Fully Automatic "
-                "require a paid plan. Please subscribe to continue.",
+        eff_mode = fields.get("execution_mode") or (
+            cfg.execution_mode.value
+            if getattr(cfg, "execution_mode", None) is not None
+            else ExecutionMode.PAPER.value
+        )
+
+        if eff_mode != ExecutionMode.PAPER.value:
+            sub = await get_current_subscription(db, user.id)
+            if sub is not None and sub.status == SubscriptionStatus.trial:
+                raise HTTPException(
+                    402,
+                    "Free trial only allows Paper Trading — Semi Auto and Fully Automatic "
+                    "require a paid plan. Please subscribe to continue.",
+                )
+            if sub is None:
+                raise HTTPException(
+                    402,
+                    "Semi Auto and Fully Automatic trading require an active subscription plan. "
+                    "Please subscribe to continue.",
+                )
+            if sub.status != SubscriptionStatus.active or sub.end_date < datetime.utcnow():
+                raise HTTPException(
+                    402,
+                    "Your subscription is not active — please renew to continue trading.",
+                )
+
+            # Validate the requested main symbol + lots and any additional
+            # symbols against the plan's allowed symbols / lot limits.
+            main_symbol = fields.get("underlying_symbol") or cfg.underlying_symbol or "NIFTY"
+            main_lots = int(fields.get("order_qty") or cfg.order_qty or 1)
+
+            additional = []
+            try:
+                extra_config = json.loads(fields.get("extra_symbol_config") or cfg.extra_symbol_config or "[]")
+            except Exception:
+                extra_config = []
+            if isinstance(extra_config, list):
+                for entry in extra_config:
+                    if isinstance(entry, dict) and entry.get("symbol"):
+                        additional.append((
+                            str(entry["symbol"]).upper(),
+                            max(1, int(entry.get("lots", 1) or 1)),
+                        ))
+            extras_csv = fields.get("extra_symbols") or cfg.extra_symbols
+            for sym in (extras_csv or "").split(","):
+                if sym.strip():
+                    additional.append((sym.strip().upper(), main_lots))
+
+            ok, reason = await validate_plan_config(
+                db, sub, main_symbol, main_lots, additional
             )
+            if not ok:
+                raise HTTPException(403, reason)
 
     for field, value in fields.items():
         setattr(cfg, field, value)

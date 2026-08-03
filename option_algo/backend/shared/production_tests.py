@@ -320,8 +320,8 @@ def test_trial_config_guard():
     else:
         _fail("update_config missing trial subscription check")
 
-    if _has_function_with_code(src, "update_config", "fields[\"execution_mode\"] != ExecutionMode.PAPER.value"):
-        _ok("update_config rejects non-PAPER execution_mode for trial users")
+    if _has_function_with_code(src, "update_config", "eff_mode != ExecutionMode.PAPER.value"):
+        _ok("update_config rejects non-PAPER execution mode for trial users")
     else:
         _fail("update_config missing non-PAPER trial rejection")
 
@@ -481,6 +481,62 @@ def test_main_symbol_options():
 
 
 # ================================================================
+# TEST 12: Plan-based symbol/lot gate on Semi Auto / Fully Auto
+# ================================================================
+
+def test_plan_symbol_lot_gate():
+    print("\n=== Test: Semi Auto / Auto config checked against plan ===")
+    src = _read_src("backend/routers/all_routers.py")
+
+    if _has_function_with_code(src, "update_config", "validate_plan_config"):
+        _ok("update_config validates config against the plan")
+    else:
+        _fail("update_config missing validate_plan_config call")
+
+    if "Your subscription is not active — please renew to continue trading." in src:
+        _ok("inactive/expired subscriptions blocked from non-paper mode")
+    else:
+        _fail("inactive/expired subscription gate missing")
+
+    if _has_function_with_code(src, "update_config", "extra_symbol_config"):
+        _ok("additional symbols from extra_symbol_config are validated")
+    else:
+        _fail("additional symbol validation missing")
+
+    svc = _read_src("backend/services/subscription_service.py")
+    if "def validate_plan_config" in svc:
+        _ok("validate_plan_config helper exists")
+    else:
+        _fail("validate_plan_config helper missing")
+
+    if "does not include" in svc and "lot(s)" in svc:
+        _ok("symbol membership + per-symbol lot limit are both checked")
+    else:
+        _fail("symbol/lot checks incomplete in validate_plan_config")
+
+    if _has_function_with_code(svc, "check_trading_permission", "validate_plan_config"):
+        _ok("bot-start permission check reuses validate_plan_config")
+    else:
+        _fail("check_trading_permission not refactored onto validate_plan_config")
+
+    page = _read_src("frontend/templates/settings.html")
+    if "planCheck" in page and "saveExecutionMode" in page:
+        _ok("settings page runs plan check before saving execution mode")
+    else:
+        _fail("settings page missing plan check")
+
+    if "sub.allowed_symbols[symbol]" in page:
+        _ok("settings page checks symbol lot limit against plan")
+    else:
+        _fail("settings page missing lot-limit check")
+
+    if "j.detail" in page:
+        _ok("settings page surfaces backend plan-block message")
+    else:
+        _fail("settings page does not surface backend detail")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -505,6 +561,7 @@ def run_all_tests():
     test_admin_login()
     test_plan_symbol_picker()
     test_main_symbol_options()
+    test_plan_symbol_lot_gate()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

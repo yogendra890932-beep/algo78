@@ -90,6 +90,30 @@ async def main_symbols_for_subscription(db: AsyncSession, sub: Subscription) -> 
     return [r.symbol.upper() for r in rows]
 
 
+async def validate_plan_config(db: AsyncSession, sub: Subscription,
+                               main_symbol: str, main_lots: int,
+                               additional: Optional[list] = None) -> tuple[bool, Optional[str]]:
+    """
+    Validates a config save against the plan: every requested symbol must
+    be in the plan's allowed list and each lot count must not exceed the
+    per-symbol limit. `additional` is an optional list of
+    (symbol, lots) pairs for the extra symbols. Returns (ok, reason).
+    """
+    allowed_symbols = await symbols_and_limits_for_subscription(db, sub)
+    if not allowed_symbols:
+        return False, "Your subscription plan has no trading symbols configured — contact support."
+    for symbol, lots in [(main_symbol, main_lots)] + list(additional or []):
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            continue
+        if sym not in allowed_symbols:
+            return False, f"Your subscription does not include {sym}."
+        if int(lots or 0) > allowed_symbols[sym]:
+            return False, (f"Maximum lot limit for {sym} exceeded — your plan allows "
+                           f"up to {allowed_symbols[sym]} lot(s).")
+    return True, None
+
+
 # ── Activation / renewal / plan changes ────────────────────────
 
 async def activate_subscription(db: AsyncSession, user_id: int, *, plan_id: Optional[int] = None,
@@ -218,13 +242,13 @@ async def check_trading_permission(db: AsyncSession, user_id: int,
         return False, "Your subscription plan has no trading symbols configured — contact support.", False
 
     requested = [s.upper() for s in requested_symbols if s]
-    for symbol in requested:
-        if symbol not in allowed_symbols:
-            return False, f"Your subscription does not include {symbol}.", False
-
-    for symbol in requested:
-        limit = allowed_symbols.get(symbol, 0)
-        if requested_lots > limit:
-            return False, "Maximum lot limit exceeded.", False
+    ok, reason = await validate_plan_config(
+        db, sub,
+        requested[0] if requested else "",
+        requested_lots,
+        [(s, requested_lots) for s in requested[1:]],
+    )
+    if not ok:
+        return False, reason, False
 
     return True, None, False

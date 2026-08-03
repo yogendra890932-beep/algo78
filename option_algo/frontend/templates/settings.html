@@ -1010,6 +1010,27 @@
     return !!sub && sub.is_trial === true;
   }
 
+  async function planCheck(mode) {
+    // Returns an error string if the plan does not allow the selected
+    // main symbol / lot count for the given execution mode, else ''.
+    if (mode === 'PAPER') return '';
+    const sub = await getSubscription();
+    if (!sub || !sub.allowed_symbols || Object.keys(sub.allowed_symbols).length === 0) {
+      return 'Semi Auto and Fully Automatic trading require an active subscription plan. Please subscribe to continue.';
+    }
+    const symbol = (document.getElementById('c-symbol').value || '').trim().toUpperCase();
+    const lots = parseInt(document.getElementById('c-qty').value, 10) || 1;
+    if (!symbol) return 'Please choose an underlying symbol first.';
+    if (!(symbol in sub.allowed_symbols)) {
+      return `Your subscription plan does not include ${symbol}. Allowed: ${Object.keys(sub.allowed_symbols).join(', ')}.`;
+    }
+    const limit = sub.allowed_symbols[symbol];
+    if (lots > limit) {
+      return `Maximum lot limit for ${symbol} is ${limit} — your plan allows up to ${limit} lot(s).`;
+    }
+    return '';
+  }
+
   async function saveExecutionMode() {
     let execMode = 'PAPER';
     if (document.getElementById('mode-semi').checked) execMode = 'SEMI_AUTO';
@@ -1020,6 +1041,12 @@
         '⚠️ Semi Auto and Fully Automatic trading require a paid plan. Redirecting to subscription…',
         'error');
       setTimeout(() => { window.location.href = '/billing?upgrade=1'; }, 1200);
+      return;
+    }
+
+    const err = await planCheck(execMode);
+    if (err) {
+      showMsg('mode-msg', '❌ ' + err, 'error');
       return;
     }
 
@@ -1045,7 +1072,9 @@
         loadConsentHistory();
       }
     } else {
-      showMsg('mode-msg', '❌ Failed to save mode', 'error');
+      let detail = 'Failed to save mode';
+      try { const j = await r.json(); if (j && j.detail) detail = j.detail; } catch (e) {}
+      showMsg('mode-msg', '❌ ' + detail, 'error');
     }
   }
 
@@ -1181,7 +1210,13 @@
       return;
     }
     const r = await apiFetch('/api/users/config', { method: 'PATCH', body: JSON.stringify(body) });
-    showMsg('cfg-msg', r?.ok ? '✅ Configuration saved' : '❌ Failed', r?.ok ? 'success' : 'error');
+    if (r?.ok) {
+      showMsg('cfg-msg', '✅ Configuration saved', 'success');
+    } else {
+      let detail = 'Configuration could not be saved';
+      try { const j = await r.json(); if (j && j.detail) detail = j.detail; } catch (e) {}
+      showMsg('cfg-msg', '❌ ' + detail, 'error');
+    }
   }
 
   async function saveRisk() {
