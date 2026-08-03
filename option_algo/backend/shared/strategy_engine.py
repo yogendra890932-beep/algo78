@@ -20,7 +20,7 @@ import pandas as pd
 from backend.shared.redis_infra import (
     shared_signal_channel,
     shared_signal_stream,
-    shared_candle_close_channel,
+    shared_premium_close_channel,
 )
 from backend.shared.candle_builder import SharedCandleBuilder
 from backend.shared.indicator_engine import SharedIndicatorEngine
@@ -188,16 +188,19 @@ class SharedStrategyEngine:
         print(f"{_now()} [strategy:{self.symbol}] Stopped")
 
     def _loop(self):
-        """Subscribe to candle close events and evaluate strategies."""
+        """Subscribe to premium candle close events and evaluate strategies."""
         from backend.shared.pubsub_utils import resilient_pubsub_consumer
 
         def _on_event(event: dict):
-            if event.get("interval") == "1m":
+            # Strategies evaluate on the OPTION-PREMIUM 1m bar close —
+            # mirroring legacy engine_v6, which evaluates on opt_df bar
+            # close (never on underlying closes).
+            if event.get("kind") == "premium" and event.get("interval") == "1m":
                 self._on_1m_close(event)
 
         resilient_pubsub_consumer(
             tag=f"strategy:{self.symbol}",
-            channels=[shared_candle_close_channel(self.symbol)],
+            channels=[shared_premium_close_channel(self.symbol)],
             handler=_on_event,
             stop_event=self._stop_event,
         )

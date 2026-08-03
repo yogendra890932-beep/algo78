@@ -17,8 +17,10 @@ from datetime import datetime
 from typing import Optional
 
 from backend.shared.candle_builder import SharedCandleBuilder
+from backend.shared.option_premium_service import SharedOptionPremiumBuilder
 from backend.shared.redis_infra import (
     shared_candle_close_channel,
+    shared_premium_close_channel,
     shared_market_structure_1m,
     shared_market_structure_5m,
     shared_market_structure_state,
@@ -114,29 +116,45 @@ class SharedMarketStructureEngine:
                         ex=STRUCTURE_TTL_SEC)
 
     def _loop(self):
-        """Subscribe to candle close events and run market structure analysis."""
+        """Subscribe to candle close events and run market structure analysis.
+
+        Premium analysis runs on option-premium bar closes
+        (shared_premium_close_channel); underlying analysis runs on
+        underlying candle closes (shared_candle_close_channel).
+        """
         from backend.shared.pubsub_utils import resilient_pubsub_consumer
         resilient_pubsub_consumer(
             tag=f"structure:{self.symbol}",
-            channels=[shared_candle_close_channel(self.symbol)],
+            channels=[shared_candle_close_channel(self.symbol),
+                      shared_premium_close_channel(self.symbol)],
             handler=self._on_candle_close,
             stop_event=self._stop_event,
         )
 
     def _on_candle_close(self, event: dict):
         """Process candle close and update structure analysis."""
-        interval = event.get("interval", "1m")
-
-        if interval == "1m":
+        # Option-premium close (marked with kind="premium") drives the
+        # premium market structure analysis on the OPTION chart. The
+        # underlying index closes drive only the underlying analysis —
+        # index candles must never be treated as premium data.
+        if event.get("kind") == "premium":
             self._run_premium_analysis(event)
-        elif interval == "5m":
+            return
+
+        interval = event.get("interval", "1m")
+        if interval == "5m":
             self._run_underlying_analysis(event, is_confirmed=True)
         else:
-            # Also run underlying on 1m closes for developing analysis
+            # 1m underlying close — developing underlying analysis
             self._run_underlying_analysis(event, is_confirmed=False)
 
     def _run_premium_analysis(self, event: dict):
-        """Run premium (1-minute) market structure analysis."""
+        """Run premium (1-minute) market structure analysis.
+
+        Feeds the OPTION-PREMIUM candle series into the premium engine
+        (mirrors legacy engine_v6._run_premium_analysis, which analyses
+        opt_df). Underlying index candles are never used here.
+        """
         if self._premium_engine is None:
             return
 
@@ -144,7 +162,7 @@ class SharedMarketStructureEngine:
         if self._premium_analyzed_min == now_min:
             return
 
-        df = SharedCandleBuilder.get_1m_df_from_redis(self.symbol)
+        df = SharedOptionPremiumBuilder.get_1m_df(self.symbol)
         if df.empty or len(df) < 5:
             return
 
@@ -361,6 +379,20 @@ class SharedUnderlyingMarketStructureEngine(SharedMarketStructureEngine):
 
     _instances: dict[str, "SharedUnderlyingMarketStructureEngine"] = {}
     _instances_lock = threading.Lock()
+
+    def _on_candle_close(self, event: dict):
+        """Underlying structure only — ignore option-premium closes.
+
+        This engine analyses the 5m UNDERLYING chart exclusively; the
+        option-premium closes are handled by SharedMarketStructureEngine.
+        """
+        if event.get("kind") == "premium":
+            return
+        interval = event.get("interval", "1m")
+        if interval == "5m":
+            self._run_underlying_analysis(event, is_confirmed=True)
+        else:
+            self._run_underlying_analysis(event, is_confirmed=False)
 
     @staticmethod
     def get_structure(symbol: str):

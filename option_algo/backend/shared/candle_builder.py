@@ -40,7 +40,9 @@ from backend.shared.redis_infra import (
     CANDLE_TTL_SEC,
     HISTORICAL_TTL_SEC,
 )
-from backend.shared.shared_cache import is_market_open, last_trading_day
+from backend.shared.shared_cache import (
+    is_market_open, last_trading_day, get_streamer_token,
+)
 from backend.shared.dist_locks import acquire_lock_wait, release_lock
 from backend.services.redis_client import get_redis_sync
 
@@ -83,6 +85,14 @@ class SharedCandleBuilder:
         self._5m_bars: list[dict] = []
         self._lock = threading.Lock()
         self._tick_counter = 0
+
+        # The ONLY tick token that may build the underlying index candle
+        # series. Option-premium ticks are published to the same Redis
+        # tick channel (see SharedMarketDataService) and MUST be ignored
+        # here, otherwise the index candles get polluted with option
+        # premiums (mirrors legacy engine_v6, which feeds _process_ul_tick
+        # only from self.underlying_token).
+        self._underlying_token = get_streamer_token(self.symbol)
 
     def start(self):
         """Start the candle builder in a background thread."""
@@ -275,6 +285,12 @@ class SharedCandleBuilder:
         ts = tick.get("ts", "")
 
         if ltp <= 0:
+            return
+
+        # Only the underlying index token feeds the underlying candle
+        # series. Option-premium ticks for the selected CE/PE arrive on
+        # the same channel and must never be mixed into the index data.
+        if token and token != self._underlying_token:
             return
 
         now = datetime.now()

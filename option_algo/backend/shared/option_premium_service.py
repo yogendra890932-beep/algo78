@@ -272,7 +272,8 @@ class SharedOptionPremiumBuilder:
                         r = self._r
                         r.publish(shared_premium_close_channel(self.symbol),
                                   json.dumps({"symbol": self.symbol, "interval": "1m",
-                                              "candle": closed, "ts": now_1m}, default=str))
+                                              "candle": closed, "ts": now_1m,
+                                              "kind": "premium"}, default=str))
                 self._cur_min = now_1m
                 self._cur = {
                     "open": ltp, "high": ltp, "low": ltp,

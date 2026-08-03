@@ -20,6 +20,10 @@ import time
 from datetime import datetime
 from typing import Optional, Callable
 
+import pandas as pd
+import upstox_client
+from upstox_client.rest import ApiException
+
 from backend.shared.redis_infra import (
     shared_signal_channel,
     user_execution_state,
@@ -84,6 +88,11 @@ class UserExecutionManager:
 
         # Last known LTP per symbol (used by the Telegram /status command)
         self._last_ltp: dict[str, float] = {}
+
+        # ATR trailing-SL state per symbol (mirrors legacy engine_v6's
+        # trailing_sl / _sl_mod_ts on the OPTION-PREMIUM chart).
+        self._trailing_sl: dict[str, float] = {}
+        self._sl_mod_ts: dict[str, float] = {}
 
         # Risk tracking
         self._trades_today: int = 0
@@ -380,6 +389,9 @@ class UserExecutionManager:
                 "near_target": round(target * (1 - self.config.get("target_near_pct", 0.003)), 2)
                                 if target else 0,
             }
+            # Trail from the initial stop-loss, like legacy _place_trade.
+            self._trailing_sl[symbol] = stop_loss
+            self._sl_mod_ts[symbol] = time.time()
 
         self._record_entry()
 
@@ -476,11 +488,15 @@ class UserExecutionManager:
             if not pos:
                 return
             pos = dict(pos)
-        if not self.paper_mode:
-            return
+        # Per-position mode (mirrors legacy _manage_position, which runs
+        # for BOTH paper and live). Live positions are closed by the
+        # exchange SL-M order; we still monitor SL fills (webhook/API),
+        # book targets, and ATR-trail the SL — exactly like legacy.
+        is_live = not pos.get("paper_mode", self.paper_mode)
 
         # Current LTP: prefer the position's option contract from the
-        # shared tick buffer, fall back to the last signal LTP.
+        # shared tick buffer (option premium — NEVER the index), fall
+        # back to the last known option-premium LTP.
         ltp = self._last_ltp.get(sym)
         ik = pos.get("instrument_key")
         if ik:
@@ -494,19 +510,117 @@ class UserExecutionManager:
         if not ltp:
             return
 
-        # Stop-loss hit
+        # Direction flip → the option rolled away from this position's
+        # contract; exit like legacy _emergency_exit.
+        try:
+            from backend.shared.option_premium_service import SharedOptionPremiumBuilder
+            state = SharedOptionPremiumBuilder.get_state(sym)
+            if (state and state.get("opt_type") and pos.get("opt_type")
+                    and state["opt_type"] != pos["opt_type"]):
+                self._close_position(sym, ltp, "DIRECTION_FLIP_EXIT")
+                return
+        except Exception:
+            pass
+
+        # Target / near-target first (mirrors legacy _manage_position,
+        # which books profit as soon as LTP >= near_target).
+        near = pos.get("near_target") or pos.get("target")
+        target = pos.get("target") or 0
+        if near and ltp >= float(near):
+            reason = "TARGET_HIT" if (target and ltp >= float(target)) else "NEAR_TARGET"
+            self._close_position(sym, ltp, reason)
+            return
+
+        # Stop-loss hit — paper book auto-fills; live checked via
+        # webhook + single Upstox API call (mirrors _sl_filled_live).
         sl_id = pos.get("sl_order_id")
         if sl_id:
-            from backend.services.paper_trading import get_paper_book
-            fill = get_paper_book(self.user_id).check_sl_filled(sl_id, ltp)
-            if fill:
-                self._close_position(sym, fill, "SL_HIT")
-                return
+            if not is_live:
+                from backend.services.paper_trading import get_paper_book
+                fill = get_paper_book(self.user_id).check_sl_filled(sl_id, ltp)
+                if fill:
+                    self._close_position(sym, fill, "SL_HIT")
+                    return
+            else:
+                if self._sl_filled_live(sl_id):
+                    exit_p = self._get_fill_price_live(sl_id, timeout=5) \
+                        or pos.get("sl_trigger", 0)
+                    self._close_position(sym, exit_p, "SL_HIT")
+                    return
 
-        # Target hit (exit at current LTP)
-        near = pos.get("near_target") or pos.get("target")
-        if near and ltp >= float(near):
-            self._close_position(sym, ltp, "TARGET_HIT")
+        # ATR trailing SL (mirrors legacy _maybe_trail)
+        self._maybe_trail(sym, ltp)
+
+    def _maybe_trail(self, sym: str, ltp: float):
+        """
+        ATR(7) x 1.2 trailing SL on the option-premium chart
+        (mirrors legacy engine_v6._maybe_trail). Only the position's own
+        premium contract data is used — index data is never mixed in.
+        """
+        if time.time() - self._sl_mod_ts.get(sym, 0) < 8:
+            return
+        try:
+            from backend.shared.option_premium_service import SharedOptionPremiumBuilder
+            df = SharedOptionPremiumBuilder.get_1m_df(sym)
+            if df.empty or len(df) < 8:
+                return
+            df["TR"] = df["high"] - df["low"]
+            atr_val = float(df["TR"].rolling(7).mean().iloc[-1])
+            if pd.isna(atr_val) or atr_val <= 0:
+                return
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] Trail {sym} err: {e}")
+            return
+
+        proposed = round(ltp - atr_val * 1.2, 2)
+        cur = self._trailing_sl.get(sym, 0)
+        if proposed <= cur or proposed >= ltp:
+            return
+        if abs(proposed - cur) / max(cur, 1e-9) < 0.0006:
+            return
+
+        old_sl = cur
+        opt_type, strike = "", None
+        with self._positions_lock:
+            pos = self._positions.get(sym)
+            if not pos:
+                return
+            is_live = not pos.get("paper_mode", self.paper_mode)
+            sl_id = pos.get("sl_order_id")
+            if sl_id:
+                try:
+                    if not is_live:
+                        from backend.services.paper_trading import get_paper_book
+                        get_paper_book(self.user_id).modify_sl_order(sl_id, proposed)
+                    else:
+                        self._modify_sl_live(sl_id, proposed, pos.get("qty", 0))
+                except Exception as e:
+                    # Legacy returns early on a failed LIVE trail so local
+                    # state never desyncs from the broker SL.
+                    if is_live:
+                        print(f"{_now()} [exec:u{self.user_id}] "
+                              f"Live trail SL {sl_id} failed: {e}")
+                        return
+            pos["sl_trigger"] = proposed
+            self._trailing_sl[sym] = proposed
+            self._sl_mod_ts[sym] = time.time()
+            opt_type = pos.get("opt_type", "")
+            strike = pos.get("strike")
+
+        print(f"{_now()} [exec:u{self.user_id}] TRAIL {sym} {old_sl}->{proposed} LTP={ltp}")
+
+        if self.on_trade:
+            self.on_trade({
+                "event": "SL_TRAIL",
+                "user_id": self.user_id,
+                "mode": "paper" if self.paper_mode else "live",
+                "symbol": sym,
+                "new_sl": proposed,
+                "ltp": ltp,
+                "opt_type": opt_type,
+                "strike": strike,
+            })
+        self._push_position_snapshot(sym)
 
     def _close_position(self, symbol: str, exit_price: float, status: str):
         """Close a position: cancel SL, compute P&L, notify, publish snapshot."""
@@ -515,12 +629,33 @@ class UserExecutionManager:
         if not pos:
             return
 
-        if pos.get("sl_order_id") and self.paper_mode:
+        self._trailing_sl.pop(symbol, None)
+        self._sl_mod_ts.pop(symbol, None)
+
+        is_live = not pos.get("paper_mode", self.paper_mode)
+        sl_id = pos.get("sl_order_id")
+        if sl_id:
             try:
-                from backend.services.paper_trading import get_paper_book
-                get_paper_book(self.user_id).cancel_order(pos["sl_order_id"])
+                if not is_live:
+                    from backend.services.paper_trading import get_paper_book
+                    get_paper_book(self.user_id).cancel_order(sl_id)
+                else:
+                    self._cancel_sl_live(sl_id)
             except Exception:
                 pass
+
+        # Live non-SL exits must close the broker position with a market
+        # SELL (mirrors legacy _book_profit / _emergency_exit). On SL_HIT
+        # the exchange SL-M order already closed it, so no exit order.
+        if is_live and status != "SL_HIT":
+            try:
+                qty = pos.get("qty", 0)
+                self._place_order_live(
+                    "SELL", qty,
+                    instrument_key=pos.get("instrument_key") or None,
+                )
+            except Exception as e:
+                print(f"{_now()} [exec:u{self.user_id}] Live exit SELL failed: {e}")
 
         entry = pos.get("entry_price", 0)
         if not exit_price:
@@ -536,7 +671,7 @@ class UserExecutionManager:
             self.on_trade({
                 "event": "EXIT",
                 "user_id": self.user_id,
-                "mode": "paper" if self.paper_mode else "live",
+                "mode": "live" if is_live else "paper",
                 "symbol": symbol,
                 "trading_symbol": pos.get("trading_symbol", symbol),
                 "entry_price": entry,
@@ -557,6 +692,138 @@ class UserExecutionManager:
         print(f"{_now()} [exec:u{self.user_id}] EXIT {symbol} {status} "
               f"@ {exit_price} pnl={pnl}")
         self._push_position_snapshot(symbol)
+
+    # ================================================================
+    # LIVE BROKER HELPERS (mirror legacy engine_v6)
+    # ================================================================
+
+    def _api_client(self):
+        """Upstox API client bound to this user's access token."""
+        cfg = upstox_client.Configuration()
+        cfg.access_token = self.access_token
+        return upstox_client.ApiClient(cfg)
+
+    def _place_order_live(self, side: str, qty: int,
+                          order_type: str = "MARKET",
+                          trigger: float = 0,
+                          instrument_key: str = None) -> Optional[str]:
+        """Place a live order via Upstox (mirrors legacy _place_order)."""
+        if not instrument_key:
+            return None
+        tag = f"algo_bot:{self.user_id}"
+        order_type_api = order_type
+        limit_price = 0
+        if order_type == "SL-M":
+            order_type_api = "SL"
+            limit_price = round(trigger * 0.995, 2) if side == "SELL" \
+                else round(trigger * 1.005, 2)
+        api = upstox_client.OrderApiV3(self._api_client())
+        body = upstox_client.PlaceOrderV3Request(
+            quantity=qty, product=self.config.get("product", "I"),
+            validity="DAY", price=limit_price, tag=tag,
+            instrument_token=instrument_key, order_type=order_type_api,
+            transaction_type=side, disclosed_quantity=0,
+            trigger_price=trigger, is_amo=False, slice=False,
+        )
+        try:
+            resp = api.place_order(body)
+            oid = self._get_order_id(resp)
+        except ApiException as e:
+            print(f"{_now()} [exec:u{self.user_id}] Live order failed: "
+                  f"{getattr(e, 'body', str(e))}")
+            return None
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] Live order failed: {e}")
+            return None
+        if oid:
+            try:
+                r = get_redis_sync()
+                r.sadd(f"bot:orders:{self.user_id}", oid)
+                r.expire(f"bot:orders:{self.user_id}", 86400)
+            except Exception:
+                pass
+        return oid
+
+    @staticmethod
+    def _get_order_id(resp) -> Optional[str]:
+        try:
+            if isinstance(resp, dict):
+                d = resp.get("data", {})
+                if isinstance(d, dict):
+                    if "order_ids" in d:
+                        return str(d["order_ids"][0])
+                    for k in ("order_id", "orderId", "id"):
+                        if k in d:
+                            return str(d[k])
+            if hasattr(resp, "data") and hasattr(resp.data, "order_ids"):
+                return str(resp.data.order_ids[0])
+            if hasattr(resp, "order_id"):
+                return str(resp.order_id)
+        except Exception:
+            pass
+        return None
+
+    def _cancel_sl_live(self, sl_id: str):
+        """Cancel a live SL order via Upstox."""
+        try:
+            upstox_client.OrderApiV3(self._api_client()).cancel_order(sl_id)
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] Live SL cancel {sl_id} "
+                  f"failed: {e}")
+
+    def _modify_sl_live(self, sl_id: str, new_sl: float, qty: int):
+        """Trail a live SL order (SL with limit = trigger x 0.995)."""
+        limit_price = round(new_sl * 0.995, 2)
+        body = upstox_client.ModifyOrderRequest(
+            order_id=sl_id, price=limit_price, trigger_price=new_sl,
+            order_type="SL", quantity=qty, validity="DAY",
+        )
+        api = upstox_client.OrderApiV3(self._api_client())
+        resp = api.modify_order(body=body)
+        print(f"{_now()} [exec:u{self.user_id}] Live trail SL {sl_id} "
+              f"-> trigger {new_sl} (limit {limit_price})")
+
+    def _sl_filled_live(self, sl_id: str) -> bool:
+        """Webhook check (O(1)) + single Upstox API fallback."""
+        try:
+            from backend.services.order_store import is_order_filled_sync
+            if is_order_filled_sync(sl_id):
+                return True
+        except Exception:
+            pass
+        try:
+            resp = upstox_client.OrderApiV3(self._api_client()).get_order_details(sl_id)
+            if resp and hasattr(resp, "data"):
+                st = str(getattr(resp.data, "order_status",
+                                 getattr(resp.data, "status", ""))).lower()
+                return st in ("complete", "filled")
+        except Exception:
+            pass
+        return False
+
+    def _get_fill_price_live(self, order_id: str, timeout: int = 5) -> Optional[float]:
+        """Webhook fill wait, then Upstox API polling fallback."""
+        try:
+            from backend.services.order_store import wait_for_fill_sync
+            fill = wait_for_fill_sync(order_id, timeout=float(timeout))
+            if fill is not None:
+                return fill
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] webhook fill wait error: {e}")
+        api = upstox_client.OrderApiV3(self._api_client())
+        t0 = time.time()
+        while time.time() - t0 < 5:
+            try:
+                resp = api.get_order_details(order_id)
+                if resp and hasattr(resp, "data"):
+                    st = str(getattr(resp.data, "order_status",
+                                     getattr(resp.data, "status", ""))).lower()
+                    if st in ("complete", "filled"):
+                        return float(resp.data.average_price)
+            except Exception:
+                pass
+            time.sleep(0.3)
+        return None
 
     # ================================================================
     # RISK MANAGEMENT
@@ -744,6 +1011,26 @@ class _MockEngine:
             if pos is not None:
                 pos["sl_order_id"] = value
 
+    # ── Trailing SL state (delegates to the manager, per symbol) ──
+    # Used by the approve path (place_order_from_engines) and
+    # modify_sl, mirroring legacy engine_v6.trailing_sl / _sl_mod_ts.
+
+    @property
+    def trailing_sl(self) -> float:
+        return self._mgr._trailing_sl.get(self.symbol, 0)
+
+    @trailing_sl.setter
+    def trailing_sl(self, value: float):
+        self._mgr._trailing_sl[self.symbol] = value
+
+    @property
+    def _sl_mod_ts(self) -> float:
+        return self._mgr._sl_mod_ts.get(self.symbol, 0)
+
+    @_sl_mod_ts.setter
+    def _sl_mod_ts(self, value: float):
+        self._mgr._sl_mod_ts[self.symbol] = value
+
     @property
     def opt_type(self) -> str:
         pos = self.position
@@ -821,12 +1108,19 @@ class _MockEngine:
             if not pos:
                 return
             pos["sl_trigger"] = new_sl
+        self.trailing_sl = new_sl
+        self._sl_mod_ts = time.time()
 
-        if self.sl_order_id and self.paper_mode:
+        is_live = not (self.position or {}).get("paper_mode", self.paper_mode)
+        if self.sl_order_id:
             try:
-                from backend.services.paper_trading import get_paper_book
-                get_paper_book(self._mgr.user_id).modify_sl_order(
-                    self.sl_order_id, new_sl)
+                if not is_live:
+                    from backend.services.paper_trading import get_paper_book
+                    get_paper_book(self._mgr.user_id).modify_sl_order(
+                        self.sl_order_id, new_sl)
+                else:
+                    self._mgr._modify_sl_live(
+                        self.sl_order_id, new_sl, (self.position or {}).get("qty", 0))
             except Exception:
                 pass
 
@@ -837,7 +1131,7 @@ class _MockEngine:
             self._mgr.on_trade({
                 "event": "SL_TRAIL",
                 "user_id": self._mgr.user_id,
-                "mode": "paper" if self.paper_mode else "live",
+                "mode": "live" if is_live else "paper",
                 "symbol": self.symbol,
                 "trading_symbol": pos.get("trading_symbol", self.symbol),
                 "new_sl": new_sl,
