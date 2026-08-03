@@ -55,6 +55,7 @@ from backend.shared.market_structure_engine import (
     SharedUnderlyingMarketStructureEngine,
 )
 from backend.shared.option_chain_service import SharedOptionChainService
+from backend.shared.option_premium_service import SharedOptionPremiumBuilder
 from backend.shared.strategy_engine import SharedStrategyEngine
 from backend.shared.symbol_manager import (
     add_subscriber, remove_subscriber, get_user_symbols, get_active_symbols,
@@ -254,6 +255,7 @@ class SharedWorkerOrchestrator:
             (SharedUnderlyingMarketStructureEngine, "Structure(5m)", SharedUnderlyingMarketStructureEngine._instances_lock),
             (SharedIndicatorEngine, "Indicators", SharedIndicatorEngine._instances_lock),
             (SharedCandleBuilder, "CandleBuilder", SharedCandleBuilder._instances_lock),
+            (SharedOptionPremiumBuilder, "OptionPremium", SharedOptionPremiumBuilder._instances_lock),
             (SharedMarketDataService, "MarketData", SharedMarketDataService._instances_lock),
         ]
         for svc_cls, name, lock in services:
@@ -319,6 +321,9 @@ class SharedWorkerOrchestrator:
                 SharedCandleBuilder.get_or_create(symbol, access_token)
                 print(f"{_now()} [shared-orch] CandleBuilder: {symbol}")
 
+                SharedOptionPremiumBuilder.get_or_create(symbol, access_token)
+                print(f"{_now()} [shared-orch] OptionPremium: {symbol}")
+
                 SharedIndicatorEngine.get_or_create(symbol)
                 print(f"{_now()} [shared-orch] Indicators: {symbol}")
 
@@ -357,6 +362,7 @@ class SharedWorkerOrchestrator:
         services = [
             (SharedMarketDataService, SharedMarketDataService._instances_lock),
             (SharedCandleBuilder, SharedCandleBuilder._instances_lock),
+            (SharedOptionPremiumBuilder, SharedOptionPremiumBuilder._instances_lock),
             (SharedIndicatorEngine, SharedIndicatorEngine._instances_lock),
             (SharedMarketStructureEngine, SharedMarketStructureEngine._instances_lock),
             (SharedUnderlyingMarketStructureEngine, SharedUnderlyingMarketStructureEngine._instances_lock),

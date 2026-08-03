@@ -45,6 +45,22 @@ def shared_candle_current_5m(symbol: str) -> str:
     """Redis Hash: current developing 5-minute candle (OHLCV)."""
     return f"shared:candle:cur_5m:{symbol}"
 
+def shared_premium_candles_1m(symbol: str) -> str:
+    """Redis JSON key: option-premium 1-minute candles (serialized)."""
+    return f"shared:premium:candles:1m:{symbol}"
+
+def shared_premium_current_1m(symbol: str) -> str:
+    """Redis Hash: current developing option-premium 1-minute candle (OHLCV)."""
+    return f"shared:premium:candle:cur_1m:{symbol}"
+
+def shared_premium_close_channel(symbol: str) -> str:
+    """Redis Pub/Sub channel: option-premium candle-close notifications."""
+    return f"shared:premium_close:{symbol}"
+
+def shared_premium_state(symbol: str) -> str:
+    """Redis Hash: currently selected option (instrument_key, opt_type, strike, expiry)."""
+    return f"shared:premium:state:{symbol}"
+
 # ================================================================
 # SHARED INDICATOR KEYS
 # ================================================================

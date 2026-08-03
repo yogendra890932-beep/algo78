@@ -107,7 +107,18 @@ class SharedIndicatorEngine:
               f"ema9={ema9} rsi={rsi} atr={atr} vwap={vwap}")
 
     def _calculate_all(self, df: pd.DataFrame, interval: str) -> dict:
-        """Calculate all indicators from a DataFrame."""
+        """Calculate all indicators from a DataFrame and store VWAP in Redis."""
+        return self.compute_indicators(df, interval, r=self._r, symbol=self.symbol)
+
+    @staticmethod
+    def compute_indicators(df: pd.DataFrame, interval: str = "1m",
+                           r=None, symbol: str = "") -> dict:
+        """Pure indicator computation from a DataFrame.
+
+        Stateless — used both by the per-symbol indicator engine (which
+        stores the result + VWAP in Redis) and by the strategy engine
+        when evaluating strategies against the option-premium chart.
+        """
         if df.empty:
             return {}
 
@@ -145,7 +156,8 @@ class SharedIndicatorEngine:
             cum_vol = df_vwap.groupby("date")["vol"].cumsum()
             vwap_val = float(cum_tpv.iloc[-1] / cum_vol.iloc[-1]) if cum_vol.iloc[-1] > 0 else 0
             result["vwap"] = vwap_val
-            self._r.set(shared_vwap(self.symbol), str(result["vwap"]), ex=INDICATOR_TTL_SEC)
+            if r is not None and symbol:
+                r.set(shared_vwap(symbol.upper()), str(result["vwap"]), ex=INDICATOR_TTL_SEC)
         except Exception:
             pass
 

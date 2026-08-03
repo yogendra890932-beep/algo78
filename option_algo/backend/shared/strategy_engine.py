@@ -26,6 +26,7 @@ from backend.shared.candle_builder import SharedCandleBuilder
 from backend.shared.indicator_engine import SharedIndicatorEngine
 from backend.shared.market_structure_engine import SharedMarketStructureEngine
 from backend.shared.option_chain_service import SharedOptionChainService
+from backend.shared.option_premium_service import SharedOptionPremiumBuilder
 from backend.services.redis_client import get_redis_sync
 from backend.shared.shared_cache import get_lot_size, is_market_open
 from backend.services.state_store import set_bot_status_sync
@@ -207,14 +208,15 @@ class SharedStrategyEngine:
             self._evaluate_all()
 
     def _evaluate_all(self):
-        """Run all 7 strategies and publish signals."""
+        """Run all 7 strategies on the option-premium chart and publish signals.
+
+        The underlying series is used only for direction + regime; every
+        strategy is evaluated against the selected option's premium
+        candles (mirroring legacy engine_v6, which trades opt_df).
+        """
         # Get shared data
         df_1m = SharedCandleBuilder.get_1m_df_from_redis(self.symbol)
         if df_1m.empty or len(df_1m) < 25:
-            return
-
-        indicators = SharedIndicatorEngine.get_indicators(self.symbol)
-        if not indicators:
             return
 
         # Determine direction from underlying
@@ -222,51 +224,73 @@ class SharedStrategyEngine:
         if direction is None:
             return
 
-        # Regime analysis
+        opt_type = self._get_opt_type(direction)
+
+        # Regime analysis (underlying)
         self._regime.analyse(df_1m)
         if time.time() - self._last_regime_log > 300:
             print(f"{_now()} [strategy:{self.symbol}] Regime={self._regime.regime}")
             self._last_regime_log = time.time()
-        allowed = self._regime.get_allowed_strategies("CE")
+        allowed = self._regime.get_allowed_strategies(opt_type)
+
+        # Option-premium chart — this is what we trade
+        premium_df = SharedOptionPremiumBuilder.get_1m_df(self.symbol)
+        if premium_df.empty or len(premium_df) < 25:
+            print(f"{_now()} [strategy:{self.symbol}] Skip evaluate — "
+                  f"premium bars={len(premium_df)} (< {25})")
+            return
+
+        state = SharedOptionPremiumBuilder.get_state(self.symbol)
+        if not state or state.get("opt_type") != opt_type:
+            # Option not yet rolled to match direction — wait
+            print(f"{_now()} [strategy:{self.symbol}] Skip evaluate — "
+                  f"option {state.get('opt_type') if state else 'None'} "
+                  f"!= {opt_type} (roll pending)")
+            return
+
+        indicators = SharedIndicatorEngine.compute_indicators(premium_df, "1m")
+        if not indicators:
+            return
 
         # Evaluate all strategies
         signals = []
 
         if "pullback" in allowed:
-            s = self._eval_pullback(df_1m, indicators, direction)
+            s = self._eval_pullback(premium_df, indicators, direction)
             if s: signals.append(s)
 
         if "trend_follow" in allowed:
-            s = self._eval_trend_follow(df_1m, indicators, direction)
+            s = self._eval_trend_follow(premium_df, indicators, direction)
             if s: signals.append(s)
 
         if "breakout" in allowed:
-            s = self._eval_breakout(df_1m, indicators, direction)
+            s = self._eval_breakout(premium_df, indicators, direction)
             if s: signals.append(s)
 
         if "vwap_bounce" in allowed:
-            s = self._eval_vwap_bounce(df_1m, indicators, direction)
+            s = self._eval_vwap_bounce(premium_df, indicators, direction)
             if s: signals.append(s)
 
         if "ema_cross" in allowed:
-            s = self._eval_ema_cross(df_1m, indicators, direction)
+            s = self._eval_ema_cross(premium_df, indicators, direction)
             if s: signals.append(s)
 
         if "vcgb" in allowed:
-            s = self._eval_vcgb(df_1m, indicators, direction)
+            s = self._eval_vcgb(premium_df, indicators, direction)
             if s: signals.append(s)
 
         # Evaluate unified structure-based strategy
-        s = self._eval_unified_strategy(df_1m, direction)
+        s = self._eval_unified_strategy(premium_df, direction, indicators)
         if s: signals.append(s)
 
         # Publish signals
         self._prev_direction = direction
 
-        ltp = float(df_1m["close"].iloc[-1])
+        ltp = float(premium_df["close"].iloc[-1])
         print(f"{_now()} [strategy:{self.symbol}] Evaluate 1m "
               f"dir={direction} regime={self._regime.regime} "
-              f"bars={len(df_1m)} ltp={ltp} signals={len(signals)}")
+              f"opt={state.get('trading_symbol')} "
+              f"premium_bars={len(premium_df)} ltp={ltp} signals={len(signals)}")
 
         for signal in signals:
             self._publish_signal(signal)
@@ -282,13 +306,26 @@ class SharedStrategyEngine:
 
     def _publish_signal(self, signal: dict):
         """Publish a signal to Redis Pub/Sub and Stream with retry."""
-        signal_id = signal.get("id", "")
+
+        # Attach the actual option instrument the signal trades
+        state = SharedOptionPremiumBuilder.get_state(self.symbol)
+        if state:
+            signal.setdefault("instrument_key", state.get("instrument_key") or "")
+            signal.setdefault("trading_symbol", state.get("trading_symbol") or "")
+            signal.setdefault("strike", state.get("strike"))
+            signal.setdefault("expiry", state.get("expiry_str") or "")
+            signal.setdefault("opt_type", state.get("opt_type") or signal.get("opt_type", ""))
+
+        signal_id = signal.get("id") or (
+            f"{self.symbol}:{signal.get('strategy', '')}:{signal.get('timestamp', '')}")
+        signal["id"] = signal_id
 
         print(f"{_now()} [strategy:{self.symbol}] SIGNAL {signal.get('strategy','')} "
-              f"{signal.get('opt_type','')} @ {signal.get('entry_price')} "
+              f"{signal.get('opt_type','')} {signal.get('trading_symbol','')} "
+              f"@ {signal.get('entry_price')} "
               f"SL {signal.get('stop_loss')} regime={signal.get('regime','')}")
 
-        if hasattr(self, "_last_published_id") and signal_id and signal_id == getattr(self, "_last_published_id", ""):
+        if getattr(self, "_last_published_id", "") == signal_id:
             return
 
         r = self._r
@@ -549,7 +586,8 @@ class SharedStrategyEngine:
             "timestamp": datetime.utcnow().isoformat(),
         }
 
-    def _eval_unified_strategy(self, df: pd.DataFrame, direction: str) -> Optional[dict]:
+    def _eval_unified_strategy(self, df: pd.DataFrame, direction: str,
+                               ind: dict) -> Optional[dict]:
         opt_type = self._get_opt_type(direction)
         is_ce = direction == "BULL"
 
@@ -593,7 +631,7 @@ class SharedStrategyEngine:
         if under_phase not in ("STRONG_TREND", "WEAK_TREND"):
             return None
 
-        inds = SharedIndicatorEngine.get_indicators(self.symbol)
+        inds = ind
         if not inds:
             return None
 
