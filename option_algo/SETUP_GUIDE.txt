@@ -387,8 +387,10 @@ INSTALL REDIS
     sudo apt install -y redis-server
     sudo systemctl enable --now redis-server
 
-  Windows (dev only): download from
-    https://github.com/microsoftarchive/redis/releases
+  Windows (dev only): this app uses Redis Streams (XADD), which
+  requires Redis 5.0+. The old microsoftarchive/redis build (3.x)
+  does NOT support Streams. Use a 5.0+ Windows port instead:
+    https://github.com/tporadowski/redis/releases   (Redis 5.0.14.1)
     or run via WSL / Docker:
     docker run -d -p 6379:6379 redis:7-alpine
 

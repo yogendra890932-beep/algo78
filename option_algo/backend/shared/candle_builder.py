@@ -47,6 +47,12 @@ from backend.services.redis_client import get_redis_sync
 MAX_1M_BARS = 750  # ~12.5 hours at 1-min
 MAX_5M_BARS = 150  # ~12.5 hours at 5-min
 
+# Minimum 1m bars the shared strategy engine needs before it will
+# evaluate (strategy_engine._evaluate_all returns when len(df) < 25).
+# Below this, the candle builder fetches warm candles from Upstox so
+# strategies can trade from minute 1 (like legacy engine_v6).
+WARM_MIN_BARS = 25
+
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -86,12 +92,88 @@ class SharedCandleBuilder:
         # Load existing data from Redis (recovery)
         self._load_from_redis()
 
+        # Preload historical + intraday candles from Upstox so the
+        # strategy engine has enough bars to trade immediately.
+        self._warm_up()
+
         self._thread = threading.Thread(
             target=self._loop, daemon=True,
             name=f"candle-{self.symbol}",
         )
         self._thread.start()
         print(f"{_now()} [candle:{self.symbol}] Started (1m={len(self._1m_bars)}, 5m={len(self._5m_bars)})")
+
+    def _warm_up(self):
+        """
+        Preload warm candles (previous days + today's intraday) from
+        Upstox into Redis, mirroring legacy engine_v6's warm-load so
+        strategies/indicators have 25+ bars from minute 1.
+
+        No-op when enough bars already exist (e.g. after a restart
+        with data still cached in Redis) or for unknown symbols.
+        """
+        if len(self._1m_bars) >= WARM_MIN_BARS:
+            return
+
+        try:
+            from backend.engine.history_loader import load_warm_candles
+            from backend.shared.shared_cache import KNOWN_HISTORY_KEYS
+
+            history_key = KNOWN_HISTORY_KEYS.get(self.symbol)
+            if not history_key:
+                print(f"{_now()} [candle:{self.symbol}] Warm-up skipped — "
+                      f"no known history key for symbol")
+                return
+
+            print(f"{_now()} [candle:{self.symbol}] Warm-up: fetching "
+                  f"{history_key} candles...")
+            df = load_warm_candles(history_key, self.access_token)
+            if df.empty:
+                print(f"{_now()} [candle:{self.symbol}] Warm-up: no data")
+                return
+
+            warm = df[["time", "open", "high", "low", "close", "volume"]].copy()
+            warm["time"] = pd.to_datetime(warm["time"])
+
+            with self._lock:
+                merged = pd.concat(
+                    [warm, pd.DataFrame(self._1m_bars)], ignore_index=True
+                )
+                merged["time"] = pd.to_datetime(merged["time"])
+                merged = merged.sort_values("time").drop_duplicates(
+                    subset=["time"], keep="last").reset_index(drop=True)
+                merged = merged.dropna(subset=["open", "high", "low", "close"])
+
+                self._1m_bars = merged.to_dict("records")
+                self._5m_bars = self._build_5m_from_1m(self._1m_bars)
+
+            self._save_to_redis()
+            print(f"{_now()} [candle:{self.symbol}] Warm-up done: "
+                  f"1m={len(self._1m_bars)} 5m={len(self._5m_bars)} bars")
+        except Exception as e:
+            print(f"{_now()} [candle:{self.symbol}] Warm-up failed: {e}")
+
+    @staticmethod
+    def _build_5m_from_1m(bars: list) -> list:
+        """Aggregate 1m bars into 5m bars (time = 5m bucket end,
+        matching SharedCandleBuilder._close_5m_bar semantics)."""
+        if not bars:
+            return []
+        df = pd.DataFrame(bars)
+        df["time"] = pd.to_datetime(df["time"])
+        df = df.sort_values("time")
+        df["bucket_end"] = df["time"].dt.floor("5min") + pd.Timedelta(minutes=5)
+        out = []
+        for _, grp in df.groupby("bucket_end"):
+            out.append({
+                "time": grp["bucket_end"].iloc[0],
+                "open": float(grp["open"].iloc[0]),
+                "high": float(grp["high"].max()),
+                "low": float(grp["low"].min()),
+                "close": float(grp["close"].iloc[-1]),
+                "volume": float(grp["volume"].sum()),
+            })
+        return out
 
     def stop(self):
         """Stop the candle builder."""
