@@ -54,7 +54,13 @@ class UserExecutionManager:
         self.on_status_change = on_status_change
         self.on_trade = on_trade
 
-        self.paper_mode = config.get("paper_mode", True)
+        # Shared mode is paper-only for now — live order placement is
+        # not implemented (see _place_order). paper_mode is therefore
+        # always True; execution_mode (from config) only controls how
+        # signals are routed (PAPER = auto-paper, SEMI_AUTO =
+        # approval-paper, AUTO = not yet implemented).
+        self.paper_mode = True
+        self.execution_mode = config.get("execution_mode", "PAPER")
         self.symbol = config.get("underlying_symbol", "NIFTY")
         self.symbols: set[str] = {self.symbol.upper()}
 
@@ -306,16 +312,21 @@ class UserExecutionManager:
         self._route_execution(enriched_signal)
 
     def _route_execution(self, signal: dict):
-        """Route signal to Paper / Semi-Auto / Auto execution."""
-        execution_mode = self.config.get("execution_mode", "PAPER")
+        """Route signal to Paper / Semi-Auto / Auto execution.
+
+        Shared mode executes everything in paper; execution_mode decides
+        whether paper trades are placed immediately (PAPER), wait for
+        approval (SEMI_AUTO), or are deferred (AUTO — unimplemented).
+        """
+        execution_mode = self.execution_mode
         print(f"{_now()} [exec:u{self.user_id}] Route signal → mode={execution_mode}")
 
-        if execution_mode == "PAPER" or self.paper_mode:
-            self._execute_paper(signal)
-        elif execution_mode == "SEMI_AUTO":
+        if execution_mode == "SEMI_AUTO":
             self._execute_semi_auto(signal)
         elif execution_mode == "AUTO":
             self._execute_auto(signal)
+        else:
+            self._execute_paper(signal)
 
     def _execute_paper(self, signal: dict):
         """Execute paper trade."""
