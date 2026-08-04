@@ -170,6 +170,15 @@ async def delete_plan(plan_id: int, admin=Depends(get_admin_user), db: AsyncSess
     plan = await repo.get_by_id(plan_id)
     if not plan:
         raise HTTPException(404, "Plan not found")
+    refs = await repo.count_references(plan_id)
+    if refs:
+        # Hard-deleting would violate subscriptions_plan_id_fkey and
+        # destroy billing history — admins must deactivate instead.
+        raise HTTPException(
+            409,
+            f"Plan is referenced by {refs} subscription/payment record(s); "
+            "deactivate it (set is_active=false) instead of deleting.",
+        )
     await repo.delete(plan)
     await db.commit()
     billing_cache.refresh(force=True)

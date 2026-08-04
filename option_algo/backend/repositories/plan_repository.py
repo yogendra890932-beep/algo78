@@ -51,3 +51,18 @@ class PlanRepository:
 
     async def delete(self, plan: SubscriptionPlan) -> None:
         await self.db.delete(plan)
+
+    async def count_references(self, plan_id: int) -> int:
+        """Count rows that reference a plan (subscriptions history +
+        pending upgrades + payments) — used to refuse hard deletes that
+        would violate FK constraints / corrupt billing history."""
+        from sqlalchemy import func, or_, select
+        from backend.db.models import Payment, Subscription
+        active = await self.db.execute(
+            select(func.count()).select_from(Subscription).where(
+                or_(Subscription.plan_id == plan_id,
+                    Subscription.pending_plan_id == plan_id)))
+        pay = await self.db.execute(
+            select(func.count()).select_from(Payment).where(
+                Payment.plan_id == plan_id))
+        return int(active.scalar_one() or 0) + int(pay.scalar_one() or 0)
