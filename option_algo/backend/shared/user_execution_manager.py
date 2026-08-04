@@ -26,6 +26,7 @@ from upstox_client.rest import ApiException
 
 from backend.shared.redis_infra import (
     shared_signal_channel,
+    shared_tick_channel,
     user_execution_state,
     user_position_snapshot,
     user_risk_snapshot,
@@ -80,6 +81,10 @@ class UserExecutionManager:
         self._paused = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._monitor_thread: Optional[threading.Thread] = None
+        self._tick_thread: Optional[threading.Thread] = None
+        self._tick_pubsub = None
+        self._tick_subscribed: set[str] = set()
+        self._monitor_busy: dict[str, bool] = {}
         self._r = get_redis_sync()
 
         # Position state per symbol
@@ -127,6 +132,15 @@ class UserExecutionManager:
             name=f"exec-monitor-{self.user_id}",
         )
         self._monitor_thread.start()
+
+        # Tick-driven monitor — reacts immediately to the position's own
+        # option-premium ticks (mirrors legacy _process_opt_tick →
+        # _manage_position). The 2s poll above stays as a safety net.
+        self._tick_thread = threading.Thread(
+            target=self._tick_loop, daemon=True,
+            name=f"exec-tick-{self.user_id}",
+        )
+        self._tick_thread.start()
 
         # ── Telegram command bot (mirrors legacy engine_v6.TradingEngine) ──
         # Register engine wrappers so /status,/sl,/target,/squareoff,/pnl etc.
@@ -482,7 +496,95 @@ class UserExecutionManager:
             except Exception as e:
                 print(f"{_now()} [exec:u{self.user_id}] Monitor {sym} error: {e}")
 
+    def _tick_loop(self):
+        """React to the position's own option-premium ticks immediately,
+        mirroring legacy engine_v6._process_opt_tick → _manage_position:
+        every live premium LTP for the position's contract is a trigger
+        for SL / target / ATR-trailing checks. The 2s poll stays as a
+        safety net (e.g. restored positions, missing instrument_key)."""
+        try:
+            self._tick_pubsub = self._r.pubsub()
+            chans = [shared_tick_channel(s) for s in self.symbols]
+            if chans:
+                self._tick_pubsub.subscribe(*chans)
+                self._tick_subscribed.update(self.symbols)
+            while not self._stop_event.is_set():
+                try:
+                    msg = self._tick_pubsub.get_message(timeout=1.0)
+                except Exception:
+                    # Transient pubsub failure → rebuild the subscription.
+                    try:
+                        self._tick_pubsub.close()
+                    except Exception:
+                        pass
+                    self._tick_pubsub = self._r.pubsub()
+                    chans = [shared_tick_channel(s)
+                             for s in self._tick_subscribed]
+                    if chans:
+                        self._tick_pubsub.subscribe(*chans)
+                    continue
+                if not msg or msg.get("type") != "message":
+                    self._sync_tick_subscriptions()
+                    continue
+                tick = json.loads(msg["data"])
+                sym = (tick.get("symbol") or "").upper()
+                if not sym:
+                    continue
+                with self._positions_lock:
+                    pos = self._positions.get(sym)
+                if not pos:
+                    continue
+                # Only this position's own option contract drives it —
+                # never the index/underlying ticks on the same channel.
+                ik = pos.get("instrument_key")
+                token = tick.get("token")
+                if ik and token and token != ik:
+                    continue
+                ltp = tick.get("ltp")
+                if ltp:
+                    try:
+                        self._last_ltp[sym] = float(ltp)
+                    except (TypeError, ValueError):
+                        pass
+                try:
+                    self._monitor_symbol(sym)
+                except Exception as e:
+                    print(f"{_now()} [exec:u{self.user_id}] Tick {sym} err: {e}")
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] Tick monitor stopped: {e}")
+        finally:
+            try:
+                if self._tick_pubsub:
+                    self._tick_pubsub.close()
+            except Exception:
+                pass
+
+    def _sync_tick_subscriptions(self):
+        """Lazily subscribe tick channels for any symbol with an open
+        position that isn't subscribed yet (e.g. restored/reconciled
+        positions on symbols outside the configured set)."""
+        with self._positions_lock:
+            pos_symbols = set(self._positions.keys())
+        needed = pos_symbols - self._tick_subscribed
+        if needed:
+            self._tick_pubsub.subscribe(
+                *[shared_tick_channel(s) for s in needed])
+            self._tick_subscribed.update(needed)
+
     def _monitor_symbol(self, sym: str):
+        """Per-symbol re-entrancy guard: tick thread + poll thread may
+        race on the same symbol, so only one check runs at a time."""
+        with self._positions_lock:
+            if self._monitor_busy.get(sym):
+                return
+            self._monitor_busy[sym] = True
+        try:
+            self._monitor_symbol_locked(sym)
+        finally:
+            with self._positions_lock:
+                self._monitor_busy[sym] = False
+
+    def _monitor_symbol_locked(self, sym: str):
         with self._positions_lock:
             pos = self._positions.get(sym)
             if not pos:
