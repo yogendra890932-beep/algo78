@@ -86,12 +86,12 @@ def get_lot_size(symbol: str, custom: Optional[dict] = None) -> int:
 # ================================================================
 
 KNOWN_INDEX_TOKENS = {
-    "NIFTY":      "NSE_INDEX|13",
-    "BANKNIFTY":  "NSE_INDEX|99926009",
-    "FINNIFTY":   "NSE_INDEX|99926037",
-    "MIDCPNIFTY": "NSE_INDEX|99926026",
-    "SENSEX":     "BSE_INDEX|1",
-    "BANKEX":     "BSE_INDEX|99990027",
+    "NIFTY":      "NSE_INDEX|Nifty 50",
+    "BANKNIFTY":  "NSE_INDEX|Nifty Bank",
+    "FINNIFTY":   "NSE_INDEX|Nifty Fin Service",
+    "MIDCPNIFTY": "NSE_INDEX|NIFTY MID SELECT",
+    "SENSEX":     "BSE_INDEX|SENSEX",
+    "BANKEX":     "BSE_INDEX|BANKEX",
 }
 
 KNOWN_HISTORY_KEYS = {
@@ -110,7 +110,14 @@ KNOWN_STRIKE_STEPS = {
 
 
 def get_streamer_token(symbol: str) -> str:
-    """Get Upstox streamer token for a symbol."""
+    """Get Upstox streamer token for a symbol.
+
+    Resolved from the instruments master (CSV) FIRST — the streamer needs
+    the master's instrument_key form (e.g. "NSE_INDEX|Nifty 50"); legacy
+    numeric tokens and admin-configured history-style keys are stale and
+    must not be used for streaming. Falls back to admin config, then the
+    known-index map.
+    """
     sym = symbol.upper()
     r = _r()
     cache_key = f"sys:cache:streamer_token:{sym}"
@@ -118,12 +125,24 @@ def get_streamer_token(symbol: str) -> str:
     if cached:
         return cached
 
-    # Check admin config
-    from backend.services.admin_config_cache import get_streamer_token as admin_token
-    db_row = admin_token(sym)
-    if db_row and db_row.get("streamer_token"):
-        token = db_row["streamer_token"]
-    else:
+    token = None
+    try:
+        from backend.engine.instruments import resolve_streamer_token
+        token = resolve_streamer_token(sym)
+    except Exception as e:
+        print(f"⚠️  streamer token resolve err for {sym}: {e}")
+
+    if not token:
+        # Admin config (may hold a history-style key — only used as fallback)
+        try:
+            from backend.services.admin_config_cache import get_streamer_token as admin_token
+            db_row = admin_token(sym)
+            if db_row and db_row.get("streamer_token"):
+                token = db_row["streamer_token"]
+        except Exception as e:
+            print(f"⚠️  streamer token admin lookup err for {sym}: {e}")
+
+    if not token:
         token = KNOWN_INDEX_TOKENS.get(sym, f"NSE_INDEX|{sym}")
 
     r.set(cache_key, token, ex=86400)

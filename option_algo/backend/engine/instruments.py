@@ -445,6 +445,53 @@ def detect_strike_step(symbol: str) -> int:
 # HISTORY KEY RESOLVER
 # ================================================================
 
+def resolve_streamer_token(symbol: str) -> Optional[str]:
+    """
+    Resolve the Upstox streamer instrument key for an index from the
+    instruments master (CSV/Parquet).
+
+    Streamer tokens are the master's instrument_key form (e.g.
+    "NSE_INDEX|Nifty 50") — the numeric legacy tokens (e.g. NSE_INDEX|13)
+    are stale and must not be used for the v3 market-data streamer.
+    Matching uses trading_symbol first (NIFTY/BANKNIFTY/FINNIFTY/...),
+    then the known index name. Returns None when unresolvable.
+    """
+    sym = symbol.upper()
+    try:
+        df = load_instruments()
+    except Exception as e:
+        print(f"⚠️  Streamer token lookup failed for {symbol}: {e}")
+        return None
+
+    seg = df["segment"].astype(str).str.upper()
+    idx = df[seg.str.endswith("_INDEX")]
+    if idx.empty:
+        print(f"⚠️  Streamer token lookup failed for {symbol}: no index rows")
+        return None
+
+    # Primary — exact trading_symbol match (NIFTY, BANKNIFTY, FINNIFTY, ...)
+    if "trading_symbol" in idx.columns:
+        hit = idx[idx["trading_symbol"].astype(str).str.upper() == sym]
+        if not hit.empty and "instrument_key" in hit.columns:
+            key = str(hit.iloc[0]["instrument_key"])
+            if key and key.lower() != "nan":
+                print(f"🔑 Streamer token for {symbol}: {key} (from instruments master)")
+                return key
+
+    # Secondary — match the known index name (e.g. "NIFTY BANK")
+    known = KNOWN_INDEX_KEYS.get(sym, "")
+    if known and "name" in idx.columns:
+        name_part = known.split("|", 1)[1].strip().upper()
+        hit = idx[idx["name"].astype(str).str.upper() == name_part]
+        if not hit.empty and "instrument_key" in hit.columns:
+            key = str(hit.iloc[0]["instrument_key"])
+            if key and key.lower() != "nan":
+                print(f"🔑 Streamer token for {symbol}: {key} (from instruments master name)")
+                return key
+
+    return None
+
+
 def resolve_history_key(symbol: str, streamer_token: str) -> str:
     """
     Resolves the correct instrument_key for HistoryV3Api.
