@@ -95,6 +95,23 @@ class SharedOptionPremiumBuilder:
 
         self._load_from_redis()
 
+        # On restart the selected option is recovered from Redis, but its
+        # token was never (re)subscribed to the freshly started global
+        # streamer — without this, no option-premium ticks ever arrive and
+        # the premium 1m candle is never built live.
+        if self._instrument_key:
+            try:
+                from backend.shared.market_data_service import (
+                    SharedMarketDataService,
+                )
+                md = SharedMarketDataService.get_or_create(
+                    self.symbol, self.access_token)
+                md.subscribe_option(self._instrument_key)
+                print(f"{_now()} [premium:{self.symbol}] Re-subscribed "
+                      f"{self._instrument_key}")
+            except Exception as e:
+                print(f"{_now()} [premium:{self.symbol}] re-subscribe err: {e}")
+
         try:
             from backend.engine.instruments import detect_strike_step
             self._strike_step = detect_strike_step(self.symbol) or 0
