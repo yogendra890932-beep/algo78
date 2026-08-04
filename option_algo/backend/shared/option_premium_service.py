@@ -47,6 +47,7 @@ from backend.shared.candle_builder import SharedCandleBuilder
 MAX_1M_BARS = 750
 WARM_MIN_BARS = 25
 ITM_DEPTH = 1
+ITM_RESELECT_EXTRA_STEPS = 2
 
 
 def _now() -> str:
@@ -174,6 +175,56 @@ class SharedOptionPremiumBuilder:
         self._switch_option(info)
         return True
 
+    def _check_itm_depth(self) -> bool:
+        """Re-select the 1 ITM strike when the underlying drifts >= 2 steps.
+
+        Mirrors legacy engine_v6._check_itm_depth so the premium option
+        stays at the 1 ITM strike relative to the underlying as it moves
+        — even without a direction flip. Skipped while ANY user holds an
+        open position on this symbol so a live/paper trade never rolls
+        under its feet.
+        """
+        if not self._instrument_key or not self._strike or not self._strike_step:
+            return False
+        if not self._opt_type:
+            return False
+
+        try:
+            from backend.shared.user_execution_manager import user_registry
+            if user_registry.has_open_position(self.symbol):
+                return False
+        except Exception as e:
+            print(f"{_now()} [premium:{self.symbol}] itm guard err: {e}")
+            return False
+
+        df = SharedCandleBuilder.get_1m_df_from_redis(self.symbol)
+        if df.empty:
+            return False
+        underlying_ltp = float(df["close"].iloc[-1])
+
+        step = self._strike_step
+        atm = round(underlying_ltp / step) * step
+        if self._opt_type == "CE":
+            extra_steps = ((atm - ITM_DEPTH * step) - self._strike) / step
+        else:
+            extra_steps = (self._strike - (atm + ITM_DEPTH * step)) / step
+        if extra_steps < ITM_RESELECT_EXTRA_STEPS:
+            return False
+
+        print(f"{_now()} [premium:{self.symbol}] Strike {self._strike} "
+              f"{extra_steps:.0f} steps deep — reselecting 1 ITM")
+        try:
+            from backend.engine.instruments import get_itm_instrument
+            info = get_itm_instrument(self._opt_type, underlying_ltp,
+                                      self.symbol, ITM_DEPTH, step)
+        except Exception as e:
+            print(f"{_now()} [premium:{self.symbol}] reselect err: {e}")
+            return False
+        if info.get("instrument_key") == self._instrument_key:
+            return False
+        self._switch_option(info)
+        return True
+
     def _switch_option(self, info: dict):
         """Subscribe the new option token and reset the premium candle series."""
         from backend.shared.market_data_service import SharedMarketDataService
@@ -246,8 +297,11 @@ class SharedOptionPremiumBuilder:
     # ================================================================
 
     def _on_underlying_close(self, event: dict):
-        """On each underlying 1m close, roll option if direction flipped."""
-        if self._maybe_roll_option():
+        """On each underlying 1m close, roll option if direction flipped and
+        keep the selected option at the 1 ITM strike (like legacy)."""
+        rolled = self._maybe_roll_option()
+        reselected = self._check_itm_depth()
+        if rolled or reselected:
             self._warm_up()
 
     def _on_tick(self, tick: dict):

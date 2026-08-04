@@ -1209,5 +1209,20 @@ class UserExecutionRegistry:
         with self._lock:
             return list(self._managers.keys())
 
+    def has_open_position(self, symbol: str) -> bool:
+        """True if ANY running user holds an open position on `symbol`.
+
+        Used by the shared premium builder to avoid re-selecting the
+        option strike while a live/paper trade is open on it (mirrors
+        legacy `_check_itm_depth`'s `if self.position: return`).
+        """
+        sym = symbol.upper()
+        with self._lock:
+            for mgr in self._managers.values():
+                with mgr._positions_lock:
+                    if sym in mgr._positions:
+                        return True
+        return False
+
 
 user_registry = UserExecutionRegistry()
