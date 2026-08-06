@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Advanced Trading Terminal — AlgoBot</title>
+<link rel="stylesheet" href="/static/css/terminal.css"/>
+</head>
+<body class="term-body">
+
+<!-- ═══════════════ TOP BAR ═══════════════ -->
+<header class="term-topbar">
+  <div class="term-brand">
+    <span class="term-brand-mark">T</span>
+    <div>
+      <div class="term-brand-title">Advanced Trading Terminal</div>
+      <div class="term-brand-sub">Options scalping desk</div>
+    </div>
+  </div>
+
+  <div class="term-market">
+    <span id="term-market-state" class="term-pill term-pill-idle">Market: --</span>
+    <span id="term-conn-state" class="term-pill term-pill-idle">Feed: --</span>
+  </div>
+
+  <div class="term-top-actions">
+    <button id="term-toggle-left" class="term-btn term-btn-ghost" title="Show / hide left panel (watchlist)">Watchlist</button>
+    <span id="term-user-label" class="term-user">--</span>
+    <button id="term-logout" class="term-btn term-btn-ghost">Logout</button>
+  </div>
+</header>
+
+<!-- ═══════════════ MAIN GRID ═══════════════ -->
+<main class="term-grid">
+
+  <!-- ── LEFT PANEL ── -->
+  <aside class="term-left">
+    <section class="term-card" id="watchlist-card">
+      <div class="term-card-head">
+        <span>Watchlist</span>
+        <span id="watchlist-count" class="term-muted">0</span>
+      </div>
+      <div class="term-watchlist" id="watchlist"></div>
+    </section>
+
+    <section class="term-card">
+      <div class="term-card-head"><span>Selected Symbol</span></div>
+      <div class="term-sym-info">
+        <div class="term-sym-row">
+          <span class="term-sym-name" id="sym-name">--</span>
+          <span class="term-sym-lot" id="sym-lot">Lot: --</span>
+        </div>
+        <div class="term-sym-price">
+          <span class="term-price" id="sym-ltp">--</span>
+          <span class="term-change" id="sym-change">--</span>
+        </div>
+        <div class="term-sym-active" id="sym-active-option">Active option: --</div>
+      </div>
+    </section>
+
+    <section class="term-card">
+      <div class="term-card-head"><span>ATM Strike Info</span></div>
+      <div class="term-strike" id="atm-strike">
+        <div class="term-strike-muted">Waiting for underlying…</div>
+      </div>
+    </section>
+
+    <section class="term-card">
+      <div class="term-card-head"><span>Strategy Status</span></div>
+      <div id="strategy-status">
+        <div class="term-empty">Bot status unknown</div>
+      </div>
+    </section>
+
+    <section class="term-card">
+      <div class="term-card-head"><span>Trade Status</span></div>
+      <div id="trade-status">
+        <div class="term-empty">--</div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ── CENTER: CHART ── -->
+  <section class="term-center">
+    <div class="term-chart-toolbar">
+      <div class="term-tf-group" id="tf-group">
+        <button class="term-tf term-tf-active" data-tf="1m">1m</button>
+        <button class="term-tf" data-tf="5m">5m</button>
+      </div>
+      <div class="term-overlay-group" id="overlay-group">
+        <label class="term-chk"><input type="checkbox" id="ov-ema" checked/> EMA 9/15/21</label>
+        <label class="term-chk"><input type="checkbox" id="ov-vwap"/> VWAP</label>
+        <label class="term-chk"><input type="checkbox" id="ov-bb"/> Bollinger</label>
+        <label class="term-chk"><input type="checkbox" id="ov-vol" checked/> Volume</label>
+      </div>
+      <div class="term-chart-src">
+        <span class="term-muted">Series:</span>
+        <select id="chart-src">
+          <option value="premium">Option Premium</option>
+          <option value="underlying">Underlying</option>
+        </select>
+      </div>
+      <span class="term-muted" id="chart-axis-label">EMA9 · EMA15 · EMA21</span>
+    </div>
+
+    <div class="term-chart-wrap">
+      <canvas id="term-chart-canvas"></canvas>
+      <div class="term-chart-crosshair" id="term-crosshair">
+        <span id="ch-time">--</span>
+        <span id="ch-ohlc">O -- H -- L -- C --</span>
+      </div>
+      <div class="term-chart-drag-hint" id="drag-hint"></div>
+    </div>
+    <div class="term-chart-legend" id="chart-legend"></div>
+
+    <!-- Trade Log / Signal History / Execution Events — fills the space beneath the chart -->
+    <div class="term-bottom">
+      <div class="term-tabs">
+        <button class="term-tab term-tab-active" data-tab="log">Trade Log</button>
+        <button class="term-tab" data-tab="signals">Signal History</button>
+        <button class="term-tab" data-tab="events">Execution Events</button>
+      </div>
+      <div class="term-tab-body">
+        <div class="term-tabpane term-tabpane-active" id="pane-log">
+          <table class="term-table" id="trade-log-table">
+            <thead><tr><th>Time</th><th>Symbol</th><th>Option</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Exit Reason</th></tr></thead>
+            <tbody id="trade-log-body"><tr><td colspan="9" class="term-empty">No trades yet</td></tr></tbody>
+          </table>
+        </div>
+        <div class="term-tabpane" id="pane-signals">
+          <table class="term-table">
+            <thead><tr><th>Time</th><th>Strategy</th><th>Option</th><th>Direction</th><th>Entry</th><th>SL</th><th>Regime</th></tr></thead>
+            <tbody id="signal-body"><tr><td colspan="7" class="term-empty">Waiting for signals…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="term-tabpane" id="pane-events">
+          <table class="term-table">
+            <thead><tr><th>Time</th><th>Event</th><th>Message</th></tr></thead>
+            <tbody id="event-body"><tr><td colspan="3" class="term-empty">No execution events yet</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── RIGHT PANEL ── -->
+  <aside class="term-right">
+    <section class="term-card">
+      <div class="term-card-head"><span>Position Details</span>
+        <button id="sq-off-all" class="term-btn term-btn-danger term-btn-xs">Square Off All</button>
+      </div>
+      <div class="term-positions" id="position-list">
+        <div class="term-empty">No open positions</div>
+      </div>
+    </section>
+
+    <section class="term-card">
+      <div class="term-card-head"><span>Live PnL</span></div>
+      <div class="term-pnl">
+        <div class="term-pnl-net" id="pnl-net">₹ 0.00</div>
+        <div class="term-pnl-row">
+          <span>Unrealized</span><span id="pnl-unreal">₹ 0.00</span>
+        </div>
+        <div class="term-pnl-row">
+          <span>Realized (today)</span><span id="pnl-real">₹ 0.00</span>
+        </div>
+        <div class="term-pnl-row">
+          <span>Positions</span><span id="pnl-pos-count">0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="term-card">
+      <div class="term-card-head"><span>Order Info</span></div>
+      <div class="term-order-info" id="order-info">
+        <div class="term-empty">No recent order events</div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<script src="/static/js/terminal.js"></script>
+</body>
+</html>

@@ -25,6 +25,7 @@ from backend.routers.subscription_router import router as subscription_router
 from backend.routers.admin_billing_router import router as admin_billing_router
 from backend.routers.campaign_router import router as campaign_router
 from backend.routers.manual_payment_router import router as manual_payment_router
+from backend.routers.terminal import router as terminal_router
 
 settings = get_settings()
 
@@ -125,6 +126,7 @@ app.include_router(subscription_router)
 app.include_router(admin_billing_router)
 app.include_router(campaign_router)
 app.include_router(manual_payment_router)
+app.include_router(terminal_router)
 
 
 @app.get("/health")
@@ -212,6 +214,11 @@ async def billing_page(request: Request):
 @app.get("/oc-dashboard", response_class=HTMLResponse)
 async def oc_dashboard(request: Request):
     return templates.TemplateResponse("oc_dashboard.html", {"request": request})
+
+@app.get("/terminal", response_class=HTMLResponse)
+async def trading_terminal(request: Request):
+    """Advanced Trading Terminal (additive page — existing pages untouched)."""
+    return templates.TemplateResponse("terminal.html", {"request": request})
 
 @app.get("/reset-password", response_class=HTMLResponse)
 async def reset_password_page(request: Request):

@@ -121,6 +121,9 @@
 **/tmp/
 **/temp/
 
+# Redis local snapshot
+*.rdb
+
 # Dart
 **/.dart_tool/
 **/*.dart_tool
