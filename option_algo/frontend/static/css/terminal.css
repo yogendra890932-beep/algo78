@@ -238,7 +238,8 @@
   border-radius: var(--term-radius);
   overflow: hidden;
 }
-#term-chart-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+#term-chart { width: 100%; height: 100%; display: block; cursor: crosshair; }
+.term-chart-lwc { position: absolute; inset: 0; }
 .term-chart-crosshair {
   position: absolute; top: 8px; right: 10px;
   font-size: 11px; color: var(--term-muted);
