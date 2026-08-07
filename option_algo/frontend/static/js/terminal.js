@@ -746,16 +746,6 @@ function lineToLwc(arr, candles) {
   return out;
 }
 
-function closeLineToLwc(candles) {
-  const out = [];
-  for (let i = 0; i < candles.length; i++) {
-    const time = toLwcTime(barTime(candles[i]));
-    if (time == null) continue;
-    out.push({ time: time, value: num(candles[i].close) || 0 });
-  }
-  return out;
-}
-
 function lwcTimeToStr(t) {
   if (t == null) return "--";
   const n = Number(t);
@@ -827,18 +817,11 @@ class LwcChart {
   rebuildMain() {
     const old = this.series.main;
     if (old) { try { this.chart.removeSeries(old); } catch (e) { } this.series.main = null; }
-    if (state.series === "underlying") {
-      this.series.main = this.chart.addLineSeries({
-        color: "#3b82f6", lineWidth: 2,
-        priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: true
-      });
-    } else {
-      this.series.main = this.chart.addCandlestickSeries({
-        upColor: "#22c55e", downColor: "#ef4444",
-        borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444",
-        priceLineVisible: true, lastValueVisible: true
-      });
-    }
+    this.series.main = this.chart.addCandlestickSeries({
+      upColor: "#22c55e", downColor: "#ef4444",
+      borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+      priceLineVisible: true, lastValueVisible: true
+    });
     this._fitted = false;
     this.renderPositionLines();
   }
@@ -873,13 +856,9 @@ class LwcChart {
     this.ensureOverlaySeries();
     const candles = state.candles || [];
     const main = this.series.main;
-    if (state.series === "underlying") {
-      main.setData(lwcPoints(closeLineToLwc(candles)));
-    } else {
-      main.setData(lwcPoints(candles.map(barToLwc).filter(Boolean)));
-    }
+    main.setData(lwcPoints(candles.map(barToLwc).filter(Boolean)));
     const ov = state.overlays;
-    this.series.vol.setData(lwcPoints((ov.vol && state.series === "premium") ? candles.map(volToLwc).filter(Boolean) : []));
+    this.series.vol.setData(lwcPoints(ov.vol ? candles.map(volToLwc).filter(Boolean) : []));
     this.series.ema9.setData(lwcPoints(ov.ema ? lineToLwc(state.ema9, candles) : []));
     this.series.ema15.setData(lwcPoints(ov.ema ? lineToLwc(state.ema15, candles) : []));
     this.series.ema21.setData(lwcPoints(ov.ema ? lineToLwc(state.ema21, candles) : []));
@@ -905,13 +884,9 @@ class LwcChart {
     const time = toLwcTime(barTime(last));
     if (time == null) return;
     const i = candles.length - 1;
-    if (state.series === "underlying") {
-      this.series.main.update({ time: time, value: num(last.close) || 0 });
-    } else {
-      const b = barToLwc(last);
-      if (b) this.series.main.update(b);
-    }
-    if (state.overlays.vol && state.series === "premium") {
+    const b = barToLwc(last);
+    if (b) this.series.main.update(b);
+    if (state.overlays.vol) {
       const v = volToLwc(last);
       if (v) this.series.vol.update(v);
     }
