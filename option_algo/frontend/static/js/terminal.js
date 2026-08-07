@@ -443,11 +443,14 @@ function renderSelectedSymbol(info) {
 
 function renderActiveOption(premiumState) {
   const el = $("sym-active-option");
-  if (premiumState && premiumState.trading_symbol) {
-    el.textContent = "Active option: " + premiumState.trading_symbol;
+  const name = (premiumState && premiumState.trading_symbol) ? premiumState.trading_symbol : null;
+  if (name) {
+    el.textContent = "Active option: " + name;
   } else {
     el.textContent = "Active option: --";
   }
+  const cl = $("chart-symbol-label");
+  if (cl) cl.textContent = name || "--";
 }
 
 function renderAtm(info) {
