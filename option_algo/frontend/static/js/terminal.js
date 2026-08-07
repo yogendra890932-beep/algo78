@@ -51,6 +51,7 @@ const state = {
   ema9: [], ema15: [], ema21: [], vwap: [], bbU: [], bbM: [], bbL: [],
   current: null,
   premiumState: null,
+  chartOption: null,    // trading_symbol the chart currently references
   underlyingLTP: null,
   positions: [],
   tickLTP: {},
@@ -138,6 +139,7 @@ async function selectSymbol(sym) {
   state.underlyingCandles = [];
   state.underlying5m = [];
   state.candles = [];
+  state.chartOption = null;
 
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify({ action: "subscribe", symbol: sym }));
@@ -199,6 +201,7 @@ function handleSnapshot(m) {
   state.underlying5m = (m.candles_5m || []).map(normalizeBar);
   state.candles = currentSeriesCandles();
   state.premiumState = m.premium_state || null;
+  state.chartOption = (m.premium_state && m.premium_state.trading_symbol) || null;
   state.current = m.premium_current || null;
   state.underlyingLTP = m.underlying ? m.underlying.ltp : null;
   prepareOverlays(state.candles);
@@ -259,7 +262,16 @@ function handleWSMessage(m) {
       break;
     case "state":
       if (m.symbol === state.selectedSymbol) {
+        const prevOpt = state.chartOption;
         state.premiumState = m.state || null;
+        const newOpt = (state.premiumState && state.premiumState.trading_symbol) || null;
+        state.chartOption = newOpt;
+        if (prevOpt && newOpt && newOpt !== prevOpt) {
+          state.premiumCandles = [];
+          state.current = null;
+          state.candles = currentSeriesCandles();
+          if (state.chart) state.chart.fullRender();
+        }
         renderActiveOption(state.premiumState);
         const info = (state.bootstrap && state.bootstrap.symbols || {})[m.symbol] || {};
         renderAtm(Object.assign({}, info, { premium_state: state.premiumState }));

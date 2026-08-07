@@ -102,19 +102,25 @@ async def handle_terminal_ws(websocket, user_id: int, token: str):
         last_state = None
         last_tick_ts = 0.0
         try:
+            last_state = await get_premium_state(symbol)
+        except Exception:
+            pass
+        try:
             while not stop.is_set():
                 try:
                     msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=STATE_POLL_SEC)
                 except Exception:
                     break
+                # Detect premium option rolls (strike/expiry changes) on
+                # EVERY iteration — live ticks can otherwise keep the loop
+                # busy so the old idle-only polling never fires promptly.
+                state = await get_premium_state(symbol)
+                if state != last_state:
+                    last_state = state
+                    await send({"type": "state", "symbol": symbol, "state": state})
+                    snap = await build_symbol_snapshot(user_id, symbol)
+                    await send({"type": "snapshot", "symbol": symbol, **snap})
                 if msg is None:
-                    # poll for premium option rolls (state changes)
-                    state = await get_premium_state(symbol)
-                    if state != last_state:
-                        last_state = state
-                        await send({"type": "state", "symbol": symbol, "state": state})
-                        snap = await build_symbol_snapshot(user_id, symbol)
-                        await send({"type": "snapshot", "symbol": symbol, **snap})
                     continue
 
                 try:
