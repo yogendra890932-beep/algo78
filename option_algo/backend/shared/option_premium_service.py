@@ -68,7 +68,7 @@ class SharedOptionPremiumBuilder:
         self.symbol = symbol.upper()
         self.access_token = access_token
         self._r = get_redis_sync()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
