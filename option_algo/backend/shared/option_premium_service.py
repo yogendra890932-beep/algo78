@@ -367,6 +367,18 @@ class SharedOptionPremiumBuilder:
         """Close the current premium bar and append to the list."""
         candle = dict(self._cur)
         candle["time"] = pd.Timestamp(self._cur_min)
+        # Enforce strict ascending time order — same reasoning as the
+        # underlying candle builder (Lightweight Charts rejects unsorted data).
+        if self._bars:
+            last = self._bars[-1]
+            try:
+                last_time = pd.Timestamp(last["time"]) if last.get("time") is not None else None
+            except (TypeError, ValueError):
+                last_time = None
+            if last_time is not None and candle["time"] <= last_time:
+                if candle["time"] == last_time:
+                    self._bars[-1] = candle
+                return candle
         self._bars.append(candle)
 
         if len(self._bars) > MAX_1M_BARS:
@@ -382,13 +394,28 @@ class SharedOptionPremiumBuilder:
     # REDIS PERSISTENCE
     # ================================================================
 
+    @staticmethod
+    def _normalize_bars(bars):
+        """Sort bars ascending by time and drop duplicate-time bars (keep last)."""
+        seen = {}
+        for b in bars:
+            if not isinstance(b, dict) or b.get("time") is None:
+                continue
+            try:
+                t = pd.Timestamp(b["time"])
+            except (TypeError, ValueError):
+                continue
+            b["time"] = t
+            seen[t] = b
+        return [seen[t] for t in sorted(seen)]
+
     def _load_from_redis(self):
         """Recover premium state from Redis after restart."""
         r = self._r
 
         raw = r.get(shared_premium_candles_1m(self.symbol))
         if raw:
-            self._bars = json.loads(raw)
+            self._bars = self._normalize_bars(json.loads(raw))
 
         state = r.hgetall(shared_premium_state(self.symbol))
         if state:

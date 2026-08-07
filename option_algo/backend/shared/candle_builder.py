@@ -192,16 +192,31 @@ class SharedCandleBuilder:
         self._save_to_redis()
         print(f"{_now()} [candle:{self.symbol}] Stopped")
 
+    @staticmethod
+    def _normalize_bars(bars):
+        """Sort bars ascending by time and drop duplicate-time bars (keep last)."""
+        seen = {}
+        for b in bars:
+            if not isinstance(b, dict) or b.get("time") is None:
+                continue
+            try:
+                t = pd.Timestamp(b["time"])
+            except (TypeError, ValueError):
+                continue
+            b["time"] = t
+            seen[t] = b
+        return [seen[t] for t in sorted(seen)]
+
     def _load_from_redis(self):
         """Recover candle state from Redis after restart."""
         r = self._r
         raw_1m = r.get(shared_candles_1m(self.symbol))
         if raw_1m:
-            self._1m_bars = json.loads(raw_1m)
+            self._1m_bars = self._normalize_bars(json.loads(raw_1m))
 
         raw_5m = r.get(shared_candles_5m(self.symbol))
         if raw_5m:
-            self._5m_bars = json.loads(raw_5m)
+            self._5m_bars = self._normalize_bars(json.loads(raw_5m))
 
         # Recover current developing candles
         cur_1m = r.hgetall(shared_candle_current_1m(self.symbol))
@@ -343,6 +358,19 @@ class SharedCandleBuilder:
         """Close the current 1-minute bar and append to the list."""
         candle = dict(self._cur_1m)
         candle["time"] = pd.Timestamp(self._cur_1m_min)
+        # Enforce strict ascending time order. A stale bar recovered from
+        # Redis (e.g. previous-session close after a restart) must never be
+        # appended after newer bars — Lightweight Charts rejects unsorted data.
+        if self._1m_bars:
+            last = self._1m_bars[-1]
+            try:
+                last_time = pd.Timestamp(last["time"]) if last.get("time") is not None else None
+            except (TypeError, ValueError):
+                last_time = None
+            if last_time is not None and candle["time"] <= last_time:
+                if candle["time"] == last_time:
+                    self._1m_bars[-1] = candle
+                return candle
         self._1m_bars.append(candle)
 
         # Limit size

@@ -764,6 +764,18 @@ function lwcTimeToStr(t) {
   return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0");
 }
 
+function lwcPoints(points) {
+  // Lightweight Charts requires ascending, unique times. Stale bars written
+  // out-of-order (e.g. previous-session close after a worker restart) would
+  // otherwise throw on setData — so sort ascending and dedupe keeping last.
+  const seen = {};
+  for (const p of points) {
+    if (p == null || p.time == null) continue;
+    seen[p.time] = p;
+  }
+  return Object.keys(seen).sort((a, b) => Number(a) - Number(b)).map((t) => seen[t]);
+}
+
 class LwcChart {
   constructor(container, wrap) {
     this.el = container;
@@ -862,19 +874,19 @@ class LwcChart {
     const candles = state.candles || [];
     const main = this.series.main;
     if (state.series === "underlying") {
-      main.setData(closeLineToLwc(candles));
+      main.setData(lwcPoints(closeLineToLwc(candles)));
     } else {
-      main.setData(candles.map(barToLwc).filter(Boolean));
+      main.setData(lwcPoints(candles.map(barToLwc).filter(Boolean)));
     }
     const ov = state.overlays;
-    this.series.vol.setData((ov.vol && state.series === "premium") ? candles.map(volToLwc).filter(Boolean) : []);
-    this.series.ema9.setData(ov.ema ? lineToLwc(state.ema9, candles) : []);
-    this.series.ema15.setData(ov.ema ? lineToLwc(state.ema15, candles) : []);
-    this.series.ema21.setData(ov.ema ? lineToLwc(state.ema21, candles) : []);
-    this.series.vwap.setData(ov.vwap ? lineToLwc(state.vwap, candles) : []);
-    this.series.bbU.setData(ov.bb ? lineToLwc(state.bbU, candles) : []);
-    this.series.bbM.setData(ov.bb ? lineToLwc(state.bbM, candles) : []);
-    this.series.bbL.setData(ov.bb ? lineToLwc(state.bbL, candles) : []);
+    this.series.vol.setData(lwcPoints((ov.vol && state.series === "premium") ? candles.map(volToLwc).filter(Boolean) : []));
+    this.series.ema9.setData(lwcPoints(ov.ema ? lineToLwc(state.ema9, candles) : []));
+    this.series.ema15.setData(lwcPoints(ov.ema ? lineToLwc(state.ema15, candles) : []));
+    this.series.ema21.setData(lwcPoints(ov.ema ? lineToLwc(state.ema21, candles) : []));
+    this.series.vwap.setData(lwcPoints(ov.vwap ? lineToLwc(state.vwap, candles) : []));
+    this.series.bbU.setData(lwcPoints(ov.bb ? lineToLwc(state.bbU, candles) : []));
+    this.series.bbM.setData(lwcPoints(ov.bb ? lineToLwc(state.bbM, candles) : []));
+    this.series.bbL.setData(lwcPoints(ov.bb ? lineToLwc(state.bbL, candles) : []));
     this.renderPositionLines();
     const first = candles.length ? barTime(candles[0]) : null;
     if (!this._fitted || first !== this._lastFirst) {
@@ -990,7 +1002,7 @@ class LwcChart {
       const rect = el.getBoundingClientRect();
       const y = clientY - rect.top;
       const sl = num(pos.sl_trigger), tg = num(pos.target);
-      const near = (p) => (p != null && this.chart.priceToCoordinate(p) != null && Math.abs(this.chart.priceToCoordinate(p) - y) <= 8);
+      const near = (p) => (p != null && this.series.main.priceToCoordinate(p) != null && Math.abs(this.series.main.priceToCoordinate(p) - y) <= 8);
       let kind = null;
       if (near(sl)) kind = "sl";
       else if (near(tg)) kind = "target";
@@ -1002,7 +1014,7 @@ class LwcChart {
     const moveDrag = (clientY) => {
       if (!this.drag) return;
       const rect = el.getBoundingClientRect();
-      const price = this.chart.coordinateToPrice(clientY - rect.top);
+      const price = this.series.main.coordinateToPrice(clientY - rect.top);
       if (price == null) return;
       this.drag.value = price;
       this.setDragLine(price, this.drag.kind);
