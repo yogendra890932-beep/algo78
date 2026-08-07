@@ -106,6 +106,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def no_cache_terminal_assets(request: Request, call_next):
+    """Terminal page + static assets must never be cached (the preview proxy
+    otherwise serves stale JS/CSS for hours — e.g. the LWC chart bug reports)."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/terminal" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Static files and templates
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
