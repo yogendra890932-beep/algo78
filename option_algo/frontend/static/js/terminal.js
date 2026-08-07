@@ -45,6 +45,9 @@ const state = {
   overlays: { ema: true, vwap: false, bb: false, vol: true },
   candles: [],
   candles5m: [],
+  premiumCandles: [],
+  underlyingCandles: [],
+  underlying5m: [],
   ema9: [], ema15: [], ema21: [], vwap: [], bbU: [], bbM: [], bbL: [],
   current: null,
   premiumState: null,
@@ -131,6 +134,10 @@ async function selectSymbol(sym) {
   const info = (state.bootstrap && state.bootstrap.symbols || {})[sym];
   renderSelectedSymbol(info);
   renderAtm(info);
+  state.premiumCandles = [];
+  state.underlyingCandles = [];
+  state.underlying5m = [];
+  state.candles = [];
 
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify({ action: "subscribe", symbol: sym }));
@@ -178,17 +185,19 @@ function aggregate5m(candles) {
   return out;
 }
 
-function seriesCandles(snap) {
+function currentSeriesCandles() {
   if (state.series === "premium") {
-    const pc = snap.premium_candles || [];
-    if (pc.length) return state.tf === "5m" ? aggregate5m(pc) : pc;
+    return state.tf === "5m" ? aggregate5m(state.premiumCandles) : state.premiumCandles;
   }
-  return state.tf === "5m" ? (snap.candles_5m || []) : (snap.candles || []);
+  return state.tf === "5m" ? state.underlying5m : state.underlyingCandles;
 }
 
 function handleSnapshot(m) {
   if (m.symbol !== state.selectedSymbol) return;
-  state.candles = seriesCandles(m);
+  state.premiumCandles = (m.premium_candles || []).map(normalizeBar);
+  state.underlyingCandles = (m.candles || []).map(normalizeBar);
+  state.underlying5m = (m.candles_5m || []).map(normalizeBar);
+  state.candles = currentSeriesCandles();
   state.premiumState = m.premium_state || null;
   state.current = m.premium_current || null;
   state.underlyingLTP = m.underlying ? m.underlying.ltp : null;
@@ -257,14 +266,14 @@ function handleWSMessage(m) {
       }
       break;
     case "premium_bar":
-      if (m.symbol === state.selectedSymbol && state.series === "premium") {
-        pushBar(m.candle);
+      if (m.symbol === state.selectedSymbol) {
+        pushPremiumBar(m.candle);
       }
       break;
     case "current":
       if (m.symbol === state.selectedSymbol) {
         state.current = m.candle || null;
-        if (state.series === "premium") updateLastBar(m.candle);
+        updatePremiumLast(m.candle);
         renderPnlThrottled();
       }
       break;
@@ -294,22 +303,26 @@ function handleTick(m) {
     state.underlyingLTP = m.ltp;
     const info = symInfo || {};
     renderSelectedSymbol(Object.assign({}, info, { underlying: Object.assign({}, info.underlying, { ltp: m.ltp }) }));
-    if (state.series === "underlying") updateLastUnderlying(m.ltp);
+    updateLastUnderlying(m.ltp);
   }
   renderPnlThrottled();
 }
 
 function updateLastUnderlying(ltp) {
-  const candles = state.candles;
-  if (!candles.length) return;
-  const last = candles[candles.length - 1];
-  if (ltp != null) {
-    last.close = ltp;
-    last.high = Math.max(last.high || 0, ltp);
-    last.low = Math.min(last.low == null ? ltp : last.low, ltp);
-    prepareOverlays(candles);
-    state.chart.setData();
+  if (ltp == null) return;
+  const last1 = state.underlyingCandles[state.underlyingCandles.length - 1];
+  if (last1) {
+    last1.close = ltp;
+    last1.high = Math.max(last1.high || 0, ltp);
+    last1.low = Math.min(last1.low == null ? ltp : last1.low, ltp);
   }
+  const last5 = state.underlying5m[state.underlying5m.length - 1];
+  if (last5) {
+    last5.close = ltp;
+    last5.high = Math.max(last5.high || 0, ltp);
+    last5.low = Math.min(last5.low == null ? ltp : last5.low, ltp);
+  }
+  if (state.series === "underlying") refreshShownLive();
 }
 
 /* ─────────────── Events / Signals / Logs ─────────────── */
@@ -806,7 +819,10 @@ class LwcChart {
         vertLine: { color: "rgba(139,153,190,0.4)", labelBackgroundColor: "#1e2537" },
         horzLine: { color: "rgba(139,153,190,0.4)", labelBackgroundColor: "#1e2537" }
       },
-      localization: { locale: "en-IN" }
+      localization: {
+        locale: "en-IN",
+        timeFormatter: (t) => lwcTimeToStr(t)
+      }
     });
     this.rebuildMain();
     this.ensureOverlaySeries();
@@ -1074,9 +1090,26 @@ function renderLegend(lastC) {
 }
 
 /* ─────────────── Live updates ─────────────── */
-function pushBar(candle) {
+function refreshShownLive() {
+  state.candles = currentSeriesCandles();
+  prepareOverlays(state.candles);
+  if (state.chart) state.chart.setData();
+}
+
+function switchSeries() {
+  if (!state.premiumCandles.length && !state.underlyingCandles.length && state.selectedSymbol) {
+    fetchSnapshot(state.selectedSymbol);
+    return;
+  }
+  state.candles = currentSeriesCandles();
+  prepareOverlays(state.candles);
+  if (state.chart) state.chart.rebuildMain();
+  drawChart();
+}
+
+function pushPremiumBar(candle) {
   if (!candle) return;
-  const candles = state.candles;
+  const candles = state.premiumCandles;
   const key = barKey(candle);
   const last = candles[candles.length - 1];
   if (last && barKey(last) === key) {
@@ -1084,20 +1117,15 @@ function pushBar(candle) {
   } else {
     candles.push(normalizeBar(candle));
   }
-  prepareOverlays(candles);
-  state.chart.setData();
+  if (state.series === "premium") refreshShownLive();
   renderPnlThrottled();
 }
 
-function updateLastBar(candle) {
+function updatePremiumLast(candle) {
   if (!candle) return;
-  const candles = state.candles;
-  if (!candles.length) return;
-  const last = candles[candles.length - 1];
-  Object.assign(last, normalizeBar(candle));
-  prepareOverlays(candles);
-  state.chart.setData();
-  renderPnlThrottled();
+  if (!state.premiumCandles.length) return;
+  Object.assign(state.premiumCandles[state.premiumCandles.length - 1], normalizeBar(candle));
+  if (state.series === "premium") refreshShownLive();
 }
 
 function barKey(b) {
@@ -1118,16 +1146,39 @@ function normalizeBar(b) {
 /* ─────────────── Utilities ─────────────── */
 function fmtTime(v) {
   if (!v) return "--";
-  const s = String(v);
-  const m = s.match(/(\d{2}):(\d{2})(?::\d{2})?/);
-  if (m) return m[1] + ":" + m[2];
-  const d = new Date(v);
-  if (!isNaN(d)) {
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return hh + ":" + mm;
+  const s = String(v).trim();
+  const bare = s.match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (bare) return bare[1] + ":" + bare[2];
+  let ms;
+  if (/[zZ]$/.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    ms = Date.parse(s);
+  } else {
+    const dm = s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (dm) ms = Date.UTC(+dm[1], +dm[2] - 1, +dm[3], +dm[4], +dm[5], +(dm[6] || 0));
   }
-  return s.slice(11, 16) || s;
+  if (ms == null || isNaN(ms)) {
+    const fb = s.match(/(\d{2}):(\d{2})/);
+    return fb ? fb[1] + ":" + fb[2] : (s.slice(11, 16) || s);
+  }
+  const d = new Date(ms + 330 * 60 * 1000);
+  return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0");
+}
+
+function istParts() {
+  const d = new Date(Date.now() + 330 * 60 * 1000);
+  return { h: d.getUTCHours(), m: d.getUTCMinutes(), s: d.getUTCSeconds() };
+}
+
+function updateCandleTimer() {
+  const el = $("candle-timer");
+  if (!el) return;
+  const { m, s } = istParts();
+  const tfMin = state.tf === "5m" ? 5 : 1;
+  const secondsInto = (m % tfMin) * 60 + s;
+  const remaining = (secondsInto === 0 ? tfMin * 60 : tfMin * 60 - secondsInto);
+  const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
+  const ss = String(remaining % 60).padStart(2, "0");
+  el.textContent = "Candle " + tfMin + "m: " + mm + ":" + ss;
 }
 
 function esc(s) {
@@ -1158,7 +1209,7 @@ function bindToolbar() {
       document.querySelectorAll(".term-tf").forEach((b) => b.classList.remove("term-tf-active"));
       btn.classList.add("term-tf-active");
       state.tf = btn.dataset.tf;
-      fetchSnapshot(state.selectedSymbol);
+      switchSeries();
     });
   });
 
@@ -1173,8 +1224,7 @@ function bindToolbar() {
 
   $("chart-src").addEventListener("change", (e) => {
     state.series = e.target.value;
-    if (state.chart) state.chart.rebuildMain();
-    fetchSnapshot(state.selectedSymbol);
+    switchSeries();
   });
 
   $("sq-off-all").addEventListener("click", () => {
@@ -1217,6 +1267,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bindToolbar();
   state.chart = new LwcChart($("term-chart"), document.querySelector(".term-chart-wrap"));
   window.addEventListener("resize", () => state.chart && state.chart.resize());
+  updateCandleTimer();
+  setInterval(updateCandleTimer, 1000);
   loadBootstrap();
 });
 

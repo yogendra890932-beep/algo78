@@ -278,7 +278,7 @@ async def main():
     print("  ✅ Schema up to date")
 
     print("\n[3/5] Exchange holidays & streamer tokens...")
-    await seed_holidays_and_streamer_tokens()
+    # Already seeded inside migrate() above.
 
     print("\n[4/5] Subscription plans & billing settings...")
     await seed_default_plans()
