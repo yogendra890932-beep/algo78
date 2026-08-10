@@ -340,9 +340,13 @@ function updateLastUnderlying(ltp) {
 /* ─────────────── Events / Signals / Logs ─────────────── */
 function handleEvent(m) {
   const evt = String(m.event || "").toUpperCase();
-  const msg = m.message || m.msg || m.reason || "";
+  let msg = m.message || m.msg || m.reason || "";
   const symbol = m.symbol || m.trading_symbol || state.selectedSymbol || "";
   const ts = m.ts || m.timestamp || new Date().toISOString();
+
+  if (evt === "SL_TRAIL") {
+    msg = (msg || symbol) + " SL → ₹" + fmt(m.new_sl) + " | LTP ₹" + fmt(m.ltp);
+  }
 
   addEventRow({ ts, evt, msg, symbol });
   addOrderInfo({ ts, evt, msg, symbol });
@@ -610,19 +614,19 @@ function renderPositions(positions) {
 }
 
 function bindPositionActions(el) {
+  const cardSymbol = (node) => {
+    const card = node.closest(".term-pos-card");
+    const optTxt = card ? card.querySelector(".term-pos-opt").textContent : "";
+    return positionSymbolFromOption(optTxt);
+  };
   el.querySelectorAll(".pos-sl").forEach((inp) => {
-    inp.addEventListener("change", () => sendOrder("modify_sl", inp.value));
+    inp.addEventListener("change", () => sendOrder("modify_sl", inp.value, cardSymbol(inp)));
   });
   el.querySelectorAll(".pos-tgt").forEach((inp) => {
-    inp.addEventListener("change", () => sendOrder("modify_target", inp.value));
+    inp.addEventListener("change", () => sendOrder("modify_target", inp.value, cardSymbol(inp)));
   });
   el.querySelectorAll(".pos-sq").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const card = btn.closest(".term-pos-card");
-      const optTxt = card.querySelector(".term-pos-opt").textContent;
-      const sym = positionSymbolFromOption(optTxt);
-      sendOrder("squareoff", null, sym);
-    });
+    btn.addEventListener("click", () => sendOrder("squareoff", null, cardSymbol(btn)));
   });
 }
 
@@ -673,16 +677,29 @@ function renderPnlThrottled() {
 
 /* ─────────────── Orders ─────────────── */
 async function sendOrder(action, value, symbol) {
-  const body = { action: action, symbol: symbol || state.selectedSymbol };
+  const sym = symbol || state.selectedSymbol;
+  const body = { action: action, symbol: sym };
   if (value != null) body.value = Number(value);
   const r = await apiFetch("/api/terminal/order", { method: "POST", body: JSON.stringify(body) });
   if (!r) return;
   const data = await r.json();
+  const ts = new Date().toISOString();
   if (!r.ok) {
-    addOrderInfo({ ts: new Date().toISOString(), evt: "ERROR", msg: data.detail || action + " failed" });
+    const err = (data && (data.detail || (data.errors && data.errors[0]))) || action + " failed";
+    addOrderInfo({ ts: ts, evt: "ERROR", msg: sym + " → " + err });
     return;
   }
-  addOrderInfo({ ts: new Date().toISOString(), evt: action.toUpperCase(), msg: (symbol || state.selectedSymbol) + " → queued" });
+  if (data.queued) {
+    addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → queued" });
+    return;
+  }
+  if (data.changed && data.changed.length) {
+    addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → applied (" + data.changed.join(", ") + ")" });
+  } else if (data.errors && data.errors.length) {
+    addOrderInfo({ ts: ts, evt: "ERROR", msg: sym + " → " + data.errors[0] });
+  } else {
+    addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → ok" });
+  }
 }
 
 /* ─────────────── Overlay math (presentation only) ─────────────── */
@@ -1013,7 +1030,7 @@ class LwcChart {
       if (near(sl)) kind = "sl";
       else if (near(tg)) kind = "target";
       if (!kind) return;
-      this.drag = { kind: kind, value: kind === "sl" ? sl : tg };
+      this.drag = { kind: kind, value: kind === "sl" ? sl : tg, symbol: pos.symbol || state.selectedSymbol };
       el.style.cursor = "row-resize";
       this.setScrollLocked(true);
     };
@@ -1030,13 +1047,14 @@ class LwcChart {
       if (!this.drag) return;
       const kind = this.drag.kind;
       const value = this.drag.value;
+      const symbol = this.drag.symbol;
       this.drag = null;
       this.clearDragLine();
       el.style.cursor = "crosshair";
       this.setScrollLocked(false);
       hideDragHint();
       if (value != null && isFinite(value)) {
-        sendOrder(kind === "sl" ? "modify_sl" : "modify_target", value);
+        sendOrder(kind === "sl" ? "modify_sl" : "modify_target", value, symbol);
       }
       this.renderPositionLines();
     };
