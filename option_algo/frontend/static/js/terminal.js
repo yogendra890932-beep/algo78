@@ -37,6 +37,8 @@ async function apiFetch(url, options) {
 function logout() { localStorage.clear(); window.location.href = "/login"; }
 
 /* ─────────────── Global state ─────────────── */
+const TICK_SIZE = 0.05; // NSE/BSE equity-option premium tick size
+
 const state = {
   bootstrap: null,
   selectedSymbol: null,
@@ -59,11 +61,16 @@ const state = {
   events: [],
   ws: null,
   wsHealthy: false,
-  orderLine: null,      // drag state {kind:'sl'|'target'}
-  orderLineValue: null,
-  dragEl: null,
   chart: null,          // chart engine instance
   pnlThrottle: 0,
+  // ── Chart overlay (Entry/SL/Target) state ──
+  overlayKey: null,     // trading_symbol the overlay currently reflects
+  overlayBaseline: null,// first-seen backend/strategy SL+target (for Reset)
+  overlayPnl: null,     // authoritative backend unrealized PnL when available
+  overlayPnlCalc: 0,    // fallback locally-computed PnL
+  modifying: null,      // {kind:'sl'|'target'} — concurrency lock while a modify is in flight
+  pendingModify: null,  // staged modification awaiting Confirm {kind,value,symbol} | {kind:'reset',sl,tgt,symbol}
+  toastTimer: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -572,6 +579,7 @@ function renderPositions(positions) {
   if (!state.positions.length) {
     el.innerHTML = '<div class="term-empty">No open positions</div>';
     renderPnl();
+    if (state.chart) state.chart.renderPositionLines();
     return;
   }
   el.innerHTML = "";
@@ -611,6 +619,7 @@ function renderPositions(positions) {
   });
   bindPositionActions(el);
   renderPnl();
+  if (state.chart) state.chart.renderPositionLines();
 }
 
 function bindPositionActions(el) {
@@ -673,32 +682,55 @@ function renderPnlThrottled() {
   if (now - state.pnlThrottle < 500) return;
   state.pnlThrottle = now;
   renderPnl();
+  updatePositionChipLive(selectedPosition());
 }
 
 /* ─────────────── Orders ─────────────── */
-async function sendOrder(action, value, symbol) {
+async function sendOrder(action, value, symbol, opts) {
   const sym = symbol || state.selectedSymbol;
+  const isModify = action === "modify_sl" || action === "modify_target";
+  if (isModify) {
+    if (state.modifying) { toast("A SL/Target modification is already in progress", "err"); return; }
+    state.modifying = { kind: action === "modify_sl" ? "sl" : "target" };
+    updateChipProcessing(state.modifying.kind);
+  }
   const body = { action: action, symbol: sym };
   if (value != null) body.value = Number(value);
-  const r = await apiFetch("/api/terminal/order", { method: "POST", body: JSON.stringify(body) });
-  if (!r) return;
-  const data = await r.json();
-  const ts = new Date().toISOString();
-  if (!r.ok) {
-    const err = (data && (data.detail || (data.errors && data.errors[0]))) || action + " failed";
-    addOrderInfo({ ts: ts, evt: "ERROR", msg: sym + " → " + err });
-    return;
-  }
-  if (data.queued) {
-    addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → queued" });
-    return;
-  }
-  if (data.changed && data.changed.length) {
-    addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → applied (" + data.changed.join(", ") + ")" });
-  } else if (data.errors && data.errors.length) {
-    addOrderInfo({ ts: ts, evt: "ERROR", msg: sym + " → " + data.errors[0] });
-  } else {
-    addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → ok" });
+  try {
+    const r = await apiFetch("/api/terminal/order", { method: "POST", body: JSON.stringify(body) });
+    if (!r) return;
+    const data = await r.json();
+    const ts = new Date().toISOString();
+    if (!r.ok) {
+      const err = (data && (data.detail || (data.errors && data.errors[0]))) || action + " failed";
+      addOrderInfo({ ts: ts, evt: "ERROR", msg: sym + " → " + err });
+      toast(err, "err");
+      return;
+    }
+    if (data.queued) {
+      addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → queued" });
+      toast("Request queued — it will apply shortly", "processing");
+      return;
+    }
+    if (data.changed && data.changed.length) {
+      const names = data.changed
+        .map((c) => (typeof c === "object" && c ? (c.symbol || c.trading_symbol || "") : c))
+        .filter(Boolean);
+      addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → applied (" + (names.length ? names.join(", ") : "ok") + ")" });
+      toast(isModify ? (action === "modify_sl" ? "SL updated" : "Target updated") : "Applied", "ok");
+    } else if (data.errors && data.errors.length) {
+      addOrderInfo({ ts: ts, evt: "ERROR", msg: sym + " → " + data.errors[0] });
+      toast(data.errors[0], "err");
+    } else {
+      addOrderInfo({ ts: ts, evt: action.toUpperCase(), msg: sym + " → ok" });
+      toast("Applied", "ok");
+    }
+  } finally {
+    if (isModify) {
+      state.modifying = null;
+      updateChipProcessing(null);
+    }
+    if (state.chart) state.chart.renderPositionLines();
   }
 }
 
@@ -811,17 +843,64 @@ function lwcPoints(points) {
   return Object.keys(seen).sort((a, b) => Number(a) - Number(b)).map((t) => seen[t]);
 }
 
+/* ─────────────── Risk / reward zone primitive ───────────────
+   Draws semi-transparent bands between Entry↔SL (red) and
+   Entry↔Target (green) directly on the main series pane. Native
+   series primitives stay aligned during pan/zoom/resize. */
+class ZoneBandPrimitive {
+  constructor(series) {
+    this._series = series;
+    this._levels = [];
+  }
+  setLevels(levels) { this._levels = levels || []; }
+  paneViews() { return [new ZoneBandView(this)]; }
+}
+
+class ZoneBandView {
+  constructor(band) { this._band = band; }
+  renderer() { return new ZoneBandRenderer(this._band); }
+}
+
+class ZoneBandRenderer {
+  constructor(band) { this._band = band; }
+  draw(target) {
+    target.useBitmapCoordinateSpace((scope) => {
+      const series = this._band._series;
+      const ctx = scope.context;
+      const w = scope.mediaSize.width * scope.horizontalPixelRatio;
+      const h = scope.mediaSize.height * scope.verticalPixelRatio;
+      const levels = this._band._levels || [];
+      for (const z of levels) {
+        if (z.from == null || z.to == null) continue;
+        let y1, y2;
+        try { y1 = series.priceToCoordinate(z.from); y2 = series.priceToCoordinate(z.to); } catch (e) { continue; }
+        if (y1 == null || y2 == null) continue;
+        const top = Math.min(y1, y2);
+        const bh = Math.abs(y1 - y2);
+        if (bh < 0.5) continue;
+        ctx.fillStyle = z.color;
+        ctx.fillRect(0, Math.max(0, top * scope.verticalPixelRatio), w, Math.min(bh, h) * scope.verticalPixelRatio);
+      }
+    });
+  }
+}
+
 class LwcChart {
   constructor(container, wrap) {
     this.el = container;
     this.wrap = wrap;
     this.chart = null;
     this.series = {};
-    this.priceLines = { sl: null, tgt: null, drag: null };
-    this.drag = null;
+    this.priceLines = { entry: null, sl: null, tgt: null, ltp: null, drag: null };
+    this.overlay = { entry: null, sl: null, tgt: null, ltp: null, side: "BUY", qty: null, symbol: null, tradingSymbol: null };
+    this.zoneState = { zones: [] };
+    this.zonePrimitive = null;
+    this._zoneKey = "";
+    this.drag = null;         // active drag {kind, value, base, symbol, side}
     this._fitted = false;
     this._lastFirst = null;
     this._scrollLocked = false;
+    this._lastDragClientX = 0;
     this.init();
   }
 
@@ -863,14 +942,29 @@ class LwcChart {
   }
 
   rebuildMain() {
+    if (this.drag) {
+      this.drag = null;
+      this.hideDragPreview();
+      this.setScrollLocked(false);
+    }
     const old = this.series.main;
-    if (old) { try { this.chart.removeSeries(old); } catch (e) { } this.series.main = null; }
+    if (old) {
+      if (this.zonePrimitive) { try { old.detachPrimitive(this.zonePrimitive); } catch (e) { } }
+      try { this.chart.removeSeries(old); } catch (e) { }
+      this.series.main = null;
+    }
     this.series.main = this.chart.addCandlestickSeries({
       upColor: "#22c55e", downColor: "#ef4444",
       borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444",
       priceLineVisible: true, lastValueVisible: true
     });
+    // price lines / primitive are attached to the (new) main series
+    for (const k of Object.keys(this.priceLines)) this.priceLines[k] = null;
+    for (const k of Object.keys(this.overlay)) this.overlay[k] = null;
+    this.zonePrimitive = null;
+    this._zoneKey = "";
     this._fitted = false;
+    this.ensureZonePrimitive();
     this.renderPositionLines();
   }
 
@@ -952,6 +1046,7 @@ class LwcChart {
       if (state.bbM[i] != null) this.series.bbM.update({ time: time, value: state.bbM[i] });
       if (state.bbL[i] != null) this.series.bbL.update({ time: time, value: state.bbL[i] });
     }
+    this.renderPositionLines();
   }
 
   setData() { this.updateLive(); }
@@ -961,27 +1056,88 @@ class LwcChart {
   }
 
   renderPositionLines() {
-    for (const k of ["sl", "tgt"]) {
-      if (this.priceLines[k]) {
-        try { if (this.series.main) this.series.main.removePriceLine(this.priceLines[k]); } catch (e) { }
-        this.priceLines[k] = null;
-      }
-    }
+    const main = this.series.main;
+    if (!main) return;
     const pos = selectedPosition();
-    if (!pos || !this.series.main) return;
-    const sl = num(pos.sl_trigger), tg = num(pos.target);
-    if (sl != null) {
-      this.priceLines.sl = this.series.main.createPriceLine({
-        price: sl, color: "#ef4444", lineWidth: 1, lineStyle: 2,
-        axisLabelVisible: true, title: "SL"
-      });
+    const ltp = pos ? livePrice(pos) : null;
+    this.overlay.entry = pos ? num(pos.entry_price) : null;
+    this.overlay.sl = pos ? num(pos.sl_trigger) : null;
+    this.overlay.tgt = pos ? num(pos.target) : null;
+    this.overlay.ltp = ltp != null ? num(ltp) : null;
+    this.overlay.side = pos ? String(pos.side || "BUY").toUpperCase() : "BUY";
+    this.overlay.qty = pos ? num(pos.qty) : null;
+    this.overlay.symbol = pos ? (pos.symbol || state.selectedSymbol) : null;
+    this.overlay.tradingSymbol = pos ? (pos.trading_symbol || "") : "";
+
+    // Entry / SL / Target / LTP as native price lines — they stay anchored
+    // to the price scale while the chart pans/zooms.
+    this._syncPriceLine("entry", this.overlay.entry, "#38bdf8", 1, 1, "Entry");
+    this._syncPriceLine("sl", this.overlay.sl, "#ef4444", 1, 2, "SL");
+    this._syncPriceLine("tgt", this.overlay.tgt, "#22c55e", 1, 2, "TGT");
+    this._syncPriceLine("ltp", this.overlay.ltp, "#facc15", 1, 0, "LTP");
+
+    this.updateZones();
+    renderPositionChip();
+  }
+
+  _syncPriceLine(key, price, color, lineWidth, lineStyle, title) {
+    const main = this.series.main;
+    if (!main) return;
+    const existing = this.priceLines[key];
+    if (price == null) {
+      if (existing) {
+        try { main.removePriceLine(existing); } catch (e) { }
+        this.priceLines[key] = null;
+      }
+      return;
     }
-    if (tg != null) {
-      this.priceLines.tgt = this.series.main.createPriceLine({
-        price: tg, color: "#22c55e", lineWidth: 1, lineStyle: 2,
-        axisLabelVisible: true, title: "TGT"
-      });
+    const cfg = { price: price, color: color, lineWidth: lineWidth, lineStyle: lineStyle, axisLabelVisible: true, title: title };
+    if (existing) {
+      try { existing.applyOptions(cfg); } catch (e) { }
+    } else {
+      try { this.priceLines[key] = main.createPriceLine(cfg); } catch (e) { }
     }
+  }
+
+  ensureZonePrimitive() {
+    const main = this.series.main;
+    if (!main || this.zonePrimitive) return;
+    try {
+      this.zonePrimitive = new ZoneBandPrimitive(main);
+      main.attachPrimitive(this.zonePrimitive);
+    } catch (e) {
+      this.zonePrimitive = null;
+    }
+  }
+
+  updateZones() {
+    const o = this.overlay;
+    const levels = [];
+    if (o.sl != null && o.entry != null && o.sl !== o.entry) {
+      levels.push({ from: o.sl, to: o.entry, color: "rgba(239,68,68,0.10)" });
+    }
+    if (o.entry != null && o.tgt != null && o.entry !== o.tgt) {
+      levels.push({ from: o.entry, to: o.tgt, color: "rgba(34,197,94,0.10)" });
+    }
+    this.zoneState.zones = levels;
+    if (this.zonePrimitive) this.zonePrimitive.setLevels(levels);
+    const key = JSON.stringify(levels.map((z) => [z.from, z.to]));
+    if (key !== this._zoneKey) {
+      this._zoneKey = key;
+      this._touch();
+    }
+  }
+
+  // Force a repaint so the zone primitive re-renders even when no live
+  // tick flows (e.g. bot paused right after a SL/Target change).
+  _touch() {
+    const main = this.series.main;
+    if (!main) return;
+    try {
+      const p = this.overlay.ltp != null ? this.overlay.ltp : (this.overlay.entry != null ? this.overlay.entry : 0);
+      const pl = main.createPriceLine({ price: p, color: "#000000", lineWidth: 0, axisLabelVisible: false });
+      main.removePriceLine(pl);
+    } catch (e) { }
   }
 
   setDragLine(price, kind) {
@@ -1008,7 +1164,33 @@ class LwcChart {
     const el = $("drag-hint");
     el.classList.add("show");
     const kindTxt = this.drag.kind === "sl" ? "SL" : "TARGET";
-    el.textContent = kindTxt + ": " + fmt(this.drag.value) + "  (release to set)";
+    el.textContent = kindTxt + ": " + fmt(this.drag.value) + "  (release to preview)";
+  }
+
+  showDragPreview(price, clientX, clientY) {
+    const el = $("term-drag-preview");
+    if (!el || !this.drag) return;
+    const check = validateLevel(this.drag.kind, price, this.drag);
+    const kindTxt = this.drag.kind === "sl" ? "SL" : "TARGET";
+    el.innerHTML =
+      '<div class="tp-row"><span>' + kindTxt + "</span><span class='tp-price'>" + fmt(price) + "</span></div>" +
+      '<div class="tp-row"><span>From</span><span>' + fmt(this.drag.base) + "</span></div>" +
+      (check.rr != null ? '<div class="tp-row"><span>RR</span><span class="' + (check.valid ? "tp-valid" : "tp-invalid") + '">1 : ' + check.rr.toFixed(2) + "</span></div>" : "") +
+      '<div class="tp-row"><span class="' + (check.valid ? "tp-valid" : "tp-invalid") + '">' + (check.valid ? "Valid — release to modify" : check.reason) + "</span></div>";
+    el.hidden = false;
+    const wrap = this.wrap;
+    if (wrap) {
+      const wr = wrap.getBoundingClientRect();
+      const left = clientX - wr.left;
+      const top = clientY - wr.top;
+      el.style.left = Math.max(8, Math.min(left, wr.width - 40)) + "px";
+      el.style.top = Math.max(24, Math.min(top, wr.height - 60)) + "px";
+    }
+  }
+
+  hideDragPreview() {
+    const el = $("term-drag-preview");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
   }
 
   setScrollLocked(locked) {
@@ -1019,53 +1201,72 @@ class LwcChart {
 
   bindPointerEvents() {
     const el = this.el;
-    const startDrag = (clientY) => {
+    const startDrag = (clientX, clientY) => {
       const pos = selectedPosition();
       if (!pos) return;
+      if (!this.series.main) return;
+      if (state.modifying) { toast("A SL/Target modification is already in progress", "err"); return; }
       const rect = el.getBoundingClientRect();
       const y = clientY - rect.top;
       const sl = num(pos.sl_trigger), tg = num(pos.target);
-      const near = (p) => (p != null && this.series.main.priceToCoordinate(p) != null && Math.abs(this.series.main.priceToCoordinate(p) - y) <= 8);
+      const near = (p) => (p != null && this.series.main.priceToCoordinate(p) != null && Math.abs(this.series.main.priceToCoordinate(p) - y) <= 12);
       let kind = null;
       if (near(sl)) kind = "sl";
       else if (near(tg)) kind = "target";
       if (!kind) return;
-      this.drag = { kind: kind, value: kind === "sl" ? sl : tg, symbol: pos.symbol || state.selectedSymbol };
+      this.drag = {
+        kind: kind,
+        value: kind === "sl" ? sl : tg,
+        base: kind === "sl" ? sl : tg,
+        symbol: pos.symbol || state.selectedSymbol,
+        side: String(pos.side || "BUY").toUpperCase()
+      };
+      this._lastDragClientX = clientX;
       el.style.cursor = "row-resize";
       this.setScrollLocked(true);
+      this.renderDragHint();
+      this.showDragPreview(this.drag.value, clientX, clientY);
     };
-    const moveDrag = (clientY) => {
+    const moveDrag = (clientX, clientY) => {
       if (!this.drag) return;
       const rect = el.getBoundingClientRect();
       const price = this.series.main.coordinateToPrice(clientY - rect.top);
       if (price == null) return;
-      this.drag.value = price;
-      this.setDragLine(price, this.drag.kind);
+      const snapped = snapTick(price);
+      this.drag.value = snapped;
+      this._lastDragClientX = clientX;
+      this.setDragLine(snapped, this.drag.kind);
       this.renderDragHint();
+      this.showDragPreview(snapped, clientX, clientY);
     };
     const endDrag = () => {
       if (!this.drag) return;
-      const kind = this.drag.kind;
-      const value = this.drag.value;
-      const symbol = this.drag.symbol;
+      const d = this.drag;
       this.drag = null;
       this.clearDragLine();
       el.style.cursor = "crosshair";
       this.setScrollLocked(false);
       hideDragHint();
-      if (value != null && isFinite(value)) {
-        sendOrder(kind === "sl" ? "modify_sl" : "modify_target", value, symbol);
+      this.hideDragPreview();
+      if (d.value == null || !isFinite(d.value)) { this.renderPositionLines(); return; }
+      const v = snapTick(d.value);
+      if (v === d.base) { this.renderPositionLines(); return; }
+      const check = validateLevel(d.kind, v, d);
+      if (!check.valid) {
+        toast(check.reason, "err");
+        this.renderPositionLines();
+        return;
       }
-      this.renderPositionLines();
+      showModifyModal(d.kind, d.base, v, d.symbol, check);
     };
-    el.addEventListener("pointerdown", (e) => startDrag(e.clientY));
-    el.addEventListener("pointermove", (e) => moveDrag(e.clientY));
+    el.addEventListener("pointerdown", (e) => startDrag(e.clientX, e.clientY));
+    el.addEventListener("pointermove", (e) => moveDrag(e.clientX, e.clientY));
     window.addEventListener("pointerup", endDrag);
     el.addEventListener("touchstart", (e) => {
-      if (e.touches.length) startDrag(e.touches[0].clientY);
+      if (e.touches.length) startDrag(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: true });
     el.addEventListener("touchmove", (e) => {
-      if (e.touches.length) moveDrag(e.touches[0].clientY);
+      if (e.touches.length) moveDrag(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: true });
     el.addEventListener("touchend", endDrag);
   }
@@ -1102,6 +1303,241 @@ function hideDragHint() {
   const el = $("drag-hint");
   el.classList.remove("show");
   setTimeout(() => { el.textContent = ""; }, 300);
+}
+
+/* ─────────────── Overlay: validation & PnL math ─────────────── */
+function snapTick(v) {
+  const n = num(v);
+  if (n == null) return null;
+  return Number((Math.round(n / TICK_SIZE) * TICK_SIZE).toFixed(2));
+}
+
+function computeRR(side, entry, sl, tgt) {
+  if (entry == null) return null;
+  const risk = side === "SELL"
+    ? (sl != null ? sl - entry : null)
+    : (sl != null ? entry - sl : null);
+  const reward = side === "SELL"
+    ? (tgt != null ? entry - tgt : null)
+    : (tgt != null ? tgt - entry : null);
+  if (risk == null || reward == null || risk <= 0) return null;
+  return reward / risk;
+}
+
+function validateLevel(kind, value, d) {
+  const pos = selectedPosition();
+  const entry = pos ? num(pos.entry_price) : null;
+  const sl = pos ? num(pos.sl_trigger) : null;
+  const tgt = pos ? num(pos.target) : null;
+  if (entry == null) return { valid: false, reason: "No position entry available" };
+  const side = String((d && d.side) || (pos && pos.side) || "BUY").toUpperCase();
+  let effSl = sl, effTgt = tgt;
+  if (kind === "sl") {
+    effSl = value;
+  } else {
+    effTgt = value;
+  }
+  if (kind === "sl") {
+    if (side === "SELL") {
+      if (value <= entry) return { valid: false, reason: "SELL SL must stay above entry " + fmt(entry) };
+      if (tgt != null && value <= tgt) return { valid: false, reason: "SELL SL must stay above target " + fmt(tgt) };
+    } else {
+      if (value >= entry) return { valid: false, reason: "SL must stay below entry " + fmt(entry) };
+      if (tgt != null && value >= tgt) return { valid: false, reason: "SL must stay below target " + fmt(tgt) };
+    }
+  } else {
+    if (side === "SELL") {
+      if (value >= entry) return { valid: false, reason: "SELL target must stay below entry " + fmt(entry) };
+      if (sl != null && value >= sl) return { valid: false, reason: "SELL target must stay below SL " + fmt(sl) };
+    } else {
+      if (value <= entry) return { valid: false, reason: "Target must stay above entry " + fmt(entry) };
+      if (sl != null && value <= sl) return { valid: false, reason: "Target must stay above SL " + fmt(sl) };
+    }
+  }
+  const rr = computeRR(side, entry, effSl, effTgt);
+  return { valid: true, reason: "", rr: rr };
+}
+
+/* ─────────────── Overlay: position chip on the chart ─────────────── */
+function renderPositionChip() {
+  const el = $("term-position-chip");
+  const pos = selectedPosition();
+  if (!pos) {
+    if (el) el.hidden = true;
+    if (el) el.innerHTML = "";
+    state.overlayKey = null;
+    state.overlayBaseline = null;
+    state.overlayPnl = null;
+    state.overlayPnlCalc = 0;
+    return;
+  }
+  const key = (pos.trading_symbol || "") + "|" + fmt(pos.entry_price) + "|" + num(pos.qty);
+  if (state.overlayKey !== key) {
+    state.overlayKey = key;
+    state.overlayBaseline = { sl: num(pos.sl_trigger), tgt: num(pos.target) };
+    state.overlayPnl = num(pos.unrealized_pnl);
+    el.hidden = false;
+    el.innerHTML = chipHtml(pos);
+    bindChipActions(el, pos);
+  } else {
+    el.hidden = false;
+  }
+  updatePositionChipLive(pos);
+}
+
+function chipHtml(pos) {
+  const side = String(pos.side || "BUY").toUpperCase();
+  const opt = pos.trading_symbol || (pos.symbol || "");
+  return (
+    '<div class="term-chip-row">' +
+    '<span class="term-chip-entry">' + esc(opt) + ' <span class="term-pos-side ' + side + '">' + side + "</span></span>" +
+    '<span class="term-chip-pnl" id="chip-pnl"></span>' +
+    "</div>" +
+    '<div class="term-chip-meta">' +
+    '<span>Qty <b id="chip-qty">--</b></span>' +
+    '<span>Entry <b id="chip-entry">--</b></span>' +
+    '<span>LTP <b id="chip-ltp">--</b></span>' +
+    '<span>SL <b id="chip-sl">--</b></span>' +
+    '<span>TGT <b id="chip-tgt">--</b></span>' +
+    '<span>Near <b id="chip-near">--</b></span>' +
+    "</div>" +
+    '<div class="term-chip-row">' +
+    '<span class="term-chip-rr">RR <b id="chip-rr">--</b></span>' +
+    '<span class="term-chip-processing" id="chip-processing"></span>' +
+    "</div>" +
+    '<div class="term-chip-actions">' +
+    '<button class="term-btn term-btn-xs" id="chip-reset">Reset SL / Target</button>' +
+    '<button class="term-btn term-btn-xs term-btn-danger" id="chip-square">Square Off</button>' +
+    "</div>"
+  );
+}
+
+function bindChipActions(el, pos) {
+  const reset = el.querySelector("#chip-reset");
+  const sq = el.querySelector("#chip-square");
+  if (reset) reset.addEventListener("click", confirmResetLevels);
+  if (sq) sq.addEventListener("click", () => sendOrder("squareoff", null, pos.symbol || state.selectedSymbol));
+}
+
+function updatePositionChipLive(pos) {
+  const el = $("term-position-chip");
+  if (!el || el.hidden || !pos) return;
+  const set = (id, v, f) => {
+    const n = $(id);
+    if (n) n.textContent = f ? f(v) : (v == null ? "--" : String(v));
+  };
+  set("chip-qty", pos ? pos.qty : null, (v) => fmt(v, 0));
+  set("chip-entry", pos ? pos.entry_price : null, fmt);
+  set("chip-ltp", pos ? livePrice(pos) : null, fmt);
+  set("chip-sl", pos ? pos.sl_trigger : null, fmt);
+  set("chip-tgt", pos ? pos.target : null, fmt);
+  set("chip-near", pos ? pos.near_target : null, fmt);
+  const auth = num(pos && pos.unrealized_pnl);
+  const pnl = auth != null ? auth : positionPnl(pos);
+  state.overlayPnl = auth != null ? auth : null;
+  state.overlayPnlCalc = auth != null ? positionPnl(pos) : (pnl || 0);
+  const pnlEl = $("chip-pnl");
+  if (pnlEl) {
+    pnlEl.textContent = fmtINR(pnl);
+    pnlEl.className = "term-chip-pnl " + clsChg(pnl);
+  }
+  const rr = computeRR(String(pos.side || "BUY").toUpperCase(), num(pos.entry_price), num(pos.sl_trigger), num(pos.target));
+  set("chip-rr", rr, (v) => (v != null ? "1 : " + v.toFixed(2) : "--"));
+}
+
+function updateChipProcessing(kind) {
+  const el = $("chip-processing");
+  if (!el) return;
+  el.textContent = kind ? "Modifying " + kind.toUpperCase() + "…" : "";
+  const actions = $("term-position-chip") ? $("term-position-chip").querySelectorAll("button") : [];
+  actions.forEach((b) => { b.disabled = !!kind; });
+}
+
+/* ─────────────── Overlay: toast ─────────────── */
+function toast(msg, kind) {
+  const el = $("term-toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "term-toast " + (kind || "");
+  el.hidden = false;
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => { el.hidden = true; }, 3400);
+}
+
+/* ─────────────── Overlay: confirmation modal ─────────────── */
+function showModifyModal(kind, oldV, newV, symbol, check) {
+  const modal = $("term-modal");
+  if (!modal) return;
+  const kindTxt = kind === "sl" ? "SL" : "TARGET";
+  $("term-modal-title").textContent = "Modify " + kindTxt;
+  $("term-modal-msg").innerHTML =
+    "<div>Move " + kindTxt + " from <b>" + fmt(oldV) + "</b> to <b>" + fmt(newV) + "</b>?</div>" +
+    (check.rr != null ? '<div style="margin-top:4px">Resulting RR <b>1 : ' + check.rr.toFixed(2) + "</b></div>" : "");
+  modal.hidden = false;
+  state.pendingModify = { kind: kind, value: newV, symbol: symbol };
+}
+
+function hideModal() {
+  const modal = $("term-modal");
+  if (modal) modal.hidden = true;
+  state.pendingModify = null;
+}
+
+function restoreOverlayAfterCancel() {
+  hideModal();
+  if (state.chart) state.chart.renderPositionLines();
+}
+
+async function confirmPending() {
+  const pm = state.pendingModify;
+  hideModal();
+  if (!pm) return;
+  if (pm.kind === "reset") {
+    await applyReset(pm);
+    return;
+  }
+  const action = pm.kind === "sl" ? "modify_sl" : "modify_target";
+  await sendOrder(action, pm.value, pm.symbol, { source: "overlay" });
+}
+
+async function applyReset(pm) {
+  if (pm.sl != null) await sendOrder("modify_sl", pm.sl, pm.symbol, { source: "reset" });
+  if (pm.tgt != null) await sendOrder("modify_target", pm.tgt, pm.symbol, { source: "reset" });
+}
+
+function confirmResetLevels() {
+  if (state.modifying) { toast("A SL/Target modification is already in progress", "err"); return; }
+  const pos = selectedPosition();
+  if (!pos) return;
+  const base = state.overlayBaseline || { sl: num(pos.sl_trigger), tgt: num(pos.target) };
+  const curSl = num(pos.sl_trigger), curTg = num(pos.target);
+  const changed = [];
+  if (base.sl != null && (curSl == null || Math.abs(base.sl - curSl) > 1e-9)) changed.push("SL");
+  if (base.tgt != null && (curTg == null || Math.abs(base.tgt - curTg) > 1e-9)) changed.push("Target");
+  if (!changed.length) { toast("SL / Target already at original levels", "ok"); return; }
+  const modal = $("term-modal");
+  if (!modal) return;
+  $("term-modal-title").textContent = "Reset SL / Target";
+  $("term-modal-msg").innerHTML =
+    "Restore the strategy's original levels?<br/>SL <b>" + fmt(base.sl) + "</b> | Target <b>" + fmt(base.tgt) + "</b>";
+  modal.hidden = false;
+  state.pendingModify = { kind: "reset", sl: base.sl, tgt: base.tgt, symbol: pos.symbol || state.selectedSymbol };
+}
+
+function bindOverlayUI() {
+  const cancel = $("term-modal-cancel");
+  const confirm = $("term-modal-confirm");
+  const modal = $("term-modal");
+  if (cancel) cancel.addEventListener("click", restoreOverlayAfterCancel);
+  if (confirm) confirm.addEventListener("click", confirmPending);
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) restoreOverlayAfterCancel();
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && modal && !modal.hidden) restoreOverlayAfterCancel();
+  });
 }
 
 function drawChart() {
@@ -1237,6 +1673,7 @@ function tokenExpired() {
 
 /* ─────────────── Toolbar events ─────────────── */
 function bindToolbar() {
+  bindOverlayUI();
   document.querySelectorAll(".term-tf").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".term-tf").forEach((b) => b.classList.remove("term-tf-active"));

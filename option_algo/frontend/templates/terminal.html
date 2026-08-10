@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Advanced Trading Terminal — AlgoBot</title>
-<link rel="stylesheet" href="/static/css/terminal.css?v=20260807-2"/>
+<link rel="stylesheet" href="/static/css/terminal.css?v=20260807-3"/>
 </head>
 <body class="term-body">
 
@@ -107,10 +107,12 @@
     <div class="term-chart-wrap">
       <div id="term-chart" class="term-chart-lwc"></div>
       <div class="term-chart-symbol" id="chart-symbol-label">--</div>
+      <div class="term-position-chip" id="term-position-chip" hidden></div>
       <div class="term-chart-crosshair" id="term-crosshair">
         <span id="ch-time">--</span>
         <span id="ch-ohlc">O -- H -- L -- C --</span>
       </div>
+      <div class="term-drag-preview" id="term-drag-preview" hidden></div>
       <div class="term-chart-drag-hint" id="drag-hint"></div>
     </div>
     <div class="term-chart-legend" id="chart-legend"></div>
@@ -181,7 +183,20 @@
   </aside>
 </main>
 
-<script src="/static/vendor/lightweight-charts.standalone.production.js?v=20260807-2"></script>
-<script src="/static/js/terminal.js?v=20260807-2"></script>
+<!-- Confirmation dialog for SL / Target modifications -->
+<div class="term-modal" id="term-modal" hidden>
+  <div class="term-modal-box">
+    <div class="term-modal-title" id="term-modal-title">Modify SL</div>
+    <div class="term-modal-msg" id="term-modal-msg"></div>
+    <div class="term-modal-actions">
+      <button class="term-btn" id="term-modal-cancel">Cancel</button>
+      <button class="term-btn term-btn-primary" id="term-modal-confirm">Confirm</button>
+    </div>
+  </div>
+</div>
+<div class="term-toast" id="term-toast" hidden></div>
+
+<script src="/static/vendor/lightweight-charts.standalone.production.js?v=20260807-3"></script>
+<script src="/static/js/terminal.js?v=20260807-3"></script>
 </body>
 </html>
