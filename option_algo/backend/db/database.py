@@ -12,14 +12,15 @@ _connect_args = {}
 if settings.DATABASE_URL.startswith("sqlite"):
     _connect_args = {"check_same_thread": False}
 
+_pool_kwargs = {"pool_pre_ping": True, "pool_recycle": 300, "pool_size": 10, "max_overflow": 20}
+if settings.DATABASE_URL.startswith("sqlite"):
+    _pool_kwargs = {}
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     connect_args=_connect_args,
-    pool_pre_ping=True,  # detect dropped Postgres connections
-    pool_recycle=300,    # recycle connections before server drops them
-    pool_size=10,
-    max_overflow=20,
+    **_pool_kwargs,
 )
 
 AsyncSessionLocal = async_sessionmaker(

@@ -378,6 +378,20 @@
 }
 .term-pos-pnl { font-weight: 700; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
 
+/* ── Pending trades ────────────────────────────────────────────── */
+.term-pending { display: flex; flex-direction: column; gap: 8px; }
+.term-pending-card {
+  background: var(--term-panel-2);
+  border: 1px solid var(--term-border);
+  border-left: 3px solid #f59e0b;
+  border-radius: 7px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.term-pending-card .term-pos-opt { color: #f59e0b; }
+.term-pending-exp { font-size: 10px; color: var(--term-muted); font-variant-numeric: tabular-nums; }
+.term-pending-actions { display: flex; gap: 6px; }
+.term-pending-actions button { flex: 1 1 0; }
+
 /* ── PnL panel ────────────────────────────────────────────────── */
 .term-pnl { display: flex; flex-direction: column; gap: 8px; }
 .term-pnl-net { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }

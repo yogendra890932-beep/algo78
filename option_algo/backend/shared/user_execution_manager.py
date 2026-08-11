@@ -357,10 +357,15 @@ class UserExecutionManager:
         paper = get_paper_book(self.user_id)
 
         entry_price = signal.get("entry_price", 0)
-        stop_loss = signal.get("stop_loss", 0)
         qty = signal.get("quantity", 0)
         strategy = signal.get("strategy", "")
         symbol = signal.get("symbol", "")
+
+        # SL / target come from the user's settings (sl_pct, target_rr),
+        # not the strategy's hardcoded levels.
+        sl_pct = float(self.config.get("sl_pct", 0.003) or 0.003)
+        stop_loss = round(entry_price * (1 - sl_pct), 2) \
+            if entry_price else signal.get("stop_loss", 0)
 
         entry_id = paper.place_market_order(
             "BUY", qty, entry_price,
@@ -409,8 +414,11 @@ class UserExecutionManager:
 
         self._record_entry()
 
+        target = self._positions.get(symbol, {}).get("target", 0)
         print(f"{_now()} [exec:u{self.user_id}] PAPER ENTRY {symbol} {strategy} "
-              f"@ {entry_price} SL {stop_loss} qty={qty}")
+              f"@ {entry_price} SL {stop_loss} (sl_pct={sl_pct}) "
+              f"TGT {target} "
+              f"(rr={self.config.get('target_rr', 1.3)}) qty={qty}")
 
         # Notify
         if self.on_trade:
@@ -434,12 +442,17 @@ class UserExecutionManager:
                 TradeSignal, execution_router,
             )
 
+            entry_price = signal.get("entry_price", 0)
+            sl_pct = float(self.config.get("sl_pct", 0.003) or 0.003)
+            stop_loss = round(entry_price * (1 - sl_pct), 2) \
+                if entry_price else signal.get("stop_loss", 0)
+
             trade_signal = TradeSignal(
                 symbol=signal.get("symbol", ""),
                 opt_type=signal.get("opt_type", "CE"),
                 direction="BUY",
-                entry_price=signal.get("entry_price", 0),
-                stop_loss=signal.get("stop_loss", 0),
+                entry_price=entry_price,
+                stop_loss=stop_loss,
                 quantity=signal.get("quantity", 0),
                 strategy_name=signal.get("strategy", ""),
                 instrument_key=signal.get("instrument_key") or "",
@@ -460,8 +473,8 @@ class UserExecutionManager:
                     "symbol": signal.get("symbol"),
                     "trading_symbol": signal.get("trading_symbol") or signal.get("symbol"),
                     "opt_type": signal.get("opt_type"),
-                    "entry_price": signal.get("entry_price"),
-                    "stop_loss": signal.get("stop_loss"),
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
                     "quantity": signal.get("quantity"),
                     "pending_trade_id": result.pending_trade_id,
                     "strategy": signal.get("strategy"),
@@ -962,15 +975,20 @@ class UserExecutionManager:
             return True
 
     def _maybe_reset_risk(self):
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Risk counters reset on the IST trading day, not the server-local day.
+        from backend.shared.shared_cache import now_ist
+        today = now_ist().strftime("%Y-%m-%d")
         if self._last_date != today:
             self._last_date = today
             self._trades_today = 0
             self._net_pnl_today = 0.0
 
     def _trading_hours_ok(self) -> bool:
+        # trade_start_time / trade_end_time are IST wall-clock values, so
+        # evaluate against current IST time regardless of server timezone.
+        from backend.shared.shared_cache import now_ist
         try:
-            now = datetime.now()
+            now = now_ist().replace(tzinfo=None)
             s = datetime.strptime(self.config.get("trade_start_time", "09:20"), "%H:%M")
             e = datetime.strptime(self.config.get("trade_end_time", "15:00"), "%H:%M")
             s = s.replace(year=now.year, month=now.month, day=now.day)

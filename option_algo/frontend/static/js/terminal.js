@@ -56,6 +56,7 @@ const state = {
   chartOption: null,    // trading_symbol the chart currently references
   underlyingLTP: null,
   positions: [],
+  pendingTrades: [],
   tickLTP: {},
   signals: [],
   events: [],
@@ -70,6 +71,7 @@ const state = {
   overlayPnlCalc: 0,    // fallback locally-computed PnL
   modifying: null,      // {kind:'sl'|'target'} — concurrency lock while a modify is in flight
   pendingModify: null,  // staged modification awaiting Confirm {kind,value,symbol} | {kind:'reset',sl,tgt,symbol}
+  pendingExpireTimer: 0,
   toastTimer: 0,
 };
 
@@ -90,6 +92,7 @@ async function loadBootstrap() {
   renderWatchlist(data.symbols, data.available_symbols);
   renderBotStatus(data.bot_running, data.bot_status);
   renderPositions(data.positions || []);
+  renderPendingTrades(data.pending_trades || []);
   renderTradeStatus();
 
   const first = Object.keys(data.symbols || {})[0] || "NIFTY";
@@ -219,6 +222,7 @@ function handleSnapshot(m) {
   renderActiveOption(m.premium_state);
   renderStrategyStatus(m);
   renderPositions(m.positions || state.positions);
+  renderPendingTrades(m.pending_trades || []);
   drawChart();
 }
 
@@ -363,6 +367,9 @@ function handleEvent(m) {
   }
   if (["ENTRY", "EXIT", "SL_TRAIL", "DIRECTION_FLIP", "PENDING_TRADE"].includes(evt)) {
     setTimeout(loadTrades, 900);
+  }
+  if (evt === "PENDING_TRADE") {
+    refreshPendingTrades();
   }
   if (evt === "BOT_STATUS") {
     renderBotStatus(true, m);
@@ -647,6 +654,151 @@ function positionSymbolFromOption(optTxt) {
   return (sym && positionData(sym).symbol) || state.selectedSymbol;
 }
 
+/* ─────────────── Pending trades (semi-auto approval) ─────────────── */
+async function refreshPendingTrades() {
+  const r = await apiFetch("/api/users/pending-trades");
+  if (!r) return;
+  try {
+    const data = await r.json();
+    renderPendingTrades(Array.isArray(data) ? data : []);
+  } catch (e) { }
+}
+
+function pendingOptionLabel(p) {
+  const sym = String(p.symbol || "").toUpperCase();
+  const hasStrike = /\b\d{4,6}\b/.test(sym) && /\b(CE|PE)\b/.test(sym);
+  if (hasStrike) return sym;
+  const opt = p.opt_type || "";
+  const ent = num(p.entry_price);
+  return sym + (opt ? " " + opt : "") + (ent != null ? " " + ent : "");
+}
+
+function renderPendingTrades(pending) {
+  state.pendingTrades = pending || [];
+  if (state.pendingExpireTimer) { clearTimeout(state.pendingExpireTimer); state.pendingExpireTimer = null; }
+  const el = $("pending-list");
+  const count = $("pending-count");
+  count.textContent = state.pendingTrades.length;
+  if (!state.pendingTrades.length) {
+    if (_pendingCountdownTimer) { clearInterval(_pendingCountdownTimer); _pendingCountdownTimer = null; }
+    el.innerHTML = '<div class="term-empty">No pending trades</div>';
+    if (state.chart) state.chart.renderPendingMarkers();
+    return;
+  }
+  el.innerHTML = "";
+  state.pendingTrades.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = "term-pending-card";
+    card.dataset.tradeId = p.id;
+    const label = pendingOptionLabel(p);
+    const sideCls = String(p.opt_type || "CE").toUpperCase() === "PE" ? "down" : "up";
+    const expMs = p.expires_at ? (new Date(p.expires_at).getTime() - Date.now()) : null;
+    const expSecs = expMs != null && expMs > 0 ? Math.max(1, Math.ceil(expMs / 1000)) : null;
+    card.innerHTML =
+      '<div class="term-pos-top">' +
+      '<span class="term-pos-opt">' + esc(label) + "</span>" +
+      '<span class="term-pos-side ' + sideCls + '">' + esc(String(p.opt_type || "").toUpperCase() || "BUY") + "</span>" +
+      "</div>" +
+      '<div class="term-pos-meta">' +
+      "<span>Strategy</span><b>" + esc(p.strategy || "--") + "</b>" +
+      "<span>Entry</span><b>" + fmt(p.entry_price) + "</b>" +
+      "<span>SL</span><b>" + fmt(p.stop_loss) + "</b>" +
+      "<span>Qty</span><b>" + fmt(p.quantity, 0) + "</b>" +
+      "</div>" +
+      (expSecs != null ? '<div class="term-pending-exp">Auto-expires in <span class="pending-timer">' + expSecs + 's</span></div>' : "") +
+      '<div class="term-pending-actions">' +
+      '<button class="term-btn term-btn-xs term-btn-primary p-approve">Approve</button>' +
+      '<button class="term-btn term-btn-xs term-btn-danger p-reject">Reject</button>' +
+      "</div>";
+    el.appendChild(card);
+  });
+  bindPendingActions(el);
+  if (state.chart) state.chart.renderPendingMarkers();
+
+  const first = state.pendingTrades[0];
+  if (first && first.expires_at) {
+    const until = new Date(first.expires_at).getTime() - Date.now();
+    if (until > 0) {
+      state.pendingExpireTimer = setTimeout(() => {
+        state.pendingExpireTimer = null;
+        refreshPendingTrades();
+      }, until + 300);
+      startPendingCountdown(until);
+    } else {
+      setTimeout(refreshPendingTrades, 400);
+    }
+  }
+}
+
+let _pendingCountdownTimer = null;
+function startPendingCountdown(ms) {
+  if (_pendingCountdownTimer) { clearInterval(_pendingCountdownTimer); _pendingCountdownTimer = null; }
+  const el = document.querySelector(".pending-timer");
+  const t0 = Date.now();
+  _pendingCountdownTimer = setInterval(() => {
+    const remain = Math.max(0, Math.ceil((ms - (Date.now() - t0)) / 1000));
+    if (el) el.textContent = remain + "s";
+    if (remain <= 0 && _pendingCountdownTimer) {
+      clearInterval(_pendingCountdownTimer);
+      _pendingCountdownTimer = null;
+    }
+  }, 250);
+}
+
+function bindPendingActions(el) {
+  el.querySelectorAll(".p-approve").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest(".term-pending-card").dataset.tradeId;
+      approvePendingTrade(id);
+    });
+  });
+  el.querySelectorAll(".p-reject").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest(".term-pending-card").dataset.tradeId;
+      rejectPendingTrade(id);
+    });
+  });
+}
+
+async function approvePendingTrade(id) {
+  if (!id) return;
+  toast("Approving trade…", "processing");
+  const r = await apiFetch("/api/users/pending-trades/" + encodeURIComponent(id) + "/approve", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+  });
+  if (!r) return;
+  let data = null;
+  try { data = await r.json(); } catch (e) { }
+  if (!r.ok) {
+    const err = (data && (data.detail || (data.errors && data.errors[0]))) || "Approval failed";
+    toast(String(err), "err");
+    refreshPendingTrades();
+    return;
+  }
+  toast("Trade approved", "ok");
+  refreshPendingTrades();
+  setTimeout(loadTrades, 900);
+}
+
+async function rejectPendingTrade(id) {
+  if (!id) return;
+  toast("Rejecting trade…", "processing");
+  const r = await apiFetch("/api/users/pending-trades/" + encodeURIComponent(id) + "/reject", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+  });
+  if (!r) return;
+  let data = null;
+  try { data = await r.json(); } catch (e) { }
+  if (!r.ok) {
+    const err = (data && (data.detail || (data.errors && data.errors[0]))) || "Rejection failed";
+    toast(String(err), "err");
+    refreshPendingTrades();
+    return;
+  }
+  toast("Trade rejected", "ok");
+  refreshPendingTrades();
+}
+
 /* ─────────────── PnL ─────────────── */
 function computePnl() {
   let unreal = 0;
@@ -892,6 +1044,7 @@ class LwcChart {
     this.chart = null;
     this.series = {};
     this.priceLines = { entry: null, sl: null, tgt: null, ltp: null, drag: null };
+    this.pendingLines = [];
     this.overlay = { entry: null, sl: null, tgt: null, ltp: null, side: "BUY", qty: null, symbol: null, tradingSymbol: null };
     this.zoneState = { zones: [] };
     this.zonePrimitive = null;
@@ -960,6 +1113,7 @@ class LwcChart {
     });
     // price lines / primitive are attached to the (new) main series
     for (const k of Object.keys(this.priceLines)) this.priceLines[k] = null;
+    this.pendingLines = [];
     for (const k of Object.keys(this.overlay)) this.overlay[k] = null;
     this.zonePrimitive = null;
     this._zoneKey = "";
@@ -1076,6 +1230,8 @@ class LwcChart {
     this._syncPriceLine("tgt", this.overlay.tgt, "#22c55e", 1, 2, "TGT");
     this._syncPriceLine("ltp", this.overlay.ltp, "#facc15", 1, 0, "LTP");
 
+    this.renderPendingMarkers();
+
     this.updateZones();
     renderPositionChip();
   }
@@ -1097,6 +1253,35 @@ class LwcChart {
     } else {
       try { this.priceLines[key] = main.createPriceLine(cfg); } catch (e) { }
     }
+  }
+
+  // Pending semi-auto trades for the selected symbol → dashed amber
+  // entry levels on the chart (distinct from the open position overlay).
+  renderPendingMarkers() {
+    const main = this.series.main;
+    if (!main) return;
+    const sym = state.selectedSymbol;
+    const pending = (state.pendingTrades || []).filter((p) => String(p.symbol || "").toUpperCase() === String(sym || "").toUpperCase());
+    while (this.pendingLines.length > pending.length) {
+      const pl = this.pendingLines.pop();
+      try { main.removePriceLine(pl); } catch (e) { }
+    }
+    pending.forEach((p, i) => {
+      const price = num(p.entry_price);
+      if (price == null) return;
+      const cfg = {
+        price: price, color: "#f59e0b", lineWidth: 1, lineStyle: 3,
+        axisLabelVisible: true,
+        title: "PENDING " + (p.strategy || "").toUpperCase()
+      };
+      const existing = this.pendingLines[i];
+      if (existing) {
+        try { existing.applyOptions(cfg); } catch (e) { }
+      } else {
+        try { this.pendingLines[i] = main.createPriceLine(cfg); } catch (e) { }
+      }
+    });
+    this.pendingLines.length = pending.length;
   }
 
   ensureZonePrimitive() {

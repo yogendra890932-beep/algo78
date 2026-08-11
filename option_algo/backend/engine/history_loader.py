@@ -23,9 +23,25 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
 import pandas as pd
 import upstox_client
 from upstox_client.rest import ApiException
+
+# NSE market-hours decisions must be evaluated in IST regardless of the
+# server's local timezone (a UTC VPS would otherwise shift every check
+# by 5.5 hours and wrongly report the market as closed).
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> datetime:
+    """Current date/time in IST (Asia/Kolkata)."""
+    return datetime.now(IST)
+
+
+def today_ist() -> date:
+    """Current date in IST."""
+    return now_ist().date()
 
 # ── Cache DB path ─────────────────────────────────────────────────
 CACHE_DIR = "candle_cache"
@@ -174,11 +190,11 @@ def _is_nse_holiday(d: date) -> bool:
 
 def _last_trading_day(from_date: date = None) -> date:
     """
-    Returns the most recent NSE trading day before `from_date` (default: today).
+    Returns the most recent NSE trading day before `from_date` (default: today IST).
     Skips weekends AND Indian market holidays.
     Looks back up to 10 days to handle long holiday runs.
     """
-    d = (from_date or date.today()) - timedelta(days=1)
+    d = (from_date or today_ist()) - timedelta(days=1)
     for _ in range(10):
         if not _is_nse_holiday(d):
             return d
@@ -188,19 +204,24 @@ def _last_trading_day(from_date: date = None) -> date:
 
 
 def _is_trading_day(d: date = None) -> bool:
-    """Returns True if `d` (default: today) is an NSE trading day."""
-    return not _is_nse_holiday(d or date.today())
+    """Returns True if `d` (default: today IST) is an NSE trading day."""
+    return not _is_nse_holiday(d or today_ist())
 
 
 def is_market_open(now: datetime = None) -> bool:
     """
-    True if `now` (default: current time) falls within NSE trading
+    True if `now` (default: current IST time) falls within NSE trading
     hours (9:15 AM-3:30 PM) on an NSE trading day. Shared by the
     engine's per-tick guard (engine_v6._is_market_hours()) and the
     bot start API (backend.routers.all_routers, POST /api/bot/start),
     which rejects start requests outside market hours.
+    Evaluated in IST (Asia/Kolkata) so results don't depend on the
+    server's local timezone.
     """
-    now = now or datetime.now()
+    if now is None:
+        now = now_ist()
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=IST)
     if _is_nse_holiday(now.date()):
         return False
     return (now.replace(hour=9,  minute=15, second=0, microsecond=0) <=
@@ -336,7 +357,7 @@ def load_warm_candles(instrument_key: str,
     """
     _purge_old_cache()   # housekeeping
 
-    today     = date.today()
+    today     = today_ist()
     frames    = []
 
     # ── Step 1: Historical data (last N trading days) ────────────
@@ -393,8 +414,8 @@ def load_warm_candles(instrument_key: str,
 
 
 def _is_market_hours_or_after() -> bool:
-    """True from 9:00 AM onwards on weekdays."""
-    n = datetime.now()
+    """True from 9:00 AM IST onwards on weekdays."""
+    n = now_ist()
     if n.weekday() >= 5:
         return False
     return n.hour >= 9

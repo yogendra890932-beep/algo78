@@ -321,9 +321,15 @@ def _handle_start(main_loop: asyncio.AbstractEventLoop, user_id: int) -> dict:
 
     set_bot_status_sync(user_id, "running")
 
-    if USE_SHARED:
-        symbol = config.get("underlying_symbol", "NIFTY").upper()
-        _log(f"[SharedWorker] Started {symbol} engine for user {user_id}")
+    if not USE_SHARED:
+        # Legacy mode: keep the shared symbol-level data pipeline alive so
+        # the Trading Terminal has live data in both modes. Execution stays
+        # with the legacy engine — this only feeds terminal snapshots.
+        try:
+            from backend.shared.terminal_bridge import ensure_for_user
+            ensure_for_user(user_id, config, access_token)
+        except Exception as e:
+            _log(f"terminal bridge start failed: {e}")
 
     return {"ok": True, "status": "running"}
 
@@ -331,6 +337,15 @@ def _handle_start(main_loop: asyncio.AbstractEventLoop, user_id: int) -> dict:
 def _handle_stop(user_id: int) -> dict:
     bot_manager.stop(user_id)
     set_bot_status_sync(user_id, "stopped")
+
+    if not USE_SHARED:
+        # Legacy mode: release the shared symbol data pipeline once the
+        # last bot watching those symbols has stopped.
+        try:
+            from backend.shared.terminal_bridge import release_for_user
+            release_for_user(user_id)
+        except Exception as e:
+            _log(f"terminal bridge stop failed: {e}")
 
     if USE_SHARED:
         import threading
@@ -567,9 +582,10 @@ def _command_loop(main_loop: asyncio.AbstractEventLoop, stop_event: threading.Ev
             _log(f"command pop error: {e}")
             continue
         if cmd is None:
-            # Periodically expire stale pending trades
+            # Periodically expire stale pending trades (every ~10s so a
+            # 30s approval window disappears promptly once elapsed)
             expire_counter += 1
-            if expire_counter >= 6:  # every ~30s
+            if expire_counter >= 2:  # every ~10s
                 _expire_stale_pending_trades()
                 expire_counter = 0
             continue
@@ -740,6 +756,14 @@ async def main():
     #    Shared mode also stops strategy engines and market data via _cleanup_shared_services()
     _log("Stopping all users...")
     bot_manager.stop_all(join_timeout=10.0)
+
+    # 2b. Legacy mode: stop the shared symbol data pipeline the terminal bridge started
+    if not USE_SHARED:
+        try:
+            from backend.shared.terminal_bridge import stop_all as _bridge_stop_all
+            _bridge_stop_all()
+        except Exception as e:
+            _log(f"terminal bridge stop_all error: {e}")
 
     # 3. Stop monitoring and fault tolerance (shared-only services)
     if USE_SHARED:

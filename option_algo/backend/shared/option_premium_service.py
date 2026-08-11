@@ -332,7 +332,10 @@ class SharedOptionPremiumBuilder:
         if ltp <= 0:
             return
 
-        now_1m = datetime.now().strftime("%Y-%m-%d %H:%M")
+        # 1-minute premium candles are bucketed on IST wall-clock
+        # boundaries so they align with the broker's IST timestamps.
+        from backend.shared.shared_cache import now_ist
+        now_1m = now_ist().replace(tzinfo=None).strftime("%Y-%m-%d %H:%M")
 
         with self._lock:
             if self._cur_min != now_1m:

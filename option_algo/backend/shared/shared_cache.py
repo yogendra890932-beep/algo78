@@ -18,11 +18,27 @@ import json
 import time
 import threading
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 import pandas as pd
 
 from backend.services.redis_client import get_redis_sync
+
+# NSE market-hours decisions must be evaluated in IST regardless of the
+# server's local timezone (a UTC VPS would otherwise shift every check
+# by 5.5 hours and wrongly report the market as closed).
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> datetime:
+    """Current date/time in IST (Asia/Kolkata)."""
+    return datetime.now(IST)
+
+
+def today_ist() -> date:
+    """Current date in IST."""
+    return now_ist().date()
 
 
 # ================================================================
@@ -191,7 +207,7 @@ ALL_HOLIDAYS = HOLIDAYS_2025 | HOLIDAYS_2026
 
 def is_nse_holiday(d: date = None) -> bool:
     """Check if a date is an NSE holiday or weekend."""
-    d = d or date.today()
+    d = d or today_ist()
     if d.weekday() >= 5:
         return True
     from backend.services.admin_config_cache import is_holiday
@@ -200,7 +216,7 @@ def is_nse_holiday(d: date = None) -> bool:
 
 def last_trading_day(from_date: date = None) -> date:
     """Get the most recent trading day before from_date."""
-    d = (from_date or date.today()) - timedelta(days=1)
+    d = (from_date or today_ist()) - timedelta(days=1)
     for _ in range(10):
         if not is_nse_holiday(d):
             return d
@@ -210,7 +226,10 @@ def last_trading_day(from_date: date = None) -> date:
 
 def is_market_open(now: datetime = None) -> bool:
     """Check if market is currently open (9:15 AM - 3:30 PM IST)."""
-    now = now or datetime.now()
+    if now is None:
+        now = now_ist()
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=IST)
     if is_nse_holiday(now.date()):
         return False
     market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)

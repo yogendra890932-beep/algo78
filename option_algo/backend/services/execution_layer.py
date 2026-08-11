@@ -888,7 +888,7 @@ class PendingTradeManager:
         from backend.services.audit_log import log_event
         
         with get_sync_session() as db:
-            expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
+            expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=30)
             
             payload = {
                 "strategy_name": signal.strategy_name,
@@ -901,6 +901,9 @@ class PendingTradeManager:
                 "quantity": signal.quantity,
                 "reason": getattr(signal, "reason", None),
                 "confidence": signal.confidence,
+                "instrument_key": signal.instrument_key,
+                "trading_symbol": signal.trading_symbol,
+                "regime": getattr(signal, "regime", None),
             }
             
             from backend.db.models import PendingTrade, PendingTradeStatus

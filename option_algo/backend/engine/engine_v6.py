@@ -151,6 +151,12 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _ist_min() -> str:
+    """Current IST wall-clock minute key (matches broker candle boundaries)."""
+    from backend.engine.history_loader import now_ist
+    return now_ist().replace(tzinfo=None).strftime("%Y-%m-%d %H:%M")
+
+
 def _is_market_hours() -> bool:
     from backend.engine.history_loader import is_market_open
     return is_market_open()
@@ -342,7 +348,9 @@ class RiskTracker:
         self._alerted_trades_today = False
 
     def _maybe_reset(self):
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Risk counters reset on the IST trading day, not the server-local day.
+        from backend.engine.history_loader import today_ist
+        today = today_ist().isoformat()
         if self._last_date != today:
             self._last_date = today
             self.trades_today = 0
@@ -1170,7 +1178,7 @@ class SymbolEngine:
         option instrument is selected (before _process_opt_tick fires).
         """
         self.underlying_ltp = ltp
-        now_min = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_min = _ist_min()
         if self._ul_cur_min != now_min:
             if self._ul_cur_candle.get("open") is not None:
                 self._append_ul_closed_bar(self._ul_cur_candle, self._ul_cur_min)
@@ -1293,7 +1301,7 @@ class SymbolEngine:
         live candle's "volume" field, so volume-based filters have
         real data even before the next API refresh overwrites the bar.
         """
-        now_min = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_min = _ist_min()
         if self._cur_min != now_min:
             if self._cur_candle.get("open") is not None:
                 self._append_opt_closed_bar(self._cur_candle, self._cur_min)
@@ -1420,7 +1428,10 @@ class SymbolEngine:
         return ok
 
     def _trading_hours_ok(self) -> bool:
-        now = datetime.now()
+        # trade_start_time / trade_end_time are IST wall-clock values, so
+        # evaluate against current IST time regardless of server timezone.
+        from backend.engine.history_loader import now_ist
+        now = now_ist().replace(tzinfo=None)
         try:
             s = datetime.strptime(self.cfg.get("trade_start_time", "09:20"), "%H:%M")\
                 .replace(year=now.year, month=now.month, day=now.day)
@@ -1443,7 +1454,7 @@ class SymbolEngine:
         Returns True if analysis was freshly computed this call,
         False if already analysed for this minute (dedup guard).
         """
-        now_min = self._cur_min or datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_min = self._cur_min or _ist_min()
 
         # Dedup: never analyse more than once per candle.
         if self._premium_analyzed_min == now_min:
@@ -1498,7 +1509,7 @@ class SymbolEngine:
 
         Returns True if a fresh analysis result was stored.
         """
-        now_min = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_min = _ist_min()
 
         # Even developing updates should only run once per minute.
         if not is_confirmed and self._last_underlying_min == now_min:

@@ -224,6 +224,59 @@ async def get_user_positions(user_id: int) -> list:
         return []
 
 
+async def get_pending_trades(user_id: int, symbol: Optional[str] = None) -> list:
+    """Latest semi-auto pending trade awaiting approval (WAITING, not yet
+    expired). Only the most recent one is surfaced to the terminal."""
+    try:
+        from backend.db.database import AsyncSessionLocal
+        from backend.db.models import PendingTrade, PendingTradeStatus
+        from sqlalchemy import or_, select
+        from datetime import datetime
+
+        now = datetime.utcnow()
+        async with AsyncSessionLocal() as db:
+            q = (
+                select(PendingTrade)
+                .where(
+                    PendingTrade.user_id == user_id,
+                    PendingTrade.status == PendingTradeStatus.WAITING,
+                    or_(
+                        PendingTrade.expires_at.is_(None),
+                        PendingTrade.expires_at > now,
+                    ),
+                )
+                .order_by(PendingTrade.created_at.desc())
+                .limit(1)
+            )
+            if symbol:
+                sym = str(symbol).upper()
+                q = q.where(
+                    or_(
+                        PendingTrade.symbol == sym,
+                        PendingTrade.symbol.like(sym + " %"),
+                    )
+                )
+            rows = (await db.execute(q)).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "symbol": row.symbol,
+                    "opt_type": row.opt_type,
+                    "strategy": row.strategy,
+                    "entry_price": _d(row.entry_price),
+                    "stop_loss": _d(row.stop_loss),
+                    "quantity": row.quantity,
+                    "confidence": _d(row.confidence),
+                    "status": row.status.value,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in rows
+            ]
+    except Exception:
+        return []
+
+
 async def build_symbol_snapshot(user_id: int, symbol: str) -> dict:
     """Full read-only snapshot for one symbol used by the terminal chart + panels."""
     symbol = (symbol or "").upper()
@@ -244,6 +297,7 @@ async def build_symbol_snapshot(user_id: int, symbol: str) -> dict:
     struct_5m = await _read_redis_json(shared_market_structure_5m(symbol))
 
     positions = await get_user_positions(user_id)
+    pending_trades = await get_pending_trades(user_id, symbol)
 
     return {
         "symbol": symbol,
@@ -261,6 +315,7 @@ async def build_symbol_snapshot(user_id: int, symbol: str) -> dict:
         "structure_1m": struct_1m,
         "structure_5m": struct_5m,
         "positions": positions,
+        "pending_trades": pending_trades,
     }
 
 
@@ -349,5 +404,6 @@ async def build_bootstrap(user, db) -> dict:
         "symbols": symbol_info,
         "available_symbols": await get_available_symbols(),
         "positions": await get_user_positions(user.id),
+        "pending_trades": await get_pending_trades(user.id),
         "itm_depth": ITM_DEPTH,
     }

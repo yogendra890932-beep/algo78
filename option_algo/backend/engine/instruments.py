@@ -261,8 +261,11 @@ def get_instrument_key_auto(
 
             # Skip expired contracts
             if skip_expired:
-                today         = date.today()
-                now           = datetime.now()
+                # "after 3:30 PM IST" cutoff — evaluated in IST regardless
+                # of the server's local timezone.
+                from backend.engine.history_loader import now_ist
+                today         = now_ist().date()
+                now           = now_ist().replace(tzinfo=None)
                 cutoff_passed = (now.hour > 15 or
                                  (now.hour == 15 and now.minute >= 30))
                 min_date      = (today + timedelta(days=1)

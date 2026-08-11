@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Advanced Trading Terminal — AlgoBot</title>
-<link rel="stylesheet" href="/static/css/terminal.css?v=20260807-3"/>
+<link rel="stylesheet" href="/static/css/terminal.css?v=20260811-1"/>
 </head>
 <body class="term-body">
 
@@ -149,6 +149,15 @@
 
   <!-- ── RIGHT PANEL ── -->
   <aside class="term-right">
+    <section class="term-card" id="pending-card">
+      <div class="term-card-head"><span>Pending Trades</span>
+        <span class="term-pending-count term-muted" id="pending-count">0</span>
+      </div>
+      <div class="term-pending" id="pending-list">
+        <div class="term-empty">No pending trades</div>
+      </div>
+    </section>
+
     <section class="term-card">
       <div class="term-card-head"><span>Position Details</span>
         <button id="sq-off-all" class="term-btn term-btn-danger term-btn-xs">Square Off All</button>
@@ -196,7 +205,7 @@
 </div>
 <div class="term-toast" id="term-toast" hidden></div>
 
-<script src="/static/vendor/lightweight-charts.standalone.production.js?v=20260807-3"></script>
-<script src="/static/js/terminal.js?v=20260807-3"></script>
+<script src="/static/vendor/lightweight-charts.standalone.production.js?v=20260811-2"></script>
+<script src="/static/js/terminal.js?v=20260811-2"></script>
 </body>
 </html>

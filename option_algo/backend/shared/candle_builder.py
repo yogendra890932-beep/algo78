@@ -41,7 +41,7 @@ from backend.shared.redis_infra import (
     HISTORICAL_TTL_SEC,
 )
 from backend.shared.shared_cache import (
-    is_market_open, last_trading_day, get_streamer_token,
+    is_market_open, last_trading_day, get_streamer_token, now_ist,
 )
 from backend.shared.dist_locks import acquire_lock_wait, release_lock
 from backend.services.redis_client import get_redis_sync
@@ -308,7 +308,9 @@ class SharedCandleBuilder:
         if token and token != self._underlying_token:
             return
 
-        now = datetime.now()
+        # 1-minute candles are bucketed on IST wall-clock boundaries so
+        # they align with the broker's IST candle timestamps.
+        now = now_ist().replace(tzinfo=None)
         now_1m = now.strftime("%Y-%m-%d %H:%M")
 
         # ── 1-Minute Candle ──────────────────────────────────────
