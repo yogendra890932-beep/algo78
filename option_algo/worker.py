@@ -67,6 +67,10 @@ _now = lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 HEARTBEAT_SEC = 8
 
+# Pending trades are auto-deleted from the pending-trade history after
+# this many seconds (approval window is 30s; history kept briefly longer).
+PENDING_TRADE_HISTORY_TTL_SEC = 60
+
 
 def _log(msg: str):
     logger.info(msg)
@@ -117,8 +121,6 @@ def _send_pending_trade_telegram_alert(user_id: int, trade_data: dict):
         trade_id = trade_data.get("pending_trade_id")
         symbol = trade_data.get("trading_symbol") or trade_data.get("symbol", "")
         opt_type = trade_data.get("opt_type", "")
-        entry_price = trade_data.get("entry_price", 0)
-        stop_loss = trade_data.get("stop_loss", 0)
         quantity = trade_data.get("quantity", 0)
         strategy = trade_data.get("strategy", "")
         confidence = trade_data.get("confidence")
@@ -131,8 +133,6 @@ def _send_pending_trade_telegram_alert(user_id: int, trade_data: dict):
                 trade_id=trade_id,
                 symbol=symbol,
                 opt_type=opt_type,
-                entry_price=entry_price,
-                sl=stop_loss,
                 quantity=quantity,
                 strategy=strategy,
                 confidence=confidence,
@@ -215,7 +215,7 @@ async def _on_trade(user_id: int, trade_data: dict):
     elif event == "PENDING_TRADE":
         _push(user_id, f"Pending Trade: {sym}",
               f"{trade_data.get('opt_type','')} {trade_data.get('strike','')} "
-              f"@ {trade_data.get('entry_price')} — Action required",
+              f"— fills at current LTP on approval. Action required",
               data={"event": event}, tag=f"pending-{trade_data.get('pending_trade_id')}")
         _send_pending_trade_telegram_alert(user_id, trade_data)
 
@@ -536,11 +536,11 @@ def _expire_stale_pending_trades():
 
 def _expire_stale_sync():
     """Sync fallback for expiring stale pending trades."""
-    from datetime import datetime as _dt, timezone as _tz
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
     from backend.db.database import get_sync_session
     from backend.db.models import PendingTrade
     from backend.services.execution_layer import PendingTradeStatus
-    from sqlalchemy import select as _select, update as _update
+    from sqlalchemy import select as _select, delete as _delete
 
     db = get_sync_session()
     try:
@@ -557,6 +557,17 @@ def _expire_stale_sync():
         if expired:
             db.commit()
             _log(f"Expired {len(expired)} stale pending trade(s) [sync]")
+
+        # Auto-delete pending trades from history once they are older
+        # than PENDING_TRADE_HISTORY_TTL_SEC (approval already expired).
+        cutoff = now - _td(seconds=PENDING_TRADE_HISTORY_TTL_SEC)
+        purged = db.execute(
+            _delete(PendingTrade).where(PendingTrade.created_at <= cutoff)
+        )
+        db.commit()
+        if purged.rowcount:
+            _log(f"Purged {purged.rowcount} pending trade(s) from "
+                 f"history (> {PENDING_TRADE_HISTORY_TTL_SEC}s) [sync]")
     except Exception as e:
         db.rollback()
         raise

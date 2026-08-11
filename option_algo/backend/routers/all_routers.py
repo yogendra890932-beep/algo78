@@ -660,8 +660,6 @@ async def list_pending_trades(
             "symbol": row.symbol,
             "opt_type": row.opt_type,
             "strategy": row.strategy,
-            "entry_price": row.entry_price,
-            "stop_loss": row.stop_loss,
             "quantity": row.quantity,
             "confidence": row.confidence,
             "status": row.status.value,

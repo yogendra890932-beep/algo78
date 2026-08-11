@@ -188,8 +188,9 @@ const VoiceAlerts = (() => {
 
       case 'PENDING_TRADE':
         return `Trade alert. Pending trade ${d.pending_trade_id}. `
-             + `${d.trading_symbol || sym} ${optWord(d.opt_type)} at ${d.entry_price}. `
-             + `Stop loss ${d.stop_loss}. Please approve or reject.`;
+             + `${d.trading_symbol || sym} ${optWord(d.opt_type)}. `
+             + `Please approve or reject. `
+             + `Trade will fill at current LTP.`;
 
       default:
         return '';

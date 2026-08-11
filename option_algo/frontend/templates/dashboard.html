@@ -80,12 +80,8 @@
             <span class="modal-val" id="modal-strategy">—</span>
           </div>
           <div class="modal-row">
-            <span class="modal-label">Entry Price</span>
-            <span class="modal-val green" id="modal-entry">—</span>
-          </div>
-          <div class="modal-row">
-            <span class="modal-label">Stop Loss</span>
-            <span class="modal-val red" id="modal-sl">—</span>
+            <span class="modal-label">Entry At</span>
+            <span class="modal-val green" id="modal-entry">LTP</span>
           </div>
           <div class="modal-row">
             <span class="modal-label">Quantity</span>
@@ -1412,8 +1408,7 @@
                                               document.getElementById('modal-symbol').textContent = d.trading_symbol || d.symbol || '—';
                                               document.getElementById('modal-option').textContent = (d.opt_type || '') + ' ' + (d.strike || '');
                                               document.getElementById('modal-strategy').textContent = d.strategy || d.strategy_name || '—';
-                                              document.getElementById('modal-entry').textContent = '₹' + (d.entry_price || 0);
-                                              document.getElementById('modal-sl').textContent = '₹' + (d.stop_loss || 0);
+                                              document.getElementById('modal-entry').textContent = 'LTP';
                                               document.getElementById('modal-qty').textContent = d.quantity || '—';
 
                                               // Store trade ID and reset message
@@ -1740,7 +1735,7 @@
                                                   addFeed(`🚫 [${sym}] RISK LIMIT: ${d.reason} (value: ${d.value}) — no new entries today`, 'error');
                                                   break;
                                                 case 'PENDING_TRADE':
-                                                  addFeed(`⏳ [${sym}] PENDING TRADE: ${d.trading_symbol || sym} ${d.opt_type || ''} @ ₹${d.entry_price} | Approve or reject in the popup`, 'signal');
+                                                  addFeed(`⏳ [${sym}] PENDING TRADE: ${d.trading_symbol || sym} ${d.opt_type || ''} | Approve or reject in the popup`, 'signal');
                                                   showPendingModal(d);
                                                   break;
                                                 case 'SIGNAL_APPROVED':

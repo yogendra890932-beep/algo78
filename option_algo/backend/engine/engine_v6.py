@@ -2456,8 +2456,10 @@ class SymbolEngine:
                         "trading_symbol": self.trading_symbol or self.symbol,
                         "opt_type": self.opt_type,
                         "strike": self.strike,
-                        "entry_price": signal.entry_price,
-                        "stop_loss": signal.stop_loss,
+                        # NOTE: no entry_price / stop_loss — semi-auto
+                        # fills at the current LTP on approval and SL is
+                        # set from the actual fill, so the signal-time
+                        # values are not sent to the user.
                         "quantity": signal.quantity,
                         "pending_trade_id": result.pending_trade_id,
                         "signal_id": result.signal_id,

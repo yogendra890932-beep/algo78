@@ -473,8 +473,10 @@ class UserExecutionManager:
                     "symbol": signal.get("symbol"),
                     "trading_symbol": signal.get("trading_symbol") or signal.get("symbol"),
                     "opt_type": signal.get("opt_type"),
-                    "entry_price": entry_price,
-                    "stop_loss": stop_loss,
+                    # NOTE: no entry_price / stop_loss — semi-auto fills
+                    # at the current LTP on approval and SL is set from
+                    # the actual fill, so the signal-time values are not
+                    # sent to the user.
                     "quantity": signal.get("quantity"),
                     "pending_trade_id": result.pending_trade_id,
                     "strategy": signal.get("strategy"),
@@ -1202,11 +1204,14 @@ class _MockEngine:
         return order.get("order_id")
 
     def _seed_ltp(self, price: float):
-        """Seed the manager's LTP cache for this symbol (used by the
-        approve path so paper fills are realistic even without a tick)."""
+        """Seed the manager's LTP cache for this symbol ONLY if no live
+        tick has arrived yet (used by the approve path so paper fills
+        are realistic even without a tick). Never overwrite a live LTP
+        with the stale signal-time price — approved semi-auto trades
+        must fill at the CURRENT LTP."""
         try:
             if price:
-                self._mgr._last_ltp[self.symbol] = float(price)
+                self._mgr._last_ltp.setdefault(self.symbol, float(price))
         except (TypeError, ValueError):
             pass
 

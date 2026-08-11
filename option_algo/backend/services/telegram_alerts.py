@@ -286,7 +286,7 @@ def alert_risk_limit_hit(bot_token: str, chat_id: str,
 
 def alert_pending_trade(bot_token: str, chat_id: str,
                         trade_id: int, symbol: str, opt_type: str,
-                        entry_price: float, sl: float, quantity: int,
+                        quantity: int,
                         strategy: str, confidence: Optional[float] = None,
                         expires_at: Optional[str] = None,
                         trading_symbol: Optional[str] = None):
@@ -294,13 +294,15 @@ def alert_pending_trade(bot_token: str, chat_id: str,
     Sent when a SEMI_AUTO trade signal is generated and requires
     user approval. Includes trade details and inline buttons to
     approve or reject directly from Telegram.
+
+    NOTE: no signal-time entry price or stop loss is shown — the
+    trade fills at the current LTP on approval and SL is set from
+    the actual fill.
     """
     sym_display = trading_symbol or symbol
     text = (
         f"⏳ <b>Pending Trade #{trade_id} — Action Required</b>\n\n"
         f"<b>{sym_display}</b> ({opt_type})\n"
-        f"Entry:  ₹{entry_price}\n"
-        f"SL:     ₹{sl}\n"
         f"Qty:    {quantity}\n"
         f"Strategy: {strategy}\n"
     )
@@ -329,9 +331,9 @@ def alert_pending_trade(bot_token: str, chat_id: str,
     # Voice alert so the user is alerted even if not watching the chat
     voice_text = (
         f"Trade alert. Pending trade {trade_id}. "
-        f"{sym_display} {opt_type}. Entry {entry_price}. "
-        f"Stop loss {sl}. Quantity {quantity}. "
-        f"Please approve or reject."
+        f"{sym_display} {opt_type}. "
+        f"Quantity {quantity}. "
+        f"Please approve or reject. Trade will fill at current LTP."
     )
     send_voice_message(bot_token, chat_id, voice_text)
 

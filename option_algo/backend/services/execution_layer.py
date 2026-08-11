@@ -138,7 +138,9 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
             continue
 
         # Shared-mode wrappers expose _seed_ltp; seed LTP from the signal
-        # so paper fills are realistic even without a live tick yet.
+        # only when no live tick has arrived yet — never overwrite the
+        # current LTP with the stale signal price, so approved semi-auto
+        # trades fill at the price current at approval time.
         seed = getattr(eng, "_seed_ltp", None)
         if seed and signal.entry_price:
             seed(signal.entry_price)

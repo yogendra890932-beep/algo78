@@ -263,8 +263,6 @@ async def get_pending_trades(user_id: int, symbol: Optional[str] = None) -> list
                     "symbol": row.symbol,
                     "opt_type": row.opt_type,
                     "strategy": row.strategy,
-                    "entry_price": _d(row.entry_price),
-                    "stop_loss": _d(row.stop_loss),
                     "quantity": row.quantity,
                     "confidence": _d(row.confidence),
                     "status": row.status.value,
