@@ -297,6 +297,7 @@ function handleWSMessage(m) {
       if (m.symbol === state.selectedSymbol) {
         state.current = m.candle || null;
         updatePremiumLast(m.candle);
+        schedulePendingLineRefresh();
         renderPnlThrottled();
       }
       break;
@@ -328,7 +329,17 @@ function handleTick(m) {
     renderSelectedSymbol(Object.assign({}, info, { underlying: Object.assign({}, info.underlying, { ltp: m.ltp }) }));
     updateLastUnderlying(m.ltp);
   }
+  schedulePendingLineRefresh();
   renderPnlThrottled();
+}
+
+let _pendingLineTimer = null;
+function schedulePendingLineRefresh() {
+  if (_pendingLineTimer) return;
+  _pendingLineTimer = setTimeout(() => {
+    _pendingLineTimer = null;
+    if (state.chart) state.chart.renderPendingMarkers();
+  }, 250);
 }
 
 function updateLastUnderlying(ltp) {
@@ -571,6 +582,12 @@ function livePrice(pos) {
   return num(pos.entry_price);
 }
 
+function pendingPrice() {
+  if (state.current && state.current.close != null) return num(state.current.close);
+  if (state.premiumState && state.premiumState.ltp != null) return num(state.premiumState.ltp);
+  return null;
+}
+
 function positionPnl(pos) {
   const entry = num(pos.entry_price);
   const qty = num(pos.qty);
@@ -669,8 +686,7 @@ function pendingOptionLabel(p) {
   const hasStrike = /\b\d{4,6}\b/.test(sym) && /\b(CE|PE)\b/.test(sym);
   if (hasStrike) return sym;
   const opt = p.opt_type || "";
-  const ent = num(p.entry_price);
-  return sym + (opt ? " " + opt : "") + (ent != null ? " " + ent : "");
+  return sym + (opt ? " " + opt : "");
 }
 
 function renderPendingTrades(pending) {
@@ -701,8 +717,6 @@ function renderPendingTrades(pending) {
       "</div>" +
       '<div class="term-pos-meta">' +
       "<span>Strategy</span><b>" + esc(p.strategy || "--") + "</b>" +
-      "<span>Entry</span><b>" + fmt(p.entry_price) + "</b>" +
-      "<span>SL</span><b>" + fmt(p.stop_loss) + "</b>" +
       "<span>Qty</span><b>" + fmt(p.quantity, 0) + "</b>" +
       "</div>" +
       (expSecs != null ? '<div class="term-pending-exp">Auto-expires in <span class="pending-timer">' + expSecs + 's</span></div>' : "") +
@@ -1255,19 +1269,25 @@ class LwcChart {
     }
   }
 
-  // Pending semi-auto trades for the selected symbol → dashed amber
-  // entry levels on the chart (distinct from the open position overlay).
+  // Pending semi-auto trade for the selected symbol → dynamic dashed
+  // amber line tracking the current LTP. Drawn only while the trade is
+  // still WAITING — it is removed automatically once the user approves
+  // (becomes a position overlay) or the approval window expires.
   renderPendingMarkers() {
     const main = this.series.main;
     if (!main) return;
-    const sym = state.selectedSymbol;
-    const pending = (state.pendingTrades || []).filter((p) => String(p.symbol || "").toUpperCase() === String(sym || "").toUpperCase());
+    const sym = String(state.selectedSymbol || "").toUpperCase();
+    const pending = (state.pendingTrades || []).filter((p) => {
+      if (String(p.status || "").toUpperCase() !== "WAITING") return false;
+      const ps = String(p.symbol || "").toUpperCase();
+      return ps === sym || ps.startsWith(sym + " ");
+    });
     while (this.pendingLines.length > pending.length) {
       const pl = this.pendingLines.pop();
       try { main.removePriceLine(pl); } catch (e) { }
     }
     pending.forEach((p, i) => {
-      const price = num(p.entry_price);
+      const price = pendingPrice();
       if (price == null) return;
       const cfg = {
         price: price, color: "#f59e0b", lineWidth: 1, lineStyle: 3,
