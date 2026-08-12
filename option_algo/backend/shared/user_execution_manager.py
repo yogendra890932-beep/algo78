@@ -63,7 +63,7 @@ class UserExecutionManager:
         # not implemented (see _place_order). paper_mode is therefore
         # always True; execution_mode (from config) only controls how
         # signals are routed (PAPER = auto-paper, SEMI_AUTO =
-        # approval-paper, AUTO = not yet implemented).
+        # approval-paper, AUTO = auto-paper with daily-consent check).
         self.paper_mode = True
         self.execution_mode = config.get("execution_mode", "PAPER")
         self.symbol = config.get("underlying_symbol", "NIFTY")
@@ -344,7 +344,8 @@ class UserExecutionManager:
 
         Shared mode executes everything in paper; execution_mode decides
         whether paper trades are placed immediately (PAPER), wait for
-        approval (SEMI_AUTO), or are deferred (AUTO — unimplemented).
+        approval (SEMI_AUTO), or are placed immediately with a daily-
+        consent gate (AUTO).
         """
         execution_mode = self.execution_mode
         print(f"{_now()} [exec:u{self.user_id}] Route signal → mode={execution_mode}")
@@ -491,8 +492,50 @@ class UserExecutionManager:
             print(f"{_now()} [exec:u{self.user_id}] Semi-auto err: {e}")
 
     def _execute_auto(self, signal: dict):
-        """Execute live trade automatically."""
-        print(f"{_now()} [exec:u{self.user_id}] Auto execution not yet implemented in shared mode")
+        """Execute automatically — shared mode takes the paper trade
+        immediately, no approval step (mirrors legacy AUTO semantics:
+        consent is required and enforced; see bot_config_builder)."""
+        from backend.db.database import get_sync_session
+        from backend.db.models import DailyAutoConsent
+        from sqlalchemy import select as _select
+
+        consent_valid = False
+        try:
+            with get_sync_session() as db:
+                res = db.execute(
+                    _select(DailyAutoConsent)
+                    .where(DailyAutoConsent.user_id == self.user_id)
+                    .order_by(DailyAutoConsent.created_at.desc())
+                    .limit(1)
+                )
+                consent = res.scalar_one_or_none()
+                if (consent and consent.accepted and consent.valid_until
+                        and consent.valid_until > datetime.utcnow()):
+                    consent_valid = True
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] AUTO consent check error: {e}")
+
+        if not consent_valid:
+            print(f"{_now()} [exec:u{self.user_id}] AUTO blocked: "
+                  f"no valid daily consent")
+            if self.on_trade:
+                self.on_trade({
+                    "event": "AUTO_BLOCKED",
+                    "user_id": self.user_id,
+                    "mode": "auto",
+                    "symbol": signal.get("symbol"),
+                    "trading_symbol": signal.get("trading_symbol")
+                                       or signal.get("symbol"),
+                    "opt_type": signal.get("opt_type"),
+                    "message": "Daily risk disclosure not accepted — "
+                               "accept in Settings for auto trading",
+                })
+            return
+
+        self._execute_paper(signal)
+        print(f"{_now()} [exec:u{self.user_id}] AUTO ENTRY (paper) "
+              f"{signal.get('symbol')} {signal.get('strategy')} "
+              f"@ {signal.get('entry_price')} qty={signal.get('quantity')}")
 
     # ================================================================
     # POSITION MONITORING (SL / target auto-exit)
