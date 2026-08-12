@@ -99,6 +99,11 @@ class UserExecutionManager:
         self._trailing_sl: dict[str, float] = {}
         self._sl_mod_ts: dict[str, float] = {}
 
+        # Per-symbol trailing-SL on/off switch (default ON). Toggled from
+        # the terminal chart — when OFF the engine keeps the static SL but
+        # never trails it.
+        self._trail_enabled: dict[str, bool] = {}
+
         # Risk tracking
         self._trades_today: int = 0
         self._net_pnl_today: float = 0.0
@@ -407,6 +412,7 @@ class UserExecutionManager:
                 "target": target,
                 "near_target": round(target * (1 - self.config.get("target_near_pct", 0.003)), 2)
                                 if target else 0,
+                "trail_enabled": self._trail_enabled.get(symbol, True),
             }
             # Trail from the initial stop-loss, like legacy _place_trade.
             self._trailing_sl[symbol] = stop_loss
@@ -674,6 +680,8 @@ class UserExecutionManager:
         (mirrors legacy engine_v6._maybe_trail). Only the position's own
         premium contract data is used — index data is never mixed in.
         """
+        if not self._trail_enabled.get(sym, True):
+            return
         if time.time() - self._sl_mod_ts.get(sym, 0) < 8:
             return
         try:
@@ -738,6 +746,17 @@ class UserExecutionManager:
                 "strike": strike,
             })
         self._push_position_snapshot(sym)
+
+    def set_trail_enabled(self, symbol: str, enabled: bool):
+        """Enable/disable ATR trailing SL for a symbol (terminal chart toggle)."""
+        sym = str(symbol).upper()
+        self._trail_enabled[sym] = bool(enabled)
+        with self._positions_lock:
+            pos = self._positions.get(sym)
+            if pos:
+                pos["trail_enabled"] = bool(enabled)
+        self._push_position_snapshot(sym)
+        print(f"{_now()} [exec:u{self.user_id}] TRAIL {'ON' if enabled else 'OFF'} {sym}")
 
     def _close_position(self, symbol: str, exit_price: float, status: str):
         """Close a position: cancel SL, compute P&L, notify, publish snapshot."""
@@ -1226,6 +1245,10 @@ class _MockEngine:
 
     def _modify_sl_from_telegram(self, new_sl: float):
         self.modify_sl(new_sl)
+
+    def set_trail(self, enabled: bool):
+        """Toggle ATR trailing SL for this symbol (terminal chart)."""
+        self._mgr.set_trail_enabled(self.symbol, enabled)
 
     def modify_sl(self, new_sl: float):
         with self._mgr._positions_lock:

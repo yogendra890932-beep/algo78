@@ -420,6 +420,30 @@ def _handle_modify_target(user_id: int, payload: dict) -> dict:
     return {"ok": True, "changed": changed, "errors": errors}
 
 
+def _handle_trail_toggle(user_id: int, payload: dict) -> dict:
+    """Enable/disable ATR trailing SL for a symbol (terminal chart toggle)."""
+    symbol = (payload.get("symbol") or "").upper()
+    enabled = bool(payload.get("enabled", True))
+    if not symbol:
+        return {"ok": False, "error": "symbol required"}
+    engines = _get_engines(user_id)
+    if not engines:
+        return {"ok": False, "error": "Bot not running"}
+    changed, errors = [], []
+    for eng in engines:
+        if eng.symbol != symbol:
+            continue
+        try:
+            eng.set_trail(enabled)
+            changed.append(eng.symbol)
+        except Exception as e:
+            errors.append(f"{eng.symbol}: {e}")
+    if not changed:
+        return {"ok": False, "error": f"No matching symbol {symbol}"}
+    return {"ok": True, "changed": changed, "errors": errors,
+            "enabled": enabled}
+
+
 def _handle_squareoff(user_id: int, payload: dict) -> dict:
     symbol  = payload.get("symbol")
     engines = _get_engines(user_id)
@@ -615,6 +639,8 @@ def _command_loop(main_loop: asyncio.AbstractEventLoop, stop_event: threading.Ev
                 result = _handle_modify_sl(user_id, payload)
             elif action == "modify_target":
                 result = _handle_modify_target(user_id, payload)
+            elif action == "trail_toggle":
+                result = _handle_trail_toggle(user_id, payload)
             elif action == "squareoff":
                 result = _handle_squareoff(user_id, payload)
             elif action == "pause":

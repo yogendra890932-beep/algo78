@@ -1576,7 +1576,7 @@ function renderPositionChip() {
     state.overlayPnlCalc = 0;
     return;
   }
-  const key = (pos.trading_symbol || "") + "|" + fmt(pos.entry_price) + "|" + num(pos.qty);
+  const key = (pos.trading_symbol || "") + "|" + fmt(pos.entry_price) + "|" + num(pos.qty) + "|" + (pos.trail_enabled !== false ? "1" : "0");
   if (state.overlayKey !== key) {
     state.overlayKey = key;
     state.overlayBaseline = { sl: num(pos.sl_trigger), tgt: num(pos.target) };
@@ -1611,17 +1611,33 @@ function chipHtml(pos) {
     '<span class="term-chip-processing" id="chip-processing"></span>' +
     "</div>" +
     '<div class="term-chip-actions">' +
+    '<button class="term-btn term-btn-xs' + (pos.trail_enabled !== false ? "" : " term-btn-danger") + '" id="chip-trail">Trail: ' + (pos.trail_enabled !== false ? "ON" : "OFF") + '</button>' +
     '<button class="term-btn term-btn-xs" id="chip-reset">Reset SL / Target</button>' +
     '<button class="term-btn term-btn-xs term-btn-danger" id="chip-square">Square Off</button>' +
     "</div>"
   );
 }
 
+function toggleTrail(pos) {
+  const cur = pos.trail_enabled !== false;
+  const next = !cur;
+  pos.trail_enabled = next;
+  const btn = $("chip-trail");
+  if (btn) {
+    btn.textContent = next ? "Trail: ON" : "Trail: OFF";
+    btn.classList.toggle("term-btn-danger", !next);
+  }
+  sendOrder("trail_toggle", next ? 1 : 0, pos.symbol || state.selectedSymbol)
+    .then(() => wsSend({ action: "positions" }));
+}
+
 function bindChipActions(el, pos) {
   const reset = el.querySelector("#chip-reset");
   const sq = el.querySelector("#chip-square");
+  const trail = el.querySelector("#chip-trail");
   if (reset) reset.addEventListener("click", confirmResetLevels);
   if (sq) sq.addEventListener("click", () => sendOrder("squareoff", null, pos.symbol || state.selectedSymbol));
+  if (trail) trail.addEventListener("click", () => toggleTrail(pos));
 }
 
 function updatePositionChipLive(pos) {

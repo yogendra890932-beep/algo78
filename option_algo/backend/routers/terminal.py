@@ -45,11 +45,12 @@ MODIFY_LOCK_TTL_SEC = 8   # per-level concurrency guard window
 class TerminalOrderRequest(BaseModel):
     """Order issued from the terminal panel.
 
-    action:  modify_sl | modify_target | squareoff | pause | resume
+    action:  modify_sl | modify_target | trail_toggle | squareoff | pause | resume
     """
     action: str
     symbol: Optional[str] = None
     value: Optional[float] = None
+    enabled: Optional[bool] = None
 
 
 # ── Order helpers (defence-in-depth; the worker/engine stays authoritative) ──
@@ -173,10 +174,25 @@ async def terminal_order(
     user: User = Depends(get_current_user),
 ):
     action = (body.action or "").strip().lower()
-    if action not in ("modify_sl", "modify_target", "squareoff", "pause", "resume"):
+    if action not in ("modify_sl", "modify_target", "trail_toggle", "squareoff", "pause", "resume"):
         raise HTTPException(400, f"Unknown terminal action: {action}")
 
     payload = {"symbol": body.symbol}
+    if action == "trail_toggle":
+        symbol = (body.symbol or "").strip().upper()
+        if not symbol:
+            raise HTTPException(400, "trail_toggle requires a symbol")
+        enabled = body.enabled
+        if enabled is None:
+            enabled = bool(body.value)
+        payload = {"symbol": symbol, "enabled": bool(enabled)}
+        result = await send_command(action, user.id, payload)
+        if result.get("queued"):
+            return {"ok": True, "queued": True, "action": action}
+        if not result.get("ok"):
+            raise HTTPException(400, result.get("error", "Command failed"))
+        return {"ok": True, "action": action, "enabled": bool(enabled), **result}
+
     if action in ("modify_sl", "modify_target"):
         symbol = (body.symbol or "").strip().upper()
         if not symbol:

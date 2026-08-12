@@ -425,6 +425,8 @@ class SharedWorkerOrchestrator:
             return self._handle_modify_sl(user_id, payload)
         elif action == "modify_target":
             return self._handle_modify_target(user_id, payload)
+        elif action == "trail_toggle":
+            return self._handle_trail_toggle(user_id, payload)
         elif action == "squareoff":
             return self._handle_squareoff(user_id, payload)
         elif action == "pause":
@@ -575,6 +577,29 @@ class SharedWorkerOrchestrator:
         if not changed and not errors:
             return {"ok": False, "error": "No open positions found"}
         return {"ok": True, "changed": changed, "errors": errors}
+
+    def _handle_trail_toggle(self, user_id: int, payload: dict) -> dict:
+        """Enable/disable ATR trailing SL for a symbol (terminal chart)."""
+        symbol = (payload.get("symbol") or "").upper()
+        enabled = bool(payload.get("enabled", True))
+        if not symbol:
+            return {"ok": False, "error": "symbol required"}
+        engines = self.get_engines_for_user(user_id)
+        if not engines:
+            return {"ok": False, "error": "Bot not running"}
+        changed, errors = [], []
+        for eng in engines:
+            if eng.symbol != symbol:
+                continue
+            try:
+                eng.set_trail(enabled)
+                changed.append(eng.symbol)
+            except Exception as e:
+                errors.append(f"{eng.symbol}: {e}")
+        if not changed:
+            return {"ok": False, "error": f"No matching symbol {symbol}"}
+        return {"ok": True, "changed": changed, "errors": errors,
+                "enabled": enabled}
 
     def _handle_squareoff(self, user_id: int, payload: dict) -> dict:
         symbol = payload.get("symbol")
