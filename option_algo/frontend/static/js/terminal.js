@@ -1576,7 +1576,7 @@ function renderPositionChip() {
     state.overlayPnlCalc = 0;
     return;
   }
-  const key = (pos.trading_symbol || "") + "|" + fmt(pos.entry_price) + "|" + num(pos.qty) + "|" + (pos.trail_enabled !== false ? "1" : "0");
+  const key = (pos.trading_symbol || "") + "|" + fmt(pos.entry_price) + "|" + num(pos.qty);
   if (state.overlayKey !== key) {
     state.overlayKey = key;
     state.overlayBaseline = { sl: num(pos.sl_trigger), tgt: num(pos.target) };
