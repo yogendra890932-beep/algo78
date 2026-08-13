@@ -62,8 +62,8 @@ class UserExecutionManager:
         # Shared mode is paper-only for now — live order placement is
         # not implemented (see _place_order). paper_mode is therefore
         # always True; execution_mode (from config) only controls how
-        # signals are routed (PAPER = auto-paper, SEMI_AUTO =
-        # approval-paper, AUTO = auto-paper with daily-consent check).
+        # signals are routed (PAPER and SEMI_AUTO = approval-paper,
+        # AUTO = auto-paper with daily-consent check).
         self.paper_mode = True
         self.execution_mode = config.get("execution_mode", "PAPER")
         self.symbol = config.get("underlying_symbol", "NIFTY")
@@ -343,14 +343,13 @@ class UserExecutionManager:
         """Route signal to Paper / Semi-Auto / Auto execution.
 
         Shared mode executes everything in paper; execution_mode decides
-        whether paper trades are placed immediately (PAPER), wait for
-        approval (SEMI_AUTO), or are placed immediately with a daily-
-        consent gate (AUTO).
+        whether paper trades wait for approval (PAPER and SEMI_AUTO), or
+        are placed immediately with a daily-consent gate (AUTO).
         """
         execution_mode = self.execution_mode
         print(f"{_now()} [exec:u{self.user_id}] Route signal → mode={execution_mode}")
 
-        if execution_mode == "SEMI_AUTO":
+        if execution_mode in ("SEMI_AUTO", "PAPER"):
             self._execute_semi_auto(signal)
         elif execution_mode == "AUTO":
             self._execute_auto(signal)
@@ -446,7 +445,7 @@ class UserExecutionManager:
         """Create a pending trade record for user approval."""
         try:
             from backend.services.execution_layer import (
-                TradeSignal, execution_router,
+                TradeSignal, PendingTradeManager,
             )
 
             entry_price = signal.get("entry_price", 0)
@@ -467,7 +466,12 @@ class UserExecutionManager:
                 strike=signal.get("strike"),
             )
 
-            result = execution_router.execute_sync(self.user_id, trade_signal)
+            # Create the pending trade DIRECTLY — do NOT go through
+            # execution_router, which re-reads the DB execution_mode and
+            # would place PAPER trades immediately instead of awaiting
+            # approval (PAPER and SEMI_AUTO both require approval now).
+            result = PendingTradeManager.create_pending_trade_sync(
+                self.user_id, trade_signal)
 
             if self.on_trade and result.status.value == "PENDING_APPROVAL":
                 print(f"{_now()} [exec:u{self.user_id}] SEMI_AUTO pending "
