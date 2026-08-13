@@ -791,6 +791,7 @@ async function approvePendingTrade(id) {
   }
   toast("Trade approved", "ok");
   refreshPendingTrades();
+  wsSend({ action: "positions" });
   setTimeout(loadTrades, 900);
 }
 
@@ -1462,7 +1463,15 @@ class LwcChart {
         this.renderPositionLines();
         return;
       }
-      showModifyModal(d.kind, d.base, v, d.symbol, check);
+      // Instant modify on release — no confirmation modal.
+      const action = d.kind === "sl" ? "modify_sl" : "modify_target";
+      const pos = selectedPosition();
+      if (pos) {
+        if (d.kind === "sl") pos.sl_trigger = v;
+        else pos.target = v;
+      }
+      this.renderPositionLines();
+      sendOrder(action, v, d.symbol, { source: "overlay" });
     };
     el.addEventListener("pointerdown", (e) => startDrag(e.clientX, e.clientY));
     el.addEventListener("pointermove", (e) => moveDrag(e.clientX, e.clientY));
