@@ -104,6 +104,9 @@ class UserExecutionManager:
         # never trails it.
         self._trail_enabled: dict[str, bool] = {}
 
+        # Last position-snapshot push timestamp per symbol (throttle).
+        self._snap_ts: dict[str, float] = {}
+
         # Risk tracking
         self._trades_today: int = 0
         self._net_pnl_today: float = 0.0
@@ -721,6 +724,16 @@ class UserExecutionManager:
         # ATR trailing SL (mirrors legacy _maybe_trail)
         self._maybe_trail(sym, ltp)
 
+        # Throttled live position-snapshot push so the dashboard's LTP /
+        # unrealized P&L refresh as ticks arrive (not only on trail/exit).
+        try:
+            now = time.time()
+            if now - self._snap_ts.get(sym, 0) >= 1.5:
+                self._snap_ts[sym] = now
+                self._push_position_snapshot(sym)
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] Snap push err: {e}")
+
     def _maybe_trail(self, sym: str, ltp: float):
         """
         ATR(7) x 1.2 trailing SL on the option-premium chart
@@ -1066,16 +1079,36 @@ class UserExecutionManager:
             return True
 
     def _push_position_snapshot(self, symbol: str):
-        """Push position snapshot to Redis for dashboard access."""
+        """Push position snapshot to Redis for dashboard access.
+
+        Mirrors the legacy engine_v6._push_position_snapshot schema so
+        /api/position/ + the dashboard render live LTP and P&L."""
+        risk_snap = self._risk_snapshot()
         with self._positions_lock:
-            positions = [
-                {
-                    "symbol": sym,
-                    "mode": "paper" if self.paper_mode else "live",
-                    "position": pos,
-                }
-                for sym, pos in self._positions.items()
-            ]
+            positions = []
+            for sym, pos in self._positions.items():
+                ltp = self._last_ltp.get(sym)
+                pnl = None
+                if pos and ltp:
+                    try:
+                        pnl = round(
+                            (float(ltp) - float(pos.get("entry_price", 0)))
+                            * float(pos.get("qty", 0)), 2)
+                    except (TypeError, ValueError):
+                        pnl = None
+                positions.append({
+                    "symbol":         sym,
+                    "mode":           "paper" if self.paper_mode else "live",
+                    "paused":         self._paused.is_set(),
+                    "opt_ltp":        ltp,
+                    "opt_type":       pos.get("opt_type"),
+                    "strike":         pos.get("strike"),
+                    "trading_symbol": pos.get("trading_symbol") or sym,
+                    "position":       pos,
+                    "unrealized_pnl": pnl,
+                    "trades_today":   risk_snap["trades_today"],
+                    "net_pnl_today":  risk_snap["net_pnl_today"],
+                })
 
         set_positions_sync(self.user_id, positions)
 
