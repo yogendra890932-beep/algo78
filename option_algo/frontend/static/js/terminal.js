@@ -998,6 +998,22 @@ function lwcTimeToStr(t) {
   return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0");
 }
 
+function lwcTickMarkFormatter(t, tickMarkType) {
+  if (t == null) return "";
+  const n = Number(t);
+  if (isNaN(n)) return String(t);
+  const d = new Date(n * 1000 + 330 * 60 * 1000);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()];
+  if (tickMarkType === 0) return String(d.getUTCFullYear());
+  if (tickMarkType === 1) return mon;
+  if (tickMarkType === 2) return d.getUTCDate() + " " + mon;
+  if (tickMarkType === 4) return hh + ":" + mm + ":" + ss;
+  return hh + ":" + mm;
+}
+
 function lwcPoints(points) {
   // Lightweight Charts requires ascending, unique times. Stale bars written
   // out-of-order (e.g. previous-session close after a worker restart) would
@@ -1091,7 +1107,8 @@ class LwcChart {
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 2,
-        barSpacing: 7
+        barSpacing: 7,
+        tickMarkFormatter: (t, tm) => lwcTickMarkFormatter(t, tm)
       },
       crosshair: {
         mode: C.CrosshairMode.Normal,

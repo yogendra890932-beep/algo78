@@ -165,20 +165,27 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
         if not fill:
             return None
 
+        # Approved semi-auto trades fill at the CURRENT market price,
+        # which may differ from the signal-time entry — recompute the SL
+        # from the actual fill (sl_pct of the fill) so risk is anchored
+        # to the real entry, not the stale signal price.
+        sl_pct = float(eng.cfg.get("sl_pct", 0.003) or 0.003)
+        stop_loss = round(fill * (1 - sl_pct), 2) if fill else signal.stop_loss
+
         sl_id = eng._place_order("SELL", qty, order_type="SL-M",
-                                 trigger=signal.stop_loss, **kw)
+                                 trigger=stop_loss, **kw)
         if not sl_id:
             eng._place_order("SELL", qty)
             return None
 
         rr = eng.cfg.get("target_rr", 1.3)
-        risk = abs(fill - signal.stop_loss)
+        risk = abs(fill - stop_loss)
         target = round(fill + risk * rr, 2)
         near_pct = eng.cfg.get("target_near_pct", 0.003)
         eng.position = {
             "entry_price": fill, "qty": qty,
             "entry_order_id": eid, "sl_order_id": sl_id,
-            "sl_trigger": signal.stop_loss, "target": target,
+            "sl_trigger": stop_loss, "target": target,
             "near_target": round(target * (1 - near_pct), 2),
             "strategy": signal.strategy_name or signal.strategy or "",
             "entry_ts": datetime.now(timezone.utc).replace(tzinfo=None),
@@ -191,17 +198,32 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
                       if getattr(eng, "_regime", None) else "",
         }
         eng.sl_order_id = sl_id
-        eng.trailing_sl = signal.stop_loss
+        eng.trailing_sl = stop_loss
         eng._sl_mod_ts = time.time()
         eng._risk.record_entry()
         eng._last_entry_price = fill
+
+        # Push the position snapshot to Redis immediately so the
+        # dashboard/terminal shows the fresh position (Entry/SL/Target
+        # lines) as soon as the approval events below are relayed —
+        # otherwise the WS position reader returns a stale (empty)
+        # snapshot until the next 2s monitor poll.
+        try:
+            if getattr(eng, "_seed_ltp", None) is not None:
+                mgr = getattr(eng, "_mgr", None)
+                if mgr and hasattr(mgr, "_push_position_snapshot"):
+                    mgr._push_position_snapshot(eng.symbol)
+            else:
+                eng._push_position_snapshot()
+        except Exception:
+            pass
 
         mode = "paper" if eng.paper_mode else "live"
         if eng._tg_token and eng._tg_chat and eng.cfg.get("telegram_on_entry", True):
             from backend.services import telegram_alerts as tg
             tg.alert_entry(eng._tg_token, eng._tg_chat,
                            signal.trading_symbol or signal.symbol,
-                           signal.opt_type or "", fill, signal.stop_loss,
+                           signal.opt_type or "", fill, stop_loss,
                            target, qty, signal.strategy_name or "", mode)
         if eng.on_trade:
             eng.on_trade({

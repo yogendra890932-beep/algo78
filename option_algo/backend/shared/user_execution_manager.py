@@ -261,7 +261,10 @@ class UserExecutionManager:
         entry_ltp = signal.get("entry_price")
         if entry_ltp:
             try:
-                self._last_ltp[sig_symbol] = float(entry_ltp)
+                # Seed the last-known LTP from the signal ONLY if no live
+                # tick has arrived yet — never let the stale signal-time
+                # price shadow the current market LTP used at approval.
+                self._last_ltp.setdefault(sig_symbol, float(entry_ltp))
             except (TypeError, ValueError):
                 pass
 
@@ -1291,10 +1294,23 @@ class _MockEngine:
                 "Live order placement is not available in shared mode")
         from backend.services.paper_trading import get_paper_book
         paper = get_paper_book(self._mgr.user_id)
-        ltp = self._mgr._last_ltp.get(self.symbol, 0)
         ik = (instrument_key
               or (self.position or {}).get("instrument_key")
               or self.cfg.get("underlying_token", ""))
+        ltp = self._mgr._last_ltp.get(self.symbol, 0)
+        # Approved semi-auto trades must fill at the CURRENT market price
+        # (not the stale signal-time entry). Pull the freshest LTP for the
+        # position's own contract from the shared tick buffer first, and
+        # only fall back to the manager's last-known LTP when no tick
+        # exists for that instrument.
+        if order_type == "MARKET" and ik:
+            try:
+                from backend.shared.market_data_service import read_latest_tick
+                tick = read_latest_tick(self.symbol, ik)
+                if tick and tick.get("ltp"):
+                    ltp = float(tick["ltp"])
+            except Exception:
+                pass
         tag = f"paper:{self._mgr.user_id}"
         if order_type == "SL-M":
             order = paper.place_sl_order(side, qty, trigger, ik, tag)
