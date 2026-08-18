@@ -228,19 +228,41 @@
   background: var(--term-panel-2); color: var(--term-text);
   border: 1px solid var(--term-border); border-radius: 6px; padding: 3px 6px; font-size: 11px;
 }
+.term-mode-group { display: flex; gap: 4px; }
+.term-mode {
+  background: transparent; color: var(--term-muted);
+  border: 1px solid var(--term-border); border-radius: 6px;
+  padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.term-mode-active { background: var(--term-accent); border-color: var(--term-accent); color: #fff; }
 #chart-axis-label { margin-left: auto; font-size: 11px; }
 
 /* ── Chart canvas ─────────────────────────────────────────────── */
 .term-chart-wrap {
   position: relative;
   flex: none;
+  display: flex;
+  gap: 6px;
   height: clamp(340px, 56vh, 680px);
   background: var(--term-panel);
   border: 1px solid var(--term-border);
   border-radius: var(--term-radius);
   overflow: hidden;
+  padding: 6px;
 }
-#term-chart { width: 100%; height: 100%; display: block; cursor: crosshair; }
+.term-chart-col {
+  position: relative;
+  flex: 1 1 50%;
+  min-width: 0;
+  background: var(--term-panel);
+  border: 1px solid var(--term-border);
+  border-radius: calc(var(--term-radius) - 3px);
+  overflow: hidden;
+}
+.term-chart-wrap.mode-1 #premium-col,
+.term-chart-wrap.mode-2 #underlying-col { display: none; }
+#term-chart, #term-chart-underlying { width: 100%; height: 100%; display: block; cursor: crosshair; }
 .term-chart-lwc { position: absolute; inset: 0; }
 .term-chart-symbol {
   position: absolute; top: 8px; left: 10px; z-index: 5;

@@ -94,26 +94,37 @@
         <label class="term-chk"><input type="checkbox" id="ov-vol" checked/> Volume</label>
       </div>
       <div class="term-chart-src">
-        <span class="term-muted">Series:</span>
-        <select id="chart-src">
-          <option value="premium">Option Premium</option>
-          <option value="underlying">Underlying</option>
-        </select>
+        <span class="term-muted">Charts:</span>
+        <div class="term-mode-group" id="mode-group">
+          <button class="term-mode term-mode-active" data-mode="12">1+2</button>
+          <button class="term-mode" data-mode="1">1</button>
+          <button class="term-mode" data-mode="2">2</button>
+        </div>
       </div>
       <span class="term-muted" id="chart-axis-label">EMA9 · EMA15 · EMA21</span>
       <span class="term-candle-timer" id="candle-timer">Candle --</span>
     </div>
 
     <div class="term-chart-wrap">
-      <div id="term-chart" class="term-chart-lwc"></div>
-      <div class="term-chart-symbol" id="chart-symbol-label">--</div>
-      <div class="term-position-chip" id="term-position-chip" hidden></div>
-      <div class="term-chart-crosshair" id="term-crosshair">
-        <span id="ch-time">--</span>
-        <span id="ch-ohlc">O -- H -- L -- C --</span>
+      <div class="term-chart-col" id="underlying-col">
+        <div id="term-chart-underlying" class="term-chart-lwc"></div>
+        <div class="term-chart-symbol" id="underlying-symbol-label">--</div>
+        <div class="term-chart-crosshair" id="underlying-crosshair">
+          <span id="u-ch-time">--</span>
+          <span id="u-ch-ohlc">O -- H -- L -- C --</span>
+        </div>
       </div>
-      <div class="term-drag-preview" id="term-drag-preview" hidden></div>
-      <div class="term-chart-drag-hint" id="drag-hint"></div>
+      <div class="term-chart-col" id="premium-col">
+        <div id="term-chart" class="term-chart-lwc"></div>
+        <div class="term-chart-symbol" id="chart-symbol-label">--</div>
+        <div class="term-position-chip" id="term-position-chip" hidden></div>
+        <div class="term-chart-crosshair" id="term-crosshair">
+          <span id="ch-time">--</span>
+          <span id="ch-ohlc">O -- H -- L -- C --</span>
+        </div>
+        <div class="term-drag-preview" id="term-drag-preview" hidden></div>
+        <div class="term-chart-drag-hint" id="drag-hint"></div>
+      </div>
     </div>
     <div class="term-chart-legend" id="chart-legend"></div>
 

@@ -43,7 +43,7 @@ const state = {
   bootstrap: null,
   selectedSymbol: null,
   tf: "1m",
-  series: "premium",
+  chartMode: "12",         // "1"=underlying only, "2"=premium only, "12"=both
   overlays: { ema: true, vwap: false, bb: false, vol: true },
   candles: [],
   candles5m: [],
@@ -62,7 +62,8 @@ const state = {
   events: [],
   ws: null,
   wsHealthy: false,
-  chart: null,          // chart engine instance
+  chart: null,          // premium (option) chart engine instance
+  underlyingChart: null,// underlying chart engine instance
   pnlThrottle: 0,
   // ── Chart overlay (Entry/SL/Target) state ──
   overlayKey: null,     // trading_symbol the overlay currently reflects
@@ -197,10 +198,11 @@ function aggregate5m(candles) {
   return out;
 }
 
-function currentSeriesCandles() {
-  if (state.series === "premium") {
-    return state.tf === "5m" ? aggregate5m(state.premiumCandles) : state.premiumCandles;
-  }
+function premiumShownCandles() {
+  return state.tf === "5m" ? aggregate5m(state.premiumCandles) : state.premiumCandles;
+}
+
+function underlyingShownCandles() {
   return state.tf === "5m" ? state.underlying5m : state.underlyingCandles;
 }
 
@@ -209,11 +211,11 @@ function handleSnapshot(m) {
   state.premiumCandles = (m.premium_candles || []).map(normalizeBar);
   state.underlyingCandles = (m.candles || []).map(normalizeBar);
   state.underlying5m = (m.candles_5m || []).map(normalizeBar);
-  state.candles = currentSeriesCandles();
   state.premiumState = m.premium_state || null;
   state.chartOption = (m.premium_state && m.premium_state.trading_symbol) || null;
   state.current = m.premium_current || null;
   state.underlyingLTP = m.underlying ? m.underlying.ltp : null;
+  state.candles = premiumShownCandles();
   prepareOverlays(state.candles);
 
   const info = (state.bootstrap && state.bootstrap.symbols || {})[m.symbol];
@@ -280,7 +282,7 @@ function handleWSMessage(m) {
         if (prevOpt && newOpt && newOpt !== prevOpt) {
           state.premiumCandles = [];
           state.current = null;
-          state.candles = currentSeriesCandles();
+          state.candles = premiumShownCandles();
           if (state.chart) state.chart.fullRender();
         }
         renderActiveOption(state.premiumState);
@@ -356,7 +358,7 @@ function updateLastUnderlying(ltp) {
     last5.high = Math.max(last5.high || 0, ltp);
     last5.low = Math.min(last5.low == null ? ltp : last5.low, ltp);
   }
-  if (state.series === "underlying") refreshShownLive();
+  if (state.underlyingChart) state.underlyingChart.updateLive(underlyingShownCandles());
 }
 
 /* ─────────────── Events / Signals / Logs ─────────────── */
@@ -492,6 +494,8 @@ function renderActiveOption(premiumState) {
   }
   const cl = $("chart-symbol-label");
   if (cl) cl.textContent = name || "--";
+  const ul = $("underlying-symbol-label");
+  if (ul) ul.textContent = state.selectedSymbol || "--";
 }
 
 function renderAtm(info) {
@@ -902,40 +906,46 @@ async function sendOrder(action, value, symbol, opts) {
 }
 
 /* ─────────────── Overlay math (presentation only) ─────────────── */
-function prepareOverlays(candles) {
+function computeOverlays(candles) {
   const n = candles.length;
-  state.ema9 = []; state.ema15 = []; state.ema21 = [];
-  state.vwap = []; state.bbU = []; state.bbM = []; state.bbL = [];
-  if (!n) return;
+  const out = { ema9: [], ema15: [], ema21: [], vwap: [], bbU: [], bbM: [], bbL: [] };
+  if (!n) return out;
   const closes = candles.map((c) => num(c.close) || 0);
   const ema = (span) => {
-    const out = []; let prev = closes[0];
+    const r = []; let prev = closes[0];
     const k = 2 / (span + 1);
     for (let i = 0; i < n; i++) {
       prev = i === 0 ? closes[0] : closes[i] * k + prev * (1 - k);
-      out.push(prev);
+      r.push(prev);
     }
-    return out;
+    return r;
   };
-  state.ema9 = ema(9); state.ema15 = ema(15); state.ema21 = ema(21);
+  out.ema9 = ema(9); out.ema15 = ema(15); out.ema21 = ema(21);
 
   let cumPV = 0, cumV = 0;
   for (let i = 0; i < n; i++) {
     const tp = (num(candles[i].high) || 0) + (num(candles[i].low) || 0) + (num(candles[i].close) || 0);
     const v = num(candles[i].volume) || 0;
     cumPV += (tp / 3) * v; cumV += v;
-    state.vwap.push(cumV ? cumPV / cumV : 0);
+    out.vwap.push(cumV ? cumPV / cumV : 0);
   }
   for (let i = 0; i < n; i++) {
-    if (i < 19) { state.bbU.push(null); state.bbM.push(null); state.bbL.push(null); continue; }
+    if (i < 19) { out.bbU.push(null); out.bbM.push(null); out.bbL.push(null); continue; }
     const win = closes.slice(i - 19, i + 1);
     const mean = win.reduce((a, b) => a + b, 0) / 20;
     const varr = win.reduce((a, b) => a + (b - mean) * (b - mean), 0) / 20;
     const sd = Math.sqrt(varr);
-    state.bbM.push(mean);
-    state.bbU.push(mean + 2 * sd);
-    state.bbL.push(mean - 2 * sd);
+    out.bbM.push(mean);
+    out.bbU.push(mean + 2 * sd);
+    out.bbL.push(mean - 2 * sd);
   }
+  return out;
+}
+
+function prepareOverlays(candles) {
+  const o = computeOverlays(candles);
+  state.ema9 = o.ema9; state.ema15 = o.ema15; state.ema21 = o.ema21;
+  state.vwap = o.vwap; state.bbU = o.bbU; state.bbM = o.bbM; state.bbL = o.bbL;
 }
 
 /* ─────────────── Chart engine (TradingView Lightweight Charts) ─────────────── */
@@ -1589,6 +1599,180 @@ function validateLevel(kind, value, d) {
   return { valid: true, reason: "", rr: rr };
 }
 
+/* ─────────────── Underlying chart engine (left panel) ─────────────── */
+class UnderlyingChart {
+  constructor(container, wrap) {
+    this.el = container;
+    this.wrap = wrap;
+    this.chart = null;
+    this.series = {};
+    this.ltpLine = null;
+    this._fitted = false;
+    this._lastFirst = null;
+    this.init();
+  }
+
+  init() {
+    const C = LightweightCharts;
+    this.chart = C.createChart(this.el, {
+      autoSize: true,
+      layout: {
+        background: { type: "solid", color: "#0b0e17" },
+        textColor: "#8b99be",
+        fontSize: 11
+      },
+      grid: {
+        vertLines: { color: "rgba(46,58,88,0.35)" },
+        horzLines: { color: "rgba(46,58,88,0.35)" }
+      },
+      rightPriceScale: { borderColor: "rgba(46,58,88,0.6)" },
+      timeScale: {
+        borderColor: "rgba(46,58,88,0.6)",
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 2,
+        barSpacing: 7,
+        tickMarkFormatter: (t, tm) => lwcTickMarkFormatter(t, tm)
+      },
+      crosshair: {
+        mode: C.CrosshairMode.Normal,
+        vertLine: { color: "rgba(139,153,190,0.4)", labelBackgroundColor: "#1e2537" },
+        horzLine: { color: "rgba(139,153,190,0.4)", labelBackgroundColor: "#1e2537" }
+      },
+      localization: {
+        locale: "en-IN",
+        timeFormatter: (t) => lwcTimeToStr(t)
+      }
+    });
+
+    this.series.main = this.chart.addCandlestickSeries({
+      upColor: "#22c55e", downColor: "#ef4444",
+      borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+      priceLineVisible: true, lastValueVisible: true
+    });
+    if (!this.series.vol) {
+      this.series.vol = this.chart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "vol",
+        lastValueVisible: false, priceLineVisible: false
+      });
+      try { this.chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } }); } catch (e) { }
+    }
+    const mk = (key, color, opts) => {
+      this.series[key] = this.chart.addLineSeries(Object.assign({
+        color: color, lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false
+      }, opts || {}));
+    };
+    mk("ema9", "#f59e0b");
+    mk("ema15", "#3b82f6");
+    mk("ema21", "#a855f7");
+    mk("vwap", "#22d3ee");
+    mk("bbU", "#64748b", { lineStyle: 2 });
+    mk("bbM", "#64748b", { lineStyle: 2 });
+    mk("bbL", "#64748b", { lineStyle: 2 });
+
+    this.chart.subscribeCrosshairMove((p) => this.onCrosshair(p));
+  }
+
+  setData(candles) {
+    if (!this.chart) return;
+    const list = candles || [];
+    this.series.main.setData(lwcPoints(list.map(barToLwc).filter(Boolean)));
+    this.applyOverlays(list, false);
+    this.syncLtpLine();
+    const first = list.length ? barTime(list[0]) : null;
+    if (!this._fitted || first !== this._lastFirst) {
+      this._fitted = true;
+      this._lastFirst = first;
+      try { this.chart.timeScale().fitContent(); } catch (e) { }
+    }
+  }
+
+  updateLive(candles) {
+    if (!this.chart) return;
+    const list = candles || [];
+    const last = list[list.length - 1];
+    const time = last ? toLwcTime(barTime(last)) : null;
+    if (last && time != null) {
+      const i = list.length - 1;
+      const b = barToLwc(last);
+      if (b) this.series.main.update(b);
+      if (state.overlays.vol) {
+        const v = volToLwc(last);
+        if (v) this.series.vol.update(v);
+      }
+      const O = computeOverlays(list);
+      if (state.overlays.ema) {
+        const u = (key, arr) => {
+          const v = arr[i];
+          if (v != null && isFinite(v)) this.series[key].update({ time: time, value: v });
+        };
+        u("ema9", O.ema9); u("ema15", O.ema15); u("ema21", O.ema21);
+      }
+      if (state.overlays.vwap && O.vwap[i] != null) this.series.vwap.update({ time: time, value: O.vwap[i] });
+      if (state.overlays.bb) {
+        if (O.bbU[i] != null) this.series.bbU.update({ time: time, value: O.bbU[i] });
+        if (O.bbM[i] != null) this.series.bbM.update({ time: time, value: O.bbM[i] });
+        if (O.bbL[i] != null) this.series.bbL.update({ time: time, value: O.bbL[i] });
+      }
+    }
+    this.syncLtpLine();
+  }
+
+  applyOverlays(list, live) {
+    const O = computeOverlays(list);
+    const pt = (arr) => lwcPoints(lineToLwc(arr, list));
+    this.series.vol.setData(lwcPoints(state.overlays.vol ? list.map(volToLwc).filter(Boolean) : []));
+    this.series.ema9.setData(lwcPoints(state.overlays.ema ? pt(O.ema9) : []));
+    this.series.ema15.setData(lwcPoints(state.overlays.ema ? pt(O.ema15) : []));
+    this.series.ema21.setData(lwcPoints(state.overlays.ema ? pt(O.ema21) : []));
+    this.series.vwap.setData(lwcPoints(state.overlays.vwap ? pt(O.vwap) : []));
+    this.series.bbU.setData(lwcPoints(state.overlays.bb ? pt(O.bbU) : []));
+    this.series.bbM.setData(lwcPoints(state.overlays.bb ? pt(O.bbM) : []));
+    this.series.bbL.setData(lwcPoints(state.overlays.bb ? pt(O.bbL) : []));
+  }
+
+  syncLtpLine() {
+    const ltp = state.underlyingLTP;
+    if (ltp == null) {
+      if (this.ltpLine) {
+        try { this.series.main.removePriceLine(this.ltpLine); } catch (e) { }
+        this.ltpLine = null;
+      }
+      return;
+    }
+    if (!this.ltpLine) {
+      try {
+        this.ltpLine = this.series.main.createPriceLine({
+          price: ltp, color: "#facc15", lineWidth: 1, lineStyle: 0,
+          axisLabelVisible: true, title: "LTP"
+        });
+      } catch (e) { }
+    } else {
+      try { this.ltpLine.applyOptions({ price: ltp }); } catch (e) { }
+    }
+  }
+
+  onCrosshair(p) {
+    const time = p.time != null ? lwcTimeToStr(p.time) : "--";
+    const tEl = $("u-ch-time");
+    if (tEl) tEl.textContent = time;
+    let bar = null;
+    if (p.seriesData) bar = p.seriesData.get(this.series.main) || null;
+    const oEl = $("u-ch-ohlc");
+    if (oEl) {
+      oEl.textContent = bar
+        ? "O " + fmt(bar.open) + " H " + fmt(bar.high) + " L " + fmt(bar.low) + " C " + fmt(bar.close)
+        : "O -- H -- L -- C --";
+    }
+  }
+
+  resize() {
+    try { this.chart.applyOptions({ width: this.el.clientWidth, height: this.el.clientHeight }); } catch (e) { }
+  }
+}
+
 /* ─────────────── Overlay: position chip on the chart ─────────────── */
 function renderPositionChip() {
   const el = $("term-position-chip");
@@ -1789,6 +1973,7 @@ function bindOverlayUI() {
 
 function drawChart() {
   if (state.chart) state.chart.fullRender();
+  if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
 }
 
 function renderLegend(lastC) {
@@ -1807,20 +1992,35 @@ function renderLegend(lastC) {
 
 /* ─────────────── Live updates ─────────────── */
 function refreshShownLive() {
-  state.candles = currentSeriesCandles();
+  state.candles = premiumShownCandles();
   prepareOverlays(state.candles);
   if (state.chart) state.chart.setData();
 }
 
-function switchSeries() {
+function switchTimeframe() {
   if (!state.premiumCandles.length && !state.underlyingCandles.length && state.selectedSymbol) {
     fetchSnapshot(state.selectedSymbol);
     return;
   }
-  state.candles = currentSeriesCandles();
+  state.candles = premiumShownCandles();
   prepareOverlays(state.candles);
   if (state.chart) state.chart.rebuildMain();
+  if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
   drawChart();
+}
+
+function setChartMode(mode) {
+  state.chartMode = mode || "12";
+  const wrap = document.querySelector(".term-chart-wrap");
+  if (wrap) wrap.classList.remove("mode-1", "mode-2");
+  if (mode === "1") wrap && wrap.classList.add("mode-1");
+  else if (mode === "2") wrap && wrap.classList.add("mode-2");
+  setTimeout(resizeCharts, 0);
+}
+
+function resizeCharts() {
+  if (state.chart) state.chart.resize();
+  if (state.underlyingChart) state.underlyingChart.resize();
 }
 
 function pushPremiumBar(candle) {
@@ -1833,7 +2033,7 @@ function pushPremiumBar(candle) {
   } else {
     candles.push(normalizeBar(candle));
   }
-  if (state.series === "premium") refreshShownLive();
+  refreshShownLive();
   renderPnlThrottled();
 }
 
@@ -1841,7 +2041,7 @@ function updatePremiumLast(candle) {
   if (!candle) return;
   if (!state.premiumCandles.length) return;
   Object.assign(state.premiumCandles[state.premiumCandles.length - 1], normalizeBar(candle));
-  if (state.series === "premium") refreshShownLive();
+  refreshShownLive();
 }
 
 function barKey(b) {
@@ -1926,7 +2126,7 @@ function bindToolbar() {
       document.querySelectorAll(".term-tf").forEach((b) => b.classList.remove("term-tf-active"));
       btn.classList.add("term-tf-active");
       state.tf = btn.dataset.tf;
-      switchSeries();
+      switchTimeframe();
     });
   });
 
@@ -1939,9 +2139,12 @@ function bindToolbar() {
   $("ov-bb").addEventListener("change", toggleOverlay("bb"));
   $("ov-vol").addEventListener("change", toggleOverlay("vol"));
 
-  $("chart-src").addEventListener("change", (e) => {
-    state.series = e.target.value;
-    switchSeries();
+  document.querySelectorAll(".term-mode").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".term-mode").forEach((b) => b.classList.remove("term-mode-active"));
+      btn.classList.add("term-mode-active");
+      setChartMode(btn.dataset.mode);
+    });
   });
 
   $("sq-off-all").addEventListener("click", () => {
@@ -1970,7 +2173,7 @@ function bindToolbar() {
     const collapsed = document.body.classList.toggle("left-collapsed");
     localStorage.setItem("term.leftCollapsed", collapsed ? "1" : "0");
     syncLeftToggle(collapsed);
-    state.chart && state.chart.resize();
+    resizeCharts();
   });
   syncLeftToggle(localStorage.getItem("term.leftCollapsed") === "1");
   if (localStorage.getItem("term.leftCollapsed") === "1") {
@@ -1982,8 +2185,9 @@ function bindToolbar() {
 document.addEventListener("DOMContentLoaded", () => {
   if (!getToken()) { redirectLogin(); return; }
   bindToolbar();
-  state.chart = new LwcChart($("term-chart"), document.querySelector(".term-chart-wrap"));
-  window.addEventListener("resize", () => state.chart && state.chart.resize());
+  state.chart = new LwcChart($("term-chart"), $("premium-col"));
+  state.underlyingChart = new UnderlyingChart($("term-chart-underlying"), $("underlying-col"));
+  window.addEventListener("resize", () => resizeCharts());
   updateCandleTimer();
   setInterval(updateCandleTimer, 1000);
   loadBootstrap();
