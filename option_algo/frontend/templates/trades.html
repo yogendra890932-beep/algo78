@@ -56,7 +56,8 @@
       <option value="">All Status</option>
       <option value="TARGET">Target Hit</option>
       <option value="SL">Stop Loss</option>
-      <option value="MANUAL_SQUAREOFF">Manual Exit</option>
+      <option value="MANUAL">Manual SquareOff</option>
+      <option value="DIRECTION_FLIP_EXIT">Direction Flip</option>
     </select>
     <select id="f-strategy" class="inp filter-inp" onchange="page=0; loadTrades()">
       <option value="">All Strategies</option>
@@ -294,9 +295,10 @@ async function loadTrades() {
       const pnlCls  = pnl >= 0 ? 'green' : 'red';
       const modeTag = (t.mode === 'paper') ? '📄' : '💰';
       const statusMap = {
-        'TARGET': '<span class="badge badge-target">TARGET</span>',
-        'SL':     '<span class="badge badge-sl">SL HIT</span>',
-        'MANUAL_SQUAREOFF': '<span class="badge badge-manual">MANUAL</span>',
+        'TARGET': '<span class="badge badge-target">Target</span>',
+        'SL':     '<span class="badge badge-sl">SL Hit</span>',
+        'MANUAL': '<span class="badge badge-manual">Manual SquareOff</span>',
+        'DIRECTION_FLIP_EXIT': '<span class="badge badge-manual">Direction Flip</span>',
       };
       const strat = { pullback_1m:'Pullback', sweep_1m:'Sweep', breakout_1m:'Breakout' }[t.strategy] || t.strategy;
       return `<tr>

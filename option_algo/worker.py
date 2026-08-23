@@ -238,9 +238,11 @@ async def _on_trade(user_id: int, trade_data: dict):
     status_map = {
         "NEAR_TARGET":          "TARGET",
         "TARGET":               "TARGET",
+        "TARGET_HIT":           "TARGET",
         "SL":                   "SL",
-        "MANUAL_SQUAREOFF":     "SL",
-        "DIRECTION_FLIP_EXIT":  "SL",
+        "SL_HIT":               "SL",
+        "MANUAL_SQUAREOFF":     "MANUAL",
+        "DIRECTION_FLIP_EXIT":  "DIRECTION_FLIP_EXIT",
     }
     db_status_str = status_map.get(raw_status, "SL")
     try:

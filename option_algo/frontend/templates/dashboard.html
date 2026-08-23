@@ -1651,9 +1651,10 @@
                                                   } catch (e) { timeStr = t.entry_ts.slice(11, 16); }
                                                 }
                                                 const statusBadge = {
-                                                  'TARGET': '<span class="badge badge-target">TARGET</span>',
-                                                  'SL': '<span class="badge badge-sl">SL</span>',
-                                                  'MANUAL_SQUAREOFF': '<span class="badge badge-manual">MANUAL</span>',
+                                                  'TARGET': '<span class="badge badge-target">Target</span>',
+                                                  'SL': '<span class="badge badge-sl">SL Hit</span>',
+                                                  'MANUAL': '<span class="badge badge-manual">Manual SquareOff</span>',
+                                                  'DIRECTION_FLIP_EXIT': '<span class="badge badge-manual">Direction Flip</span>',
                                                 }[t.status] || t.status;
                                                 return `<tr>
       <td class="muted">${timeStr}</td>
@@ -1701,7 +1702,9 @@
                                                   break;
                                                 case 'EXIT': {
                                                   const win = d.pnl >= 0;
-                                                  const icon = d.status === 'TARGET' ? '🎯' : d.status === 'MANUAL_SQUAREOFF' ? '⚡' : '🛑';
+                                                  const isTarget = ['TARGET', 'TARGET_HIT', 'NEAR_TARGET'].includes(d.status);
+                                                  const isManual = d.status === 'MANUAL_SQUAREOFF' || d.status === 'MANUAL';
+                                                  const icon = isTarget ? '🎯' : isManual ? '⚡' : '🛑';
                                                   const sign = d.pnl >= 0 ? '+' : '';
                                                   addFeed(`${icon} [${sym}] EXIT ${d.status} @ ₹${d.exit_price} | P&L ₹${sign}${d.pnl}`, win ? 'exit-win' : 'exit-loss');
                                                   loadPositions();

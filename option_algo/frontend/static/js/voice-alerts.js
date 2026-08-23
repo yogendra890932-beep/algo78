@@ -132,8 +132,10 @@ const VoiceAlerts = (() => {
   function statusWord(status) {
     switch (status) {
       case 'TARGET':              return 'Target hit';
+      case 'TARGET_HIT':          return 'Target hit';
       case 'NEAR_TARGET':         return 'Near target exit';
       case 'SL':                  return 'Stop loss hit';
+      case 'SL_HIT':              return 'Stop loss hit';
       case 'MANUAL_SQUAREOFF':    return 'Manual square off';
       case 'DIRECTION_FLIP_EXIT': return 'Direction change exit';
       default:                    return 'Exit';
