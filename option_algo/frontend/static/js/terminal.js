@@ -142,6 +142,7 @@ function renderWatchlistActive() {
 async function selectSymbol(sym) {
   if (!sym) return;
   state.selectedSymbol = sym;
+  clearStrikeRollRefresh();
   renderWatchlistActive();
   const info = (state.bootstrap && state.bootstrap.symbols || {})[sym];
   renderSelectedSymbol(info);
@@ -209,6 +210,7 @@ function underlyingShownCandles() {
 function handleSnapshot(m) {
   if (m.symbol !== state.selectedSymbol) return;
   state.premiumCandles = (m.premium_candles || []).map(normalizeBar);
+  if (state.premiumCandles.length > 0) clearStrikeRollRefresh();
   state.underlyingCandles = (m.candles || []).map(normalizeBar);
   state.underlying5m = (m.candles_5m || []).map(normalizeBar);
   state.premiumState = m.premium_state || null;
@@ -283,7 +285,9 @@ function handleWSMessage(m) {
           state.premiumCandles = [];
           state.current = null;
           state.candles = premiumShownCandles();
+          prepareOverlays([]);
           if (state.chart) state.chart.fullRender();
+          scheduleStrikeRollRefresh(m.symbol);
         }
         renderActiveOption(state.premiumState);
         const info = (state.bootstrap && state.bootstrap.symbols || {})[m.symbol] || {};
@@ -342,6 +346,32 @@ function schedulePendingLineRefresh() {
     _pendingLineTimer = null;
     if (state.chart) state.chart.renderPendingMarkers();
   }, 250);
+}
+
+/* ─────────────── Strike-roll chart refresh ───────────────
+   When the active option rolls to a new strike the worker wipes the
+   premium candles and re-warms them over a few seconds, so the snapshot
+   pushed alongside the "state" change can be empty. Keep pulling fresh
+   snapshots until the new strike's bars actually arrive, otherwise the
+   premium chart stays blank/stale until the next minute closes. */
+let _strikeRollTimer = null;
+let _strikeRollTries = 0;
+function scheduleStrikeRollRefresh(symbol) {
+  clearStrikeRollRefresh();
+  _strikeRollTimer = setTimeout(() => {
+    _strikeRollTimer = null;
+    _strikeRollTries++;
+    if (state.premiumCandles.length > 0 || _strikeRollTries > 45) {
+      _strikeRollTries = 0;
+      return;
+    }
+    wsSend({ action: "snapshot", symbol: symbol });
+    scheduleStrikeRollRefresh(symbol);
+  }, 2000);
+}
+function clearStrikeRollRefresh() {
+  if (_strikeRollTimer) { clearTimeout(_strikeRollTimer); _strikeRollTimer = null; }
+  _strikeRollTries = 0;
 }
 
 function updateLastUnderlying(ltp) {
@@ -2039,7 +2069,15 @@ function pushPremiumBar(candle) {
 
 function updatePremiumLast(candle) {
   if (!candle) return;
-  if (!state.premiumCandles.length) return;
+  if (!state.premiumCandles.length) {
+    // Strike just rolled and history is still warming up — seed the
+    // developing candle as a partial bar so the chart is never blank.
+    if (num(candle.close) > 0 || num(candle.open) > 0) {
+      state.premiumCandles.push(normalizeBar(candle));
+      refreshShownLive();
+    }
+    return;
+  }
   Object.assign(state.premiumCandles[state.premiumCandles.length - 1], normalizeBar(candle));
   refreshShownLive();
 }
