@@ -65,7 +65,8 @@ def _plan_out(plan: SubscriptionPlan) -> dict:
         "description": plan.description, "monthly_price": float(plan.monthly_price),
         "gst_percentage": float(plan.gst_percentage), "duration_days": plan.duration_days,
         "is_contact_sales": plan.is_contact_sales, "is_active": plan.is_active,
-        "symbols": [{"symbol": s.symbol, "lot_limit": s.lot_limit} for s in plan.symbols],
+        "symbols": [{"symbol": s.symbol, "lot_limit": s.lot_limit,
+                     "is_main": s.is_main} for s in plan.symbols],
     }
 
 

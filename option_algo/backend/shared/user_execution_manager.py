@@ -909,6 +909,19 @@ class UserExecutionManager:
         """Place a live order via Upstox (mirrors legacy _place_order)."""
         if not instrument_key:
             return None
+        # Trade-time plan gate before a LIVE entry — exits/SL are never
+        # blocked, only BUY entries. Catches plans that lapse mid-session.
+        if side == "BUY":
+            from backend.services.subscription_service import (
+                check_trading_permission_sync,
+            )
+            lots = max(1, int(self.config.get("order_qty", 1)))
+            allowed, reason = check_trading_permission_sync(
+                self.user_id, self.symbol, lots)
+            if not allowed:
+                print(f"{_now()} [exec:u{self.user_id}] LIVE entry blocked "
+                      f"by plan check: {reason}")
+                return None
         tag = f"algo_bot:{self.user_id}"
         order_type_api = order_type
         limit_price = 0

@@ -158,6 +158,20 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
         if signal.instrument_key and getattr(eng, "_seed_ltp", None) is not None:
             kw["instrument_key"] = signal.instrument_key
 
+        # Trade-time plan gate: before a LIVE entry is placed, re-verify
+        # the user's subscription plan (bot start only checked it once —
+        # a plan can lapse or the symbol/limit can change mid-session).
+        if not eng.paper_mode:
+            from backend.services.subscription_service import (
+                check_trading_permission_sync,
+            )
+            allowed, reason = check_trading_permission_sync(
+                user_id, eng.symbol, num_lots)
+            if not allowed:
+                print(f"[execution_layer] LIVE ENTRY BLOCKED user={user_id} "
+                      f"symbol={eng.symbol} lots={num_lots}: {reason}")
+                return None
+
         eid = eng._place_order("BUY", qty, **kw)
         if not eid:
             return None

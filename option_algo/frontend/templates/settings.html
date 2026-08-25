@@ -1551,6 +1551,22 @@
     const tokens = [];
     const configs = [];
 
+    // Plan gate for additional symbols: when trading live (Semi/Auto),
+    // every additional symbol + lot count must be covered by the user's
+    // subscription plan — mirrors the backend check_trading_permission.
+    let execMode = 'PAPER';
+    if (document.getElementById('mode-semi').checked) execMode = 'SEMI_AUTO';
+    else if (document.getElementById('mode-auto').checked) execMode = 'AUTO';
+    let planSymbols = null;
+    if (execMode !== 'PAPER') {
+      const sub = await getSubscription();
+      planSymbols = (sub && sub.allowed_symbols) || null;
+      if (!planSymbols || Object.keys(planSymbols).length === 0) {
+        showMsg('ms-msg', '❌ Semi Auto and Fully Automatic trading require an active subscription plan. Please subscribe to continue.', 'error');
+        return;
+      }
+    }
+
     cards.forEach(card => {
       const sel = card.querySelector('.sc-symbol');
       const lotsInput = card.querySelector('.sc-lots');
@@ -1584,6 +1600,22 @@
       // Validation: duplicate symbols across cards
       if (symbols.includes(symbol)) {
         msgEl.textContent = `⚠️ Duplicate symbol "${symbol}" — each symbol can only appear once`;
+        msgEl.classList.add('show');
+        valid = false;
+        return;
+      }
+
+      // Plan check: symbol must be in the plan's allowed list
+      if (planSymbols && !(symbol in planSymbols)) {
+        msgEl.textContent = `⚠️ Your subscription plan does not include ${symbol}. Allowed: ${Object.keys(planSymbols).join(', ')}.`;
+        msgEl.classList.add('show');
+        valid = false;
+        return;
+      }
+
+      // Plan check: lot count must not exceed the plan's limit
+      if (planSymbols && lots > sub.allowed_symbols[symbol]) {
+        msgEl.textContent = `⚠️ Maximum lot limit for ${symbol} is ${sub.allowed_symbols[symbol]} — your plan allows up to ${sub.allowed_symbols[symbol]} lot(s).`;
         msgEl.classList.add('show');
         valid = false;
         return;

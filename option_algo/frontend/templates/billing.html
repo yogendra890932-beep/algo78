@@ -450,16 +450,34 @@ async function loadPlans() {
   renderPricingGrid();
 }
 
+function planSymbolLabels(symbols) {
+  let mains = symbols.filter(s => s.is_main);
+  let adds  = symbols.filter(s => !s.is_main);
+  // Fallback for legacy plans seeded before is_main: treat all as main.
+  if (!mains.length && adds.length) { mains = adds; adds = []; }
+  const part = (list) => list.map(s => `${s.symbol} (${s.lot_limit} lot${s.lot_limit !== 1 ? 's' : ''})`).join(', ');
+  const out = [];
+  if (mains.length) out.push('Main: ' + part(mains));
+  if (adds.length)  out.push('Additional: ' + part(adds));
+  if (!out.length && symbols.length) out.push(symbols.map(s => s.symbol).join(', '));
+  return out;
+}
+
 function renderPricingGrid() {
   const sorted = [...currentPlans].sort((a, b) => a.monthly_price - b.monthly_price);
   const nonContact = sorted.filter(p => !p.is_contact_sales);
   const recommendedId = nonContact.length > 1 ? nonContact[Math.floor(nonContact.length / 2)].id : null;
 
   document.getElementById('pricingGrid').innerHTML = sorted.map(p => {
-    const symbols = p.symbols.map(s => s.symbol).join(', ') || '-';
-    const maxLot = p.symbols.length ? Math.max(...p.symbols.map(s => s.lot_limit)) : 0;
-    const features = [
+    let mainSyms  = p.symbols.filter(s => s.is_main).map(s => s.symbol);
+    let addSyms   = p.symbols.filter(s => !s.is_main).map(s => s.symbol);
+    if (!mainSyms.length && addSyms.length) { mainSyms = addSyms; addSyms = []; }
+    const symbols   = (mainSyms.concat(addSyms).join(', ')) || '-';
+    const maxLot    = p.symbols.length ? Math.max(...p.symbols.map(s => s.lot_limit)) : 0;
+    const features  = planSymbolLabels(p.symbols);
+    const featureList = [
       `${p.symbols.length} symbol${p.symbols.length !== 1 ? 's' : ''}: ${symbols}`,
+      ...(addSyms.length ? [`${addSyms.length} additional symbol${addSyms.length !== 1 ? 's' : ''} alongside your main symbol`] : []),
       `Max ${maxLot} lot${maxLot !== 1 ? 's' : ''} per symbol`,
       `${p.duration_days}-day duration`,
       p.gst_percentage ? `+${p.gst_percentage}% GST` : 'No GST',
@@ -488,7 +506,15 @@ function openComparePlans() {
   rows.push('<tr><td>Price</td>' + currentPlans.map(p => `<td>${p.is_contact_sales ? 'Contact Sales' : fmtMoney(p.monthly_price)}</td>`).join('') + '</tr>');
   rows.push('<tr><td>GST</td>' + currentPlans.map(p => `<td>${p.gst_percentage}%</td>`).join('') + '</tr>');
   rows.push('<tr><td>Duration</td>' + currentPlans.map(p => `<td>${p.duration_days} days</td>`).join('') + '</tr>');
+  const symSplit = (pl) => {
+    let mains = pl.symbols.filter(s => s.is_main);
+    let adds  = pl.symbols.filter(s => !s.is_main);
+    if (!mains.length && adds.length) { mains = adds; adds = []; }
+    return { mains, adds };
+  };
   rows.push('<tr><td>Symbols</td>' + currentPlans.map(p => `<td>${p.symbols.map(s => s.symbol).join(', ') || '-'}</td>`).join('') + '</tr>');
+  rows.push('<tr><td>Main Symbol</td>' + currentPlans.map(p => `<td>${symSplit(p).mains.map(s => s.symbol).join(', ') || '-'}</td>`).join('') + '</tr>');
+  rows.push('<tr><td>Additional Symbols</td>' + currentPlans.map(p => `<td>${symSplit(p).adds.map(s => s.symbol).join(', ') || '—'}</td>`).join('') + '</tr>');
   rows.push('<tr><td>Lot Limits</td>' + currentPlans.map(p => `<td>${p.symbols.map(s => s.symbol + ':' + s.lot_limit).join(', ') || '-'}</td>`).join('') + '</tr>');
   document.getElementById('compareTable').innerHTML = `<thead>${rows[0]}</thead><tbody>${rows.slice(1).join('')}</tbody>`;
   new bootstrap.Modal(document.getElementById('compareModal')).show();

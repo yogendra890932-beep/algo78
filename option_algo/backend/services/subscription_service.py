@@ -252,3 +252,83 @@ async def check_trading_permission(db: AsyncSession, user_id: int,
         return False, reason, False
 
     return True, None, False
+
+
+# ── Synchronous trade-time enforcement ──────────────────────────
+# Runs inside the worker/engine threads (legacy engine_v6 and the
+# shared-mode manager) RIGHT BEFORE a live order is placed — the
+# async check_trading_permission() above only guards bot start, so a
+# plan that expires mid-session must still stop live entries. Uses
+# get_sync_session because engines run in sync threads.
+
+def _symbols_and_limits_sync(db, sub) -> dict:
+    from sqlalchemy import text
+    if sub.plan_id:
+        rows = db.execute(
+            text("SELECT symbol, lot_limit FROM subscription_plan_symbols "
+                 "WHERE plan_id = :pid").bindparams(pid=sub.plan_id)
+        ).all()
+        return {str(r[0]).upper(): int(r[1]) for r in rows}
+    if sub.custom_subscription_id:
+        rows = db.execute(
+            text("SELECT symbol, lot_limit FROM custom_subscription_symbols "
+                 "WHERE custom_subscription_id = :cid")
+            .bindparams(cid=sub.custom_subscription_id)
+        ).all()
+        return {str(r[0]).upper(): int(r[1]) for r in rows}
+    return {}
+
+
+def check_trading_permission_sync(user_id: int, symbol: str,
+                                  requested_lots: int) -> tuple[bool, Optional[str]]:
+    """
+    Synchronous live-trade gate. Returns (allowed, reason). Blocks a
+    LIVE entry when there is no active subscription, the subscription
+    has lapsed/pending, the symbol is not in the plan's allowed list,
+    or the lot count exceeds the plan's per-symbol limit.
+
+    Deliberately mirrors check_trading_permission() (async) but never
+    imports engine_v6, keeping subscription logic out of the engine.
+    """
+    from sqlalchemy import select
+    from backend.db.database import get_sync_session
+
+    with get_sync_session() as db:
+        sub = db.execute(
+            select(Subscription)
+            .where(Subscription.user_id == user_id,
+                   Subscription.is_current.is_(True))
+            .order_by(Subscription.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if sub is None:
+            return False, ("No active subscription — live trading disabled. "
+                           "Please subscribe to a plan to continue.")
+        if sub.status == SubscriptionStatus.trial:
+            return False, ("Your free trial only allows Paper Trading — "
+                           "live orders are disabled during the trial.")
+        if sub.status in (SubscriptionStatus.expired,
+                          SubscriptionStatus.cancelled,
+                          SubscriptionStatus.suspended):
+            return False, ("Your subscription has expired or is inactive — "
+                           "please renew to continue trading.")
+        if sub.status == SubscriptionStatus.pending_payment:
+            return False, ("Your subscription payment is pending — trading "
+                           "is disabled until payment completes.")
+        if sub.end_date < datetime.utcnow():
+            return False, ("Your subscription has expired — "
+                           "please renew to continue trading.")
+
+        allowed_symbols = _symbols_and_limits_sync(db, sub)
+        if not allowed_symbols:
+            return False, ("Your subscription plan has no trading symbols "
+                           "configured — contact support.")
+
+        sym = str(symbol or "").strip().upper()
+        if sym and sym not in allowed_symbols:
+            return False, f"Your subscription does not include {sym}."
+        if sym and int(requested_lots or 0) > allowed_symbols[sym]:
+            return False, (f"Maximum lot limit for {sym} exceeded — your "
+                           f"plan allows up to {allowed_symbols[sym]} lot(s).")
+        return True, None

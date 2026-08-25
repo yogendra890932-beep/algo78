@@ -233,10 +233,13 @@ async def seed_default_plans():
                 plan = SubscriptionPlan(**p)
                 db.add(plan)
                 await db.flush()
-                for symbol, lot_limit in symbols:
+                for i, (symbol, lot_limit) in enumerate(symbols):
+                    # First symbol = the plan's main (single-choice) option;
+                    # the rest are additional symbols traded alongside it.
                     db.add(
                         SubscriptionPlanSymbol(
-                            plan_id=plan.id, symbol=symbol, lot_limit=lot_limit
+                            plan_id=plan.id, symbol=symbol, lot_limit=lot_limit,
+                            is_main=(i == 0),
                         )
                     )
             await db.commit()

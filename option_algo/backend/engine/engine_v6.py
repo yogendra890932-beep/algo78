@@ -2286,6 +2286,21 @@ class SymbolEngine:
             oid = o["order_id"]
             print(_now(), f"[{self.symbol}] [PAPER] Order placed successfully: side={side} type={order_type} qty={qty} order_id={oid}")
         else:
+            # Trade-time plan gate: re-verify the user's subscription
+            # before a LIVE entry (bot start checked it once; a plan can
+            # lapse or lose the symbol/limit mid-session). Exits and SL
+            # placement are never blocked — only BUY entries.
+            if side == "BUY":
+                from backend.services.subscription_service import (
+                    check_trading_permission_sync,
+                )
+                lots = max(1, int(self.cfg.get("order_qty", 1)))
+                allowed, reason = check_trading_permission_sync(
+                    self.user_id, self.symbol, lots)
+                if not allowed:
+                    print(_now(), f"[{self.symbol}] ⛔ [LIVE] Entry blocked "
+                                  f"by plan check: {reason}")
+                    return None
             order_type_api = order_type
             limit_price    = 0
             if order_type == "SL-M":
