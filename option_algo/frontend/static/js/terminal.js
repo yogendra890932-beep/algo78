@@ -50,6 +50,7 @@ const state = {
   premiumCandles: [],
   underlyingCandles: [],
   underlying5m: [],
+  underlyingLive: null, // developing 1m underlying bar (not yet closed)
   ema9: [], ema15: [], ema21: [], vwap: [], bbU: [], bbM: [], bbL: [],
   current: null,
   premiumState: null,
@@ -150,6 +151,7 @@ async function selectSymbol(sym) {
   state.premiumCandles = [];
   state.underlyingCandles = [];
   state.underlying5m = [];
+  state.underlyingLive = null;
   state.candles = [];
   state.chartOption = null;
 
@@ -203,16 +205,13 @@ function premiumShownCandles() {
   return state.tf === "5m" ? aggregate5m(state.premiumCandles) : state.premiumCandles;
 }
 
-function underlyingShownCandles() {
-  return state.tf === "5m" ? state.underlying5m : state.underlyingCandles;
-}
-
 function handleSnapshot(m) {
   if (m.symbol !== state.selectedSymbol) return;
   state.premiumCandles = (m.premium_candles || []).map(normalizeBar);
   if (state.premiumCandles.length > 0) clearStrikeRollRefresh();
   state.underlyingCandles = (m.candles || []).map(normalizeBar);
   state.underlying5m = (m.candles_5m || []).map(normalizeBar);
+  state.underlyingLive = null;
   state.premiumState = m.premium_state || null;
   state.chartOption = (m.premium_state && m.premium_state.trading_symbol) || null;
   state.current = m.premium_current || null;
@@ -299,6 +298,11 @@ function handleWSMessage(m) {
         pushPremiumBar(m.candle);
       }
       break;
+    case "underlying_bar":
+      if (m.symbol === state.selectedSymbol) {
+        pushUnderlyingBar(m.interval, m.candle);
+      }
+      break;
     case "current":
       if (m.symbol === state.selectedSymbol) {
         state.current = m.candle || null;
@@ -376,19 +380,107 @@ function clearStrikeRollRefresh() {
 
 function updateLastUnderlying(ltp) {
   if (ltp == null) return;
-  const last1 = state.underlyingCandles[state.underlyingCandles.length - 1];
-  if (last1) {
-    last1.close = ltp;
-    last1.high = Math.max(last1.high || 0, ltp);
-    last1.low = Math.min(last1.low == null ? ltp : last1.low, ltp);
-  }
-  const last5 = state.underlying5m[state.underlying5m.length - 1];
-  if (last5) {
-    last5.close = ltp;
-    last5.high = Math.max(last5.high || 0, ltp);
-    last5.low = Math.min(last5.low == null ? ltp : last5.low, ltp);
+  // Maintain a proper developing 1m bar instead of mutating the last
+  // closed bar — otherwise the underlying chart never rolls new candles.
+  const nowMin = currentIstMinuteStr();
+  const live = state.underlyingLive;
+  if (!live || live.time !== nowMin) {
+    state.underlyingLive = { time: nowMin, open: ltp, high: ltp, low: ltp, close: ltp, volume: 0 };
+  } else {
+    if (!live.open) live.open = ltp;
+    live.close = ltp;
+    live.high = Math.max(live.high || 0, ltp);
+    live.low = Math.min(live.low == null ? ltp : live.low, ltp);
   }
   if (state.underlyingChart) state.underlyingChart.updateLive(underlyingShownCandles());
+}
+
+function pushUnderlyingBar(interval, candle) {
+  if (!candle) return;
+  const nb = normalizeBar(candle);
+  if (interval === "5m") {
+    const arr = state.underlying5m;
+    const last = arr[arr.length - 1];
+    if (last && barKey(last) === barKey(nb)) arr[arr.length - 1] = nb;
+    else arr.push(nb);
+  } else {
+    const arr = state.underlyingCandles;
+    const last = arr[arr.length - 1];
+    if (last && barKey(last) === barKey(nb)) arr[arr.length - 1] = nb;
+    else arr.push(nb);
+    // The minute that just closed is now covered by a closed bar — drop
+    // any matching developing bar so it doesn't duplicate.
+    if (state.underlyingLive && String(state.underlyingLive.time).slice(0, 16) === String(nb.time).slice(0, 16)) {
+      state.underlyingLive = null;
+    }
+  }
+  if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
+}
+
+function currentIstMinuteStr() {
+  const d = new Date(Date.now() + 330 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) +
+         " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+}
+
+function current5mEndKey() {
+  const s = currentIstMinuteStr();
+  const hm = s.slice(11, 16);
+  const mins = (+hm.slice(0, 2)) * 60 + (+hm.slice(3, 5));
+  const end = Math.floor(mins / 5) * 5 + 5;
+  return s.slice(0, 11) + String(Math.floor(end / 60)).padStart(2, "0") + ":" + String(end % 60).padStart(2, "0");
+}
+
+function buildUnderlyingLive5m() {
+  const endKey = current5mEndKey();
+  const bucket = endKey.slice(11, 16);
+  const bars = [];
+  const arr = state.underlyingCandles;
+  for (let i = Math.max(0, arr.length - 6); i < arr.length; i++) {
+    const b = arr[i];
+    const t = String(b.time != null ? b.time : b.minute);
+    const m = t.match(/(\d{4}-\d{2}-\d{2})[ T]?(\d{2}):(\d{2})/);
+    if (!m) continue;
+    const hm = m[2] + ":" + m[3];
+    const mins = (+hm.slice(0, 2)) * 60 + (+hm.slice(3, 5));
+    const e = Math.floor(mins / 5) * 5 + 5;
+    const k = String(Math.floor(e / 60)).padStart(2, "0") + ":" + String(e % 60).padStart(2, "0");
+    if (k === bucket) bars.push(b);
+  }
+  if (state.underlyingLive && state.underlyingLive.close > 0) bars.push(state.underlyingLive);
+  if (!bars.length) return null;
+  return {
+    time: endKey,
+    open: bars[0].open,
+    high: Math.max.apply(null, bars.map((b) => b.high)),
+    low: Math.min.apply(null, bars.map((b) => b.low)),
+    close: bars[bars.length - 1].close,
+    volume: bars.reduce((a, b) => a + (b.volume || 0), 0)
+  };
+}
+
+function underlyingShownCandles() {
+  if (state.tf === "5m") {
+    const arr = state.underlying5m.slice();
+    const live5 = buildUnderlyingLive5m();
+    if (live5) {
+      const last = arr[arr.length - 1];
+      const lk = String(last ? (last.time != null ? last.time : last.minute) : "").slice(0, 16);
+      if (lk === live5.time) arr[arr.length - 1] = live5;
+      else if (!last || lk < live5.time) arr.push(live5);
+    }
+    return arr;
+  }
+  const arr = state.underlyingCandles.slice();
+  const live = state.underlyingLive;
+  if (live && live.close > 0) {
+    const last = arr[arr.length - 1];
+    const lk = String(last ? (last.time != null ? last.time : last.minute) : "").slice(0, 16);
+    if (lk === live.time) arr[arr.length - 1] = live;
+    else if (!last || lk < live.time) arr.push(live);
+  }
+  return arr;
 }
 
 /* ─────────────── Events / Signals / Logs ─────────────── */

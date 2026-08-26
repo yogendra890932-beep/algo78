@@ -16,7 +16,7 @@
 #
 # Server messages:
 #   hello / snapshot / state / premium_bar / current / tick /
-#   event / positions / pong
+#   underlying_bar / event / positions / pong
 # ================================================================
 
 import asyncio
@@ -27,6 +27,7 @@ from backend.services import state_store
 from backend.services.event_bus import subscribe as subscribe_user_events
 from backend.services.redis_client import get_redis
 from backend.shared.redis_infra import (
+    shared_candle_close_channel,
     shared_premium_close_channel,
     shared_tick_channel,
 )
@@ -94,6 +95,7 @@ async def handle_terminal_ws(websocket, user_id: int, token: str):
         try:
             pubsub = r.pubsub()
             await pubsub.subscribe(shared_premium_close_channel(symbol),
+                                   shared_candle_close_channel(symbol),
                                    shared_tick_channel(symbol))
         except Exception as e:
             print(f"[terminal_ws] subscribe failed for {symbol}: {e}")
@@ -136,6 +138,13 @@ async def handle_terminal_ws(websocket, user_id: int, token: str):
                                 "candle": candle, "ts": data.get("ts")})
                     cur = await get_premium_current(symbol)
                     await send({"type": "current", "symbol": symbol, "candle": cur})
+                elif chan == shared_candle_close_channel(symbol):
+                    # Underlying index candle closes (1m and 5m) — keep the
+                    # underlying chart rolling new bars in real time.
+                    await send({"type": "underlying_bar", "symbol": symbol,
+                                "interval": data.get("interval") or "1m",
+                                "candle": data.get("candle"),
+                                "ts": data.get("ts")})
                 elif chan == shared_tick_channel(symbol):
                     now = time.time()
                     if now - last_tick_ts >= TICK_THROTTLE_SEC:
