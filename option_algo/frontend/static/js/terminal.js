@@ -68,6 +68,7 @@ const state = {
   pnlThrottle: 0,
   // ── Chart overlay (Entry/SL/Target) state ──
   overlayKey: null,     // trading_symbol the overlay currently reflects
+  chipEl: null,         // DOM element the position chip is currently rendered in
   overlayBaseline: null,// first-seen backend/strategy SL+target (for Reset)
   overlayPnl: null,     // authoritative backend unrealized PnL when available
   overlayPnlCalc: 0,    // fallback locally-computed PnL
@@ -725,76 +726,9 @@ function positionPnl(pos) {
 
 function renderPositions(positions) {
   state.positions = positions || [];
-  const el = $("position-list");
-  if (!state.positions.length) {
-    el.innerHTML = '<div class="term-empty">No open positions</div>';
-    renderPnl();
-    if (state.chart) state.chart.renderPositionLines();
-    return;
-  }
-  el.innerHTML = "";
-  state.positions.forEach((p) => {
-    const pos = positionData(p);
-    const pnl = positionPnl(pos);
-    const card = document.createElement("div");
-    card.className = "term-pos-card";
-    const opt = pos.trading_symbol || (pos.symbol || "");
-    const side = String(pos.side || "BUY").toUpperCase();
-    const strategy = pos.strategy || "";
-    const meta =
-      '<div class="term-pos-meta">' +
-      "<span>Qty</span><b>" + fmt(pos.qty, 0) + "</b>" +
-      "<span>Entry</span><b>" + fmt(pos.entry_price) + "</b>" +
-      "<span>SL</span><b>" + fmt(pos.sl_trigger) + "</b>" +
-      "<span>Target</span><b>" + fmt(pos.target) + "</b>" +
-      "<span>LTP</span><b>" + fmt(livePrice(pos)) + "</b>" +
-      "<span>Near Tgt</span><b>" + fmt(pos.near_target) + "</b>" +
-      "</div>";
-    const actions =
-      '<div class="term-pos-actions">' +
-      '<input type="number" step="0.05" class="pos-sl" value="' + fmt(pos.sl_trigger) + '" placeholder="SL"/>' +
-      '<input type="number" step="0.05" class="pos-tgt" value="' + fmt(pos.target) + '" placeholder="Target"/>' +
-      '<button class="term-btn term-btn-xs term-btn-danger pos-sq">Square Off</button>' +
-      "</div>";
-    card.innerHTML =
-      '<div class="term-pos-top">' +
-      '<span class="term-pos-opt">' + esc(opt) + "</span>" +
-      '<span class="term-pos-side ' + side + '">' + side + "</span>" +
-      "</div>" +
-      '<div class="term-pos-meta"><span>Strategy</span><b>' + esc(strategy) + "</b></div>" +
-      meta +
-      '<div class="term-pos-actions">' + actions + "</div>" +
-      '<div class="term-pos-pnl ' + clsChg(pnl) + '">PnL: ' + fmtINR(pnl) + "</div>";
-    el.appendChild(card);
-  });
-  bindPositionActions(el);
   renderPnl();
   if (state.chart) state.chart.renderPositionLines();
-}
-
-function bindPositionActions(el) {
-  const cardSymbol = (node) => {
-    const card = node.closest(".term-pos-card");
-    const optTxt = card ? card.querySelector(".term-pos-opt").textContent : "";
-    return positionSymbolFromOption(optTxt);
-  };
-  el.querySelectorAll(".pos-sl").forEach((inp) => {
-    inp.addEventListener("change", () => sendOrder("modify_sl", inp.value, cardSymbol(inp)));
-  });
-  el.querySelectorAll(".pos-tgt").forEach((inp) => {
-    inp.addEventListener("change", () => sendOrder("modify_target", inp.value, cardSymbol(inp)));
-  });
-  el.querySelectorAll(".pos-sq").forEach((btn) => {
-    btn.addEventListener("click", () => sendOrder("squareoff", null, cardSymbol(btn)));
-  });
-}
-
-function positionSymbolFromOption(optTxt) {
-  const sym = state.positions.find((p) => {
-    const pos = positionData(p);
-    return (pos.trading_symbol || "") === optTxt;
-  });
-  return (sym && positionData(sym).symbol) || state.selectedSymbol;
+  renderPositionChip();
 }
 
 /* ─────────────── Pending trades (semi-auto approval) ─────────────── */
@@ -1896,21 +1830,31 @@ class UnderlyingChart {
 }
 
 /* ─────────────── Overlay: position chip on the chart ─────────────── */
+function positionChipEl() {
+  // The chip follows the visible chart: underlying chart in "1" mode,
+  // premium chart otherwise. Only one chip is ever populated.
+  return state.chartMode === "1" ? $("underlying-position-chip") : $("term-position-chip");
+}
+
 function renderPositionChip() {
-  const el = $("term-position-chip");
+  const el = positionChipEl();
+  const other = el === $("term-position-chip") ? $("underlying-position-chip") : $("term-position-chip");
+  if (other && other !== el) { other.hidden = true; other.innerHTML = ""; }
   const pos = selectedPosition();
   if (!pos) {
     if (el) el.hidden = true;
     if (el) el.innerHTML = "";
     state.overlayKey = null;
+    state.chipEl = null;
     state.overlayBaseline = null;
     state.overlayPnl = null;
     state.overlayPnlCalc = 0;
     return;
   }
   const key = (pos.trading_symbol || "") + "|" + fmt(pos.entry_price) + "|" + num(pos.qty);
-  if (state.overlayKey !== key) {
+  if (state.overlayKey !== key || state.chipEl !== el) {
     state.overlayKey = key;
+    state.chipEl = el;
     state.overlayBaseline = { sl: num(pos.sl_trigger), tgt: num(pos.target) };
     state.overlayPnl = num(pos.unrealized_pnl);
     el.hidden = false;
@@ -1919,7 +1863,7 @@ function renderPositionChip() {
   } else {
     el.hidden = false;
   }
-  updatePositionChipLive(pos);
+  updatePositionChipLive(pos, el);
 }
 
 function chipHtml(pos) {
@@ -1972,8 +1916,8 @@ function bindChipActions(el, pos) {
   if (trail) trail.addEventListener("click", () => toggleTrail(pos));
 }
 
-function updatePositionChipLive(pos) {
-  const el = $("term-position-chip");
+function updatePositionChipLive(pos, el) {
+  el = el || state.chipEl || positionChipEl();
   if (!el || el.hidden || !pos) return;
   const set = (id, v, f) => {
     const n = $(id);
@@ -1999,10 +1943,11 @@ function updatePositionChipLive(pos) {
 }
 
 function updateChipProcessing(kind) {
-  const el = $("chip-processing");
+  const el = positionChipEl();
   if (!el) return;
-  el.textContent = kind ? "Modifying " + kind.toUpperCase() + "…" : "";
-  const actions = $("term-position-chip") ? $("term-position-chip").querySelectorAll("button") : [];
+  const proc = el.querySelector("#chip-processing");
+  if (proc) proc.textContent = kind ? "Modifying " + kind.toUpperCase() + "…" : "";
+  const actions = el.querySelectorAll("button");
   actions.forEach((b) => { b.disabled = !!kind; });
 }
 
@@ -2137,6 +2082,11 @@ function setChartMode(mode) {
   if (wrap) wrap.classList.remove("mode-1", "mode-2");
   if (mode === "1") wrap && wrap.classList.add("mode-1");
   else if (mode === "2") wrap && wrap.classList.add("mode-2");
+  // The chip lives on whichever chart is now visible — force a rebuild
+  // into the active column so the position details follow the chart.
+  state.overlayKey = null;
+  state.chipEl = null;
+  renderPositionChip();
   setTimeout(resizeCharts, 0);
 }
 

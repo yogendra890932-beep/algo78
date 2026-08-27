@@ -109,6 +109,7 @@
       <div class="term-chart-col" id="underlying-col">
         <div id="term-chart-underlying" class="term-chart-lwc"></div>
         <div class="term-chart-symbol" id="underlying-symbol-label">--</div>
+        <div class="term-position-chip" id="underlying-position-chip" hidden></div>
         <div class="term-chart-crosshair" id="underlying-crosshair">
           <span id="u-ch-time">--</span>
           <span id="u-ch-ohlc">O -- H -- L -- C --</span>
@@ -170,16 +171,9 @@
     </section>
 
     <section class="term-card">
-      <div class="term-card-head"><span>Position Details</span>
-        <button id="sq-off-all" class="term-btn term-btn-danger term-btn-xs">Square Off All</button>
+      <div class="term-card-head"><span>Live PnL</span>
+        <button id="sq-off-all" class="term-btn term-btn-danger term-btn-xs" title="Square off all open positions">Square Off All</button>
       </div>
-      <div class="term-positions" id="position-list">
-        <div class="term-empty">No open positions</div>
-      </div>
-    </section>
-
-    <section class="term-card">
-      <div class="term-card-head"><span>Live PnL</span></div>
       <div class="term-pnl">
         <div class="term-pnl-net" id="pnl-net">₹ 0.00</div>
         <div class="term-pnl-row">
