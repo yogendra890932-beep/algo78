@@ -40,7 +40,7 @@ def _now() -> str:
 # REGIME ANALYZER (copied from engine_v6 — kept identical)
 # ================================================================
 
-ADX_TREND_MIN = 20
+ADX_TREND_MIN = 25
 ADX_RANGE_MAX = 18
 ATR_PCT_MIN   = 0.002
 VWAP_BAND_PCT = 0.004
@@ -101,7 +101,7 @@ class MarketRegimeAnalyzer:
             regime = self.regime
         full = ["trend_follow", "pullback", "breakout", "vwap_bounce", "ema_cross", "vcgb"]
         if regime == "NO_TRADE":
-            return ["pullback"]
+            return []  # no signals when the market regime is unconfirmed
         if regime == "RANGING":
             return ["pullback", "breakout", "vcgb"]
         if regime == "VOLATILE":
@@ -606,7 +606,7 @@ class SharedStrategyEngine:
             return None
 
         pr_conf = premium_structure.get("confidence_score", 0)
-        if pr_conf < 50:
+        if pr_conf < 60:
             return None
 
         pb_type = premium_structure.get("pullback", {}).get("type", "")
@@ -627,11 +627,11 @@ class SharedStrategyEngine:
             return None
 
         under_conf = underlying_structure.get("confidence", 0)
-        if under_conf < 40:
+        if under_conf < 50:
             return None
 
         under_phase = underlying_structure.get("market_phase", "")
-        if under_phase not in ("STRONG_TREND", "WEAK_TREND"):
+        if under_phase != "STRONG_TREND":
             return None
 
         inds = ind

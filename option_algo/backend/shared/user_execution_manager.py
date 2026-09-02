@@ -94,6 +94,12 @@ class UserExecutionManager:
         # Last known LTP per symbol (used by the Telegram /status command)
         self._last_ltp: dict[str, float] = {}
 
+        # Re-entry memory per symbol: records the most recent exit so a
+        # target/manual close does not immediately re-enter the SAME
+        # setup. Re-entry is only allowed once a fresh signal regenerates
+        # (new structure), mirroring legacy engine_v6.
+        self._last_exit: dict[str, dict] = {}
+
         # ATR trailing-SL state per symbol (mirrors legacy engine_v6's
         # trailing_sl / _sl_mod_ts on the OPTION-PREMIUM chart).
         self._trailing_sl: dict[str, float] = {}
@@ -307,6 +313,15 @@ class UserExecutionManager:
                 print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} — "
                       f"position already open ({list(self._positions)})")
                 return  # One position at a time
+
+        # No re-entry after a TARGET / near-target / manual square-off
+        # until the entry signal REGENERATES (a genuinely new setup), not
+        # just the same signal re-firing on the next bar.
+        gate_reason = self._reentry_gate(sig_symbol, signal)
+        if gate_reason:
+            print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} "
+                  f"{sig_symbol} — {gate_reason}")
+            return
 
         # Calculate quantity based on user config
         num_lots = max(1, int(self.config.get("order_qty", 1)))
@@ -821,6 +836,97 @@ class UserExecutionManager:
         self._push_position_snapshot(sym)
         print(f"{_now()} [exec:u{self.user_id}] TRAIL {'ON' if enabled else 'OFF'} {sym}")
 
+    def _reentry_gate(self, sym: str, signal: dict) -> Optional[str]:
+        """Return a block reason (or None) for re-entry on a symbol that
+        was just closed by TARGET / near-target / manual square-off.
+
+        Re-entry is allowed only when the entry signal REGENERATES:
+          - a hard cooldown (reentry_cooldown_sec, default 120s) always
+            applies so the same bar is never re-entered;
+          - after the cooldown, a SAME strategy + SAME leg signal is only
+            accepted once a new pullback structure has formed on the
+            premium (retrace >= 1% from the last entry, an EMA9/15/21
+            touch, and a recovery candle) — ported from legacy engine_v6;
+          - a different strategy or leg is a fresh setup and is allowed.
+        SL and direction-flip exits never block re-entry.
+        """
+        from backend.shared.shared_cache import now_ist
+        last = self._last_exit.get(sym)
+        if not last:
+            return None
+        if last.get("date") != now_ist().strftime("%Y-%m-%d"):
+            return None  # new trading day — fresh start
+        if last.get("reason") not in (
+                "TARGET_HIT", "NEAR_TARGET", "MANUAL_SQUAREOFF"):
+            return None
+
+        cooldown = float(self.config.get("reentry_cooldown_sec", 120) or 120)
+        elapsed = time.time() - last.get("ts", 0)
+        if elapsed < cooldown:
+            return (f"re-entry blocked {int(cooldown - elapsed)}s after "
+                    f"{last.get('reason')}")
+
+        sig_strat = str(signal.get("strategy", "") or "")
+        last_strat = str(last.get("strategy", "") or "")
+        fam = lambda s: s.split("_")[0] if s else ""
+        same_strat = bool(fam(sig_strat)) and fam(sig_strat) == fam(last_strat)
+        same_leg = (str(signal.get("opt_type", "") or "").upper()
+                    == str(last.get("opt_type", "") or "").upper())
+        if not (same_strat and same_leg):
+            return None  # different setup → regenerated signal
+
+        last_entry = last.get("entry_price")
+        if not last_entry:
+            return None
+        try:
+            from backend.shared.option_premium_service import (
+                SharedOptionPremiumBuilder)
+            df = SharedOptionPremiumBuilder.get_1m_df(sym)
+            if df is None or df.empty or len(df) < 15:
+                return None
+            close = df["close"]
+            ef = float(close.ewm(span=9, adjust=False).mean().iloc[-1])
+            em = float(close.ewm(span=15, adjust=False).mean().iloc[-1])
+            el = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
+            cur = float(close.iloc[-1])
+            if float(last_entry) > 0 and (float(last_entry) - cur) / float(last_entry) < 0.01:
+                return "same-signal re-entry blocked (premium not retraced 1% from last entry)"
+            tol = 0.015
+            evas = [ef, em, el]
+            recent = df.iloc[-8:]
+            ema_touched = any(
+                any(e * (1 - tol) <= float(r["low"]) <= e * (1 + tol)
+                    for e in evas)
+                for _, r in recent.iterrows())
+            last_bar = df.iloc[-1]
+            rng = float(last_bar["high"]) - float(last_bar["low"])
+            body_r = (abs(float(last_bar["close"]) - float(last_bar["open"])) / rng
+                      if rng > 0 else 0)
+            recovery = (body_r >= 0.25
+                        and float(last_bar["close"]) > float(last_bar["open"]))
+            if not (ema_touched and recovery):
+                return "same-signal re-entry blocked (new pullback structure not formed)"
+            return None
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] re-entry gate {sym} err: {e}")
+            return None
+
+    def _record_exit_memory(self, symbol: str, pos: dict, status: str):
+        """Remember how/when a symbol last exited so the re-entry gate
+        can block re-entering the same setup after target/manual."""
+        from backend.shared.shared_cache import now_ist
+        try:
+            self._last_exit[symbol] = {
+                "ts": time.time(),
+                "date": now_ist().strftime("%Y-%m-%d"),
+                "reason": status,
+                "strategy": pos.get("strategy", ""),
+                "opt_type": pos.get("opt_type", ""),
+                "entry_price": pos.get("entry_price", 0),
+            }
+        except Exception:
+            pass
+
     def _close_position(self, symbol: str, exit_price: float, status: str):
         """Close a position: cancel SL, compute P&L, notify, publish snapshot."""
         with self._positions_lock:
@@ -830,6 +936,7 @@ class UserExecutionManager:
 
         self._trailing_sl.pop(symbol, None)
         self._sl_mod_ts.pop(symbol, None)
+        self._record_exit_memory(symbol, pos, status)
 
         is_live = not pos.get("paper_mode", self.paper_mode)
         sl_id = pos.get("sl_order_id")
@@ -1079,6 +1186,7 @@ class UserExecutionManager:
             self._last_date = today
             self._trades_today = 0
             self._net_pnl_today = 0.0
+            self._last_exit.clear()
 
     def _trading_hours_ok(self) -> bool:
         # trade_start_time / trade_end_time are IST wall-clock values, so

@@ -121,7 +121,7 @@ def build_config_dict(cfg: BotConfig) -> dict:
         "order_qty": cfg.order_qty or 25,
         "product": getattr(cfg, "product", "I") or "I",
         "trail_mode": cfg.trail_mode or "atr",
-        "target_rr": cfg.target_rr or 1.3,
+        "target_rr": cfg.target_rr or 2.5,
         "sl_pct": cfg.sl_pct or 0.003,
         "target_near_pct": 0.003,
         "max_trades_per_day": cfg.max_trades_per_day or 5,

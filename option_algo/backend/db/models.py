@@ -136,7 +136,7 @@ class BotConfig(Base):
     order_qty: Mapped[int] = mapped_column(Integer, default=25)
     product: Mapped[str] = mapped_column(String(5), default="I")
     trail_mode: Mapped[str] = mapped_column(String(10), default="atr")
-    target_rr: Mapped[float] = mapped_column(Float, default=1.3)
+    target_rr: Mapped[float] = mapped_column(Float, default=2.5)
     sl_pct: Mapped[float] = mapped_column(Float, default=0.003)
 
     max_trades_per_day: Mapped[int] = mapped_column(Integer, default=5)
