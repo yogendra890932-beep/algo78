@@ -209,7 +209,7 @@ function premiumShownCandles() {
 function handleSnapshot(m) {
   if (m.symbol !== state.selectedSymbol) return;
   state.premiumCandles = (m.premium_candles || []).map(normalizeBar);
-  if (state.premiumCandles.length > 0) clearStrikeRollRefresh();
+  if (state.premiumCandles.length >= MIN_COMPLETE_BARS) clearStrikeRollRefresh();
   state.underlyingCandles = (m.candles || []).map(normalizeBar);
   state.underlying5m = (m.candles_5m || []).map(normalizeBar);
   state.underlyingLive = null;
@@ -356,9 +356,12 @@ function schedulePendingLineRefresh() {
 /* ─────────────── Strike-roll chart refresh ───────────────
    When the active option rolls to a new strike the worker wipes the
    premium candles and re-warms them over a few seconds, so the snapshot
-   pushed alongside the "state" change can be empty. Keep pulling fresh
-   snapshots until the new strike's bars actually arrive, otherwise the
-   premium chart stays blank/stale until the next minute closes. */
+   pushed alongside the "state" change can be empty or partial. Keep
+   pulling fresh snapshots until the new strike's full history arrives
+   (>= MIN_COMPLETE_BARS), otherwise the premium chart shows a sparse
+   series that never backfills. A 60-try (~2 min) cap renders whatever
+   warm-up managed to build if the history source is slow/empty. */
+const MIN_COMPLETE_BARS = 30;
 let _strikeRollTimer = null;
 let _strikeRollTries = 0;
 function scheduleStrikeRollRefresh(symbol) {
@@ -366,7 +369,7 @@ function scheduleStrikeRollRefresh(symbol) {
   _strikeRollTimer = setTimeout(() => {
     _strikeRollTimer = null;
     _strikeRollTries++;
-    if (state.premiumCandles.length > 0 || _strikeRollTries > 45) {
+    if (state.premiumCandles.length >= MIN_COMPLETE_BARS || _strikeRollTries > 60) {
       _strikeRollTries = 0;
       return;
     }

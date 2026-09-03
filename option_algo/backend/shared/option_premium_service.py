@@ -271,6 +271,14 @@ class SharedOptionPremiumBuilder:
         print(f"{_now()} [premium:{self.symbol}] Active option: "
               f"{self._trading_symbol} ({self._opt_type} {self._strike})")
 
+        # Backfill the new option's full-day history immediately so the
+        # terminal chart is complete right away instead of waiting for the
+        # next underlying 1m close to trigger _on_underlying_close -> _warm_up.
+        try:
+            self._warm_up()
+        except Exception as e:
+            print(f"{_now()} [premium:{self.symbol}] switch warm-up err: {e}")
+
     # ================================================================
     # WARM-UP (mirrors SharedCandleBuilder._warm_up)
     # ================================================================
