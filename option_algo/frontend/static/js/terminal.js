@@ -371,6 +371,7 @@ function scheduleStrikeRollRefresh(symbol) {
     _strikeRollTries++;
     if (state.premiumCandles.length >= MIN_COMPLETE_BARS || _strikeRollTries > 60) {
       _strikeRollTries = 0;
+      renderActiveOption(state.premiumState);
       return;
     }
     wsSend({ action: "snapshot", symbol: symbol });
@@ -611,13 +612,12 @@ function renderSelectedSymbol(info) {
 }
 
 function renderActiveOption(premiumState) {
+  if (premiumState) state.premiumState = premiumState;
+  const name = (state.premiumState && state.premiumState.trading_symbol)
+    ? state.premiumState.trading_symbol : null;
+  if (name) state.chartOption = name;
   const el = $("sym-active-option");
-  const name = (premiumState && premiumState.trading_symbol) ? premiumState.trading_symbol : null;
-  if (name) {
-    el.textContent = "Active option: " + name;
-  } else {
-    el.textContent = "Active option: --";
-  }
+  if (el) el.textContent = name ? "Active option: " + name : "Active option: --";
   const cl = $("chart-symbol-label");
   if (cl) cl.textContent = name || "--";
   const ul = $("underlying-symbol-label");
