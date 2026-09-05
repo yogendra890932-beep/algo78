@@ -29,6 +29,12 @@ import requests
 
 INSTRUMENTS_FILE   = "instruments_nse.parquet"
 INSTRUMENTS_URL    = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+# SENSEX / BANKEX derivatives trade on BSE (segment BSE_FO) and their option
+# rows are NOT part of Upstox's NSE master, so we merge a second BSE master
+# into the combined instrument universe. NSE-only flows are unaffected — the
+# BSE rows simply make get_instrument_key_auto() able to resolve SENSEX CE/PE.
+BSE_INSTRUMENTS_FILE = "instruments_bse.parquet"
+BSE_INSTRUMENTS_URL  = "https://assets.upstox.com/market-quote/instruments/exchange/BSE.json.gz"
 CACHE_MAX_AGE_DAYS = 7          # 7 days covers full weekly expiry cycle
 CACHE_DIR          = "candle_cache"
 KEY_LOG_DB         = os.path.join(CACHE_DIR, "key_log.db")
@@ -112,13 +118,15 @@ def invalidate_instruments_cache():
 
 def load_instruments(force: bool = False, _bypass_memory_cache: bool = False) -> pd.DataFrame:
     """
-    Load NSE instruments with Parquet → CSV fallback.
+    Load the combined NSE + BSE instrument master (Parquet → CSV fallback).
+    NSE carries NIFTY-family derivatives; BSE carries SENSEX/BANKEX options
+    (segment BSE_FO) so SENSEX premium charts can resolve their CE/PE rows.
     Cache valid for 7 days on disk — refreshed on startup or when force=True.
 
     IN-MEMORY CACHING: after the first successful load in this process,
     the DataFrame is kept in memory and returned directly on every
     subsequent call — avoiding repeated disk reads/parsing of the same
-    ~96k-row file on every direction change / strike lookup.
+    multi-hundred-thousand-row files on every direction change / strike lookup.
 
     _bypass_memory_cache is used internally by preload_instruments() —
     callers should not need to pass it directly.
@@ -131,7 +139,39 @@ def load_instruments(force: bool = False, _bypass_memory_cache: bool = False) ->
             if _instruments_cache is not None:
                 return _instruments_cache
 
-    parquet = INSTRUMENTS_FILE
+    nse = _load_single_exchange_master(INSTRUMENTS_FILE, INSTRUMENTS_URL,
+                                       "NSE", force)
+    if nse is None:
+        raise RuntimeError("Unable to load or download instruments.")
+
+    # BSE is optional: if it can't be loaded we degrade to NSE-only rather
+    # than breaking every NIFTY-family flow that already works.
+    bse = _load_single_exchange_master(BSE_INSTRUMENTS_FILE, BSE_INSTRUMENTS_URL,
+                                       "BSE", force)
+    if bse is None:
+        print("⚠️  BSE master unavailable — continuing with NSE instruments only")
+        df = nse
+    else:
+        df = pd.concat([nse, bse], ignore_index=True, sort=False)
+        if "instrument_key" in df.columns:
+            df = df.drop_duplicates(subset=["instrument_key"], keep="first")
+            df = df.reset_index(drop=True)
+        print(f"✅ Combined instrument universe: {len(df)} rows "
+              f"(NSE {len(nse)} + BSE {len(bse)})")
+
+    with _instruments_cache_lock:
+        _instruments_cache = df
+    return df
+
+
+def _load_single_exchange_master(file: str, url: str, label: str,
+                                 force: bool) -> Optional[pd.DataFrame]:
+    """
+    Load/refresh a single exchange's master (Parquet → CSV fallback), same
+    cache semantics as the old all-in-one loader. Returns None only if the
+    exchange master cannot be loaded from disk OR downloaded.
+    """
+    parquet = file
     csv     = parquet.replace(".parquet", ".csv")
 
     # ── Try cache first ──────────────────────────────────────────
@@ -141,18 +181,16 @@ def load_instruments(force: bool = False, _bypass_memory_cache: bool = False) ->
                 try:
                     df = (pd.read_parquet(path) if path.endswith(".parquet")
                           else pd.read_csv(path))
-                    print(f"✅ Loaded {len(df)} instruments from cache "
+                    print(f"✅ Loaded {len(df)} {label} instruments from cache "
                           f"({os.path.basename(path)}) — caching in memory for this session")
-                    with _instruments_cache_lock:
-                        _instruments_cache = df
                     return df
                 except Exception as e:
-                    print(f"⚠️  Cache read failed ({path}): {e}")
+                    print(f"⚠️  {label} cache read failed ({path}): {e}")
 
     # ── Download from Upstox ─────────────────────────────────────
-    print("🌐 Downloading instruments from Upstox...")
+    print(f"🌐 Downloading {label} instruments from Upstox...")
     try:
-        response = requests.get(INSTRUMENTS_URL, timeout=30)
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         decompressed = gzip.decompress(response.content)
         instruments  = json.loads(decompressed.decode("utf-8"))
@@ -161,27 +199,23 @@ def load_instruments(force: bool = False, _bypass_memory_cache: bool = False) ->
         # Save cache
         try:
             df.to_parquet(parquet, index=False)
-            print(f"✅ Downloaded and cached {len(df)} instruments → {parquet}")
+            print(f"✅ Downloaded and cached {len(df)} {label} instruments → {parquet}")
         except Exception:
             df.to_csv(csv, index=False)
             print(f"⚠️  Parquet engine missing → saved as CSV ({csv})")
 
-        with _instruments_cache_lock:
-            _instruments_cache = df
         return df
 
     except Exception as e:
-        print(f"❌ Error downloading instruments: {e}")
+        print(f"❌ Error downloading {label} instruments: {e}")
         # Fallback to stale cache
         for path in [parquet, csv]:
             if os.path.exists(path):
                 df = (pd.read_parquet(path) if path.endswith(".parquet")
                       else pd.read_csv(path))
-                print(f"✅ Loaded from stale fallback: {path}")
-                with _instruments_cache_lock:
-                    _instruments_cache = df
+                print(f"✅ Loaded from stale {label} fallback: {path}")
                 return df
-        raise RuntimeError("Unable to load or download instruments.") from e
+        return None
 
 
 # ================================================================
