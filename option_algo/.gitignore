@@ -67,6 +67,8 @@ uploads/
 media/
 
 instruments_nse.csv
+instruments_bse.csv
+instruments_bse.parquet
 # ==========================================================
 # Archives
 # ==========================================================
