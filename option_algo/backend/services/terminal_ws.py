@@ -132,12 +132,21 @@ async def handle_terminal_ws(websocket, user_id: int, token: str):
                 chan = msg["channel"]
                 chan = chan.decode() if isinstance(chan, bytes) else chan
 
+                # Option identity (trading_symbol/instrument_key) rides along
+                # on every premium frame so the frontend can re-sync the
+                # "Active option" label even if a state frame is ever dropped.
+                opt_id = (state or {}).get("trading_symbol") or None
+                opt_key = (state or {}).get("instrument_key") or None
                 if chan == shared_premium_close_channel(symbol):
                     candle = data.get("candle")
                     await send({"type": "premium_bar", "symbol": symbol,
-                                "candle": candle, "ts": data.get("ts")})
+                                "candle": candle, "ts": data.get("ts"),
+                                "trading_symbol": opt_id,
+                                "instrument_key": opt_key})
                     cur = await get_premium_current(symbol)
-                    await send({"type": "current", "symbol": symbol, "candle": cur})
+                    await send({"type": "current", "symbol": symbol, "candle": cur,
+                                "trading_symbol": opt_id,
+                                "instrument_key": opt_key})
                 elif chan == shared_candle_close_channel(symbol):
                     # Underlying index candle closes (1m and 5m) — keep the
                     # underlying chart rolling new bars in real time.
@@ -156,7 +165,10 @@ async def handle_terminal_ws(websocket, user_id: int, token: str):
                                     "ts": data.get("ts")})
                         cur = await get_premium_current(symbol)
                         if cur:
-                            await send({"type": "current", "symbol": symbol, "candle": cur})
+                            await send({"type": "current", "symbol": symbol,
+                                        "candle": cur,
+                                        "trading_symbol": opt_id,
+                                        "instrument_key": opt_key})
         except asyncio.CancelledError:
             pass
         except Exception:

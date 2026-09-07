@@ -144,6 +144,7 @@ function renderWatchlistActive() {
 async function selectSymbol(sym) {
   if (!sym) return;
   state.selectedSymbol = sym;
+  state.premiumState = null;
   clearStrikeRollRefresh();
   renderWatchlistActive();
   const info = (state.bootstrap && state.bootstrap.symbols || {})[sym];
@@ -297,6 +298,7 @@ function handleWSMessage(m) {
     case "premium_bar":
       if (m.symbol === state.selectedSymbol) {
         pushPremiumBar(m.candle);
+        syncOptionIdentity(m);
       }
       break;
     case "underlying_bar":
@@ -310,6 +312,7 @@ function handleWSMessage(m) {
         updatePremiumLast(m.candle);
         schedulePendingLineRefresh();
         renderPnlThrottled();
+        syncOptionIdentity(m);
       }
       break;
     case "tick":
@@ -381,6 +384,31 @@ function scheduleStrikeRollRefresh(symbol) {
 function clearStrikeRollRefresh() {
   if (_strikeRollTimer) { clearTimeout(_strikeRollTimer); _strikeRollTimer = null; }
   _strikeRollTries = 0;
+}
+
+/* ─────────────── Option-identity sync ───────────────
+   Every premium frame now carries the active option's trading_symbol /
+   instrument_key. Re-sync the "Active option" label from these frames so
+   a roll is reflected immediately even if the paired "state" message is
+   dropped or the browser reconnects mid-roll. Idempotent: no-ops when the
+   option matches what we already display. */
+function syncOptionIdentity(m) {
+  const opt = m && m.trading_symbol;
+  if (!opt || m.symbol !== state.selectedSymbol) return;
+  const cur = state.premiumState;
+  if (cur && cur.trading_symbol === opt) return;
+  const rolled = !!(state.chartOption && state.chartOption !== opt);
+  state.premiumState = Object.assign({}, cur || {}, { trading_symbol: opt });
+  if (m.instrument_key) state.premiumState.instrument_key = m.instrument_key;
+  if (rolled) {
+    state.premiumCandles = [];
+    state.current = null;
+    state.candles = premiumShownCandles();
+    prepareOverlays([]);
+    if (state.chart) state.chart.fullRender();
+    scheduleStrikeRollRefresh(state.selectedSymbol);
+  }
+  renderActiveOption(state.premiumState);
 }
 
 function updateLastUnderlying(ltp) {
@@ -608,7 +636,6 @@ function renderSelectedSymbol(info) {
   const chgTxt = under.change_pct == null ? "--" : sign(under.change_pct) + under.change_pct.toFixed(2) + "%";
   $("sym-change").textContent = chgTxt;
   $("sym-change").className = "term-change " + clsChg(under.change_pct);
-  renderActiveOption(info.premium_state);
 }
 
 function renderActiveOption(premiumState) {
