@@ -210,7 +210,14 @@ function premiumShownCandles() {
 function handleSnapshot(m) {
   if (m.symbol !== state.selectedSymbol) return;
   state.premiumCandles = (m.premium_candles || []).map(normalizeBar);
-  if (state.premiumCandles.length >= MIN_COMPLETE_BARS) clearStrikeRollRefresh();
+  if (state.premiumCandles.length >= MIN_COMPLETE_BARS) {
+    clearStrikeRollRefresh();
+  } else if (m.premium_state && m.premium_state.trading_symbol) {
+    // Snapshot arrived short (option just rolled / warm-up still running).
+    // Keep pulling fresh snapshots until the full history is available so
+    // the premium chart auto-backfills instead of staying sparse.
+    scheduleStrikeRollRefresh(m.symbol);
+  }
   state.underlyingCandles = (m.candles || []).map(normalizeBar);
   state.underlying5m = (m.candles_5m || []).map(normalizeBar);
   state.underlyingLive = null;
@@ -367,22 +374,28 @@ function schedulePendingLineRefresh() {
 const MIN_COMPLETE_BARS = 30;
 let _strikeRollTimer = null;
 let _strikeRollTries = 0;
+let _strikeRollRunning = false;
 function scheduleStrikeRollRefresh(symbol) {
-  clearStrikeRollRefresh();
-  _strikeRollTimer = setTimeout(() => {
-    _strikeRollTimer = null;
-    _strikeRollTries++;
-    if (state.premiumCandles.length >= MIN_COMPLETE_BARS || _strikeRollTries > 60) {
-      _strikeRollTries = 0;
-      renderActiveOption(state.premiumState);
-      return;
-    }
-    wsSend({ action: "snapshot", symbol: symbol });
-    scheduleStrikeRollRefresh(symbol);
-  }, 2000);
+  if (_strikeRollRunning) return;
+  _strikeRollRunning = true;
+  _strikeRollTries = 0;
+  _strikeRollTimer = setTimeout(() => strikeRollTick(symbol), 2000);
+}
+function strikeRollTick(symbol) {
+  _strikeRollTimer = null;
+  _strikeRollTries++;
+  if (state.premiumCandles.length >= MIN_COMPLETE_BARS || _strikeRollTries > 60) {
+    _strikeRollRunning = false;
+    _strikeRollTries = 0;
+    renderActiveOption(state.premiumState);
+    return;
+  }
+  wsSend({ action: "snapshot", symbol: symbol });
+  _strikeRollTimer = setTimeout(() => strikeRollTick(symbol), 2000);
 }
 function clearStrikeRollRefresh() {
   if (_strikeRollTimer) { clearTimeout(_strikeRollTimer); _strikeRollTimer = null; }
+  _strikeRollRunning = false;
   _strikeRollTries = 0;
 }
 
