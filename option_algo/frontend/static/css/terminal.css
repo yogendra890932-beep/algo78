@@ -492,7 +492,8 @@
     grid-template-areas: "left" "center" "right";
   }
   .term-left, .term-right { overflow-y: visible; }
-  .term-chart-wrap { height: 58vh; min-height: 360px; }
+  .term-chart-wrap { flex-direction: column; height: auto; min-height: 0; }
+  .term-chart-col { flex: 0 0 auto; height: 42vh; min-height: 240px; }
   .term-bottom { flex: 1 1 auto; min-height: 200px; margin: 0; }
   .term-tab-body { max-height: 360px; }
   .term-topbar { flex-wrap: wrap; }
@@ -509,7 +510,8 @@
   :root { --term-radius: 8px; }
   .term-body { font-size: 12px; }
   .term-grid { gap: 8px; padding: 8px; }
-  .term-chart-wrap { height: 46vh; min-height: 300px; }
+  .term-chart-wrap { height: auto; min-height: 0; }
+  .term-chart-col { height: 38vh; min-height: 220px; }
   .term-topbar { padding: 8px 10px; }
   .term-brand-mark { width: 28px; height: 28px; font-size: 15px; }
   .term-brand-title { font-size: 12px; }
