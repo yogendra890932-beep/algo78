@@ -69,6 +69,7 @@ const state = {
   // ── Chart overlay (Entry/SL/Target) state ──
   overlayKey: null,     // trading_symbol the overlay currently reflects
   chipEl: null,         // DOM element the position chip is currently rendered in
+  chipHideTimer: 0,     // mobile auto-hide timer for the overlay chip
   overlayBaseline: null,// first-seen backend/strategy SL+target (for Reset)
   overlayPnl: null,     // authoritative backend unrealized PnL when available
   overlayPnlCalc: 0,    // fallback locally-computed PnL
@@ -1887,6 +1888,7 @@ function renderPositionChip() {
   if (!pos) {
     if (el) el.hidden = true;
     if (el) el.innerHTML = "";
+    clearTimeout(state.chipHideTimer);
     state.overlayKey = null;
     state.chipEl = null;
     state.overlayBaseline = null;
@@ -1903,10 +1905,44 @@ function renderPositionChip() {
     el.hidden = false;
     el.innerHTML = chipHtml(pos);
     bindChipActions(el, pos);
+    scheduleChipAutoHide(el);
   } else {
     el.hidden = false;
   }
   updatePositionChipLive(pos, el);
+}
+
+/* ─────────────── Overlay chip: mobile auto-hide ───────────────
+   On mobile the stacked charts are short, so the position chip would
+   hide most of the canvas. It fades out a few seconds after appearing
+   (or after a level change) and returns when the chart is tapped. */
+const CHIP_AUTOHIDE_MS = 5000;
+function isMobileView() {
+  return !!(window.matchMedia && window.matchMedia("(max-width: 880px)").matches);
+}
+function scheduleChipAutoHide(el) {
+  el = el || state.chipEl || positionChipEl();
+  clearTimeout(state.chipHideTimer);
+  if (!el) return;
+  el.classList.remove("term-chip-dim");
+  if (!isMobileView()) return;
+  state.chipHideTimer = setTimeout(() => {
+    const cur = state.chipEl || positionChipEl();
+    if (cur && !cur.hidden) cur.classList.add("term-chip-dim");
+  }, CHIP_AUTOHIDE_MS);
+}
+function revealChip() {
+  const el = state.chipEl || positionChipEl();
+  if (!el || el.hidden) return;
+  scheduleChipAutoHide(el);
+}
+function syncChipForViewport() {
+  if (isMobileView()) return;
+  clearTimeout(state.chipHideTimer);
+  ["term-position-chip", "underlying-position-chip"].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.remove("term-chip-dim");
+  });
 }
 
 function chipHtml(pos) {
@@ -2310,7 +2346,11 @@ document.addEventListener("DOMContentLoaded", () => {
   bindToolbar();
   state.chart = new LwcChart($("term-chart"), $("premium-col"));
   state.underlyingChart = new UnderlyingChart($("term-chart-underlying"), $("underlying-col"));
-  window.addEventListener("resize", () => resizeCharts());
+  ["premium-col", "underlying-col"].forEach((id) => {
+    const col = $(id);
+    if (col) col.addEventListener("click", revealChip);
+  });
+  window.addEventListener("resize", () => { resizeCharts(); syncChipForViewport(); });
   updateCandleTimer();
   setInterval(updateCandleTimer, 1000);
   loadBootstrap();
