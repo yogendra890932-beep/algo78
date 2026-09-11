@@ -1367,7 +1367,15 @@ class LwcChart {
 
     // Entry / SL / Target / LTP as native price lines — they stay anchored
     // to the price scale while the chart pans/zooms.
-    this._syncPriceLine("entry", this.overlay.entry, "#38bdf8", 1, 1, "Entry");
+    // The entry line label carries the live unrealized PnL so the open
+    // position's status is visible right on the line.
+    const pnl = pos
+      ? (num(pos.unrealized_pnl) != null ? num(pos.unrealized_pnl) : positionPnl(pos))
+      : null;
+    const entryTitle = pnl == null
+      ? "Entry"
+      : "Entry " + (pnl > 0 ? "+" : "") + fmtINR(pnl);
+    this._syncPriceLine("entry", this.overlay.entry, "#38bdf8", 1, 1, entryTitle);
     this._syncPriceLine("sl", this.overlay.sl, "#ef4444", 1, 2, "SL");
     this._syncPriceLine("tgt", this.overlay.tgt, "#22c55e", 1, 2, "TGT");
     this._syncPriceLine("ltp", this.overlay.ltp, "#facc15", 1, 0, "LTP");
