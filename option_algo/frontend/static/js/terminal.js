@@ -1144,14 +1144,70 @@ class ZoneBandPrimitive {
   constructor(series) {
     this._series = series;
     this._levels = [];
+    this._label = null;
   }
   setLevels(levels) { this._levels = levels || []; }
-  paneViews() { return [new ZoneBandView(this)]; }
+  setLabel(label) { this._label = label || null; }
+  paneViews() { return [new ZoneBandView(this), new EntryLabelView(this)]; }
 }
 
 class ZoneBandView {
   constructor(band) { this._band = band; }
   renderer() { return new ZoneBandRenderer(this._band); }
+}
+
+// Centered live-PnL label anchored to the entry line. Drawn as a top
+// pane view so it stays above the candles and re-centers automatically
+// on pan / zoom / resize.
+class EntryLabelView {
+  constructor(band) { this._band = band; }
+  zOrder() { return "top"; }
+  renderer() { return new EntryLabelRenderer(this._band); }
+}
+
+class EntryLabelRenderer {
+  constructor(band) { this._band = band; }
+  draw(target) {
+    const lbl = this._band._label;
+    if (!lbl || lbl.price == null || !lbl.text) return;
+    target.useMediaCoordinateSpace((scope) => {
+      const series = this._band._series;
+      let y;
+      try { y = series.priceToCoordinate(lbl.price); } catch (e) { return; }
+      if (y == null) return;
+      const ctx = scope.context;
+      const fontPx = 11;
+      ctx.font = "700 " + fontPx + "px Inter, system-ui, -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.save();
+      // Keep the label inside the visible pane.
+      y = Math.max(fontPx + 6, Math.min(scope.mediaSize.height - fontPx - 6, y));
+      const cx = scope.mediaSize.width / 2;
+      const tw = ctx.measureText(lbl.text).width;
+      const padX = 8, bh = fontPx + 8, r = 5;
+      const bx = cx - tw / 2 - padX, by = y - bh / 2, bw = tw + padX * 2;
+      ctx.beginPath();
+      ctx.moveTo(bx + r, by);
+      ctx.lineTo(bx + bw - r, by);
+      ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
+      ctx.lineTo(bx + bw, by + bh - r);
+      ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
+      ctx.lineTo(bx + r, by + bh);
+      ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
+      ctx.lineTo(bx, by + r);
+      ctx.quadraticCurveTo(bx, by, bx + r, by);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(11,14,23,0.9)";
+      ctx.fill();
+      ctx.strokeStyle = lbl.color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = lbl.color;
+      ctx.fillText(lbl.text, cx, y);
+      ctx.restore();
+    });
+  }
 }
 
 class ZoneBandRenderer {
@@ -1366,16 +1422,15 @@ class LwcChart {
     this.overlay.tradingSymbol = pos ? (pos.trading_symbol || "") : "";
 
     // Entry / SL / Target / LTP as native price lines — they stay anchored
-    // to the price scale while the chart pans/zooms.
-    // The entry line label carries the live unrealized PnL so the open
-    // position's status is visible right on the line.
+    // to the price scale while the chart pans/zooms. The entry line's live
+    // PnL is drawn as a centered label by the top pane-view primitive
+    // (updateZones), not as the price-line title (which only renders at the
+    // left edge).
     const pnl = pos
       ? (num(pos.unrealized_pnl) != null ? num(pos.unrealized_pnl) : positionPnl(pos))
       : null;
-    const entryTitle = pnl == null
-      ? "Entry"
-      : "Entry " + (pnl > 0 ? "+" : "") + fmtINR(pnl);
-    this._syncPriceLine("entry", this.overlay.entry, "#38bdf8", 1, 1, entryTitle);
+    this.overlay.pnl = pnl;
+    this._syncPriceLine("entry", this.overlay.entry, "#38bdf8", 1, 1, "");
     this._syncPriceLine("sl", this.overlay.sl, "#ef4444", 1, 2, "SL");
     this._syncPriceLine("tgt", this.overlay.tgt, "#22c55e", 1, 2, "TGT");
     this._syncPriceLine("ltp", this.overlay.ltp, "#facc15", 1, 0, "LTP");
@@ -1462,6 +1517,18 @@ class LwcChart {
     }
     this.zoneState.zones = levels;
     if (this.zonePrimitive) this.zonePrimitive.setLevels(levels);
+
+    // Centered live-PnL label on the entry line.
+    const label = (o.entry != null && o.pnl != null)
+      ? {
+          price: o.entry,
+          text: "Entry " + (o.pnl > 0 ? "+" : "") + fmtINR(o.pnl),
+          color: o.pnl >= 0 ? "#22c55e" : "#ef4444"
+        }
+      : null;
+    this.zoneState.label = label;
+    if (this.zonePrimitive) this.zonePrimitive.setLabel(label);
+
     const key = JSON.stringify(levels.map((z) => [z.from, z.to]));
     if (key !== this._zoneKey) {
       this._zoneKey = key;
