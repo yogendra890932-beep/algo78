@@ -233,7 +233,6 @@ function handleSnapshot(m) {
   renderSelectedSymbol(Object.assign({}, info, { underlying: m.underlying, premium_state: m.premium_state }));
   renderAtm(Object.assign({}, info, { underlying: m.underlying, itm: m.itm, premium_state: m.premium_state }));
   renderActiveOption(m.premium_state);
-  renderStrategyStatus(m);
   renderPositions(m.positions || state.positions);
   renderPendingTrades(m.pending_trades || []);
   drawChart();
@@ -694,27 +693,6 @@ function intrinsicHint(underlying, strike) {
   if (underlying == null || strike == null) return "--";
   const v = Math.max(0, underlying - strike);
   return "~" + v.toFixed(0);
-}
-
-function renderStrategyStatus(snap) {
-  const el = $("strategy-status");
-  const cfg = (state.bootstrap && state.bootstrap.config) || {};
-  const ind = snap ? snap.indicators_1m : {};
-  const dir = (ind.ema9 != null && ind.ema15 != null)
-    ? (ind.ema9 >= ind.ema15 ? "BULL" : "BEAR")
-    : "--";
-  const emaCross = (ind.ema9 != null && ind.ema15 != null)
-    ? fmt(ind.ema9) + " vs " + fmt(ind.ema15) : "--";
-  const html =
-    '<div class="term-stat-grid">' +
-    '<div class="term-stat"><div class="term-stat-label">Strategy</div><div class="term-stat-value">' + esc(cfg.strategy || "--") + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">Mode</div><div class="term-stat-value">' + esc(cfg.execution_mode || "--") + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">Direction</div><div class="term-stat-value ' + (dir === "BULL" ? "up" : (dir === "BEAR" ? "down" : "")) + '">' + dir + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">EMA 9 / 15</div><div class="term-stat-value">' + emaCross + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">RSI 7</div><div class="term-stat-value">' + fmt(ind.rsi_7) + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">ATR 14</div><div class="term-stat-value">' + fmt(ind.atr_14) + "</div></div>" +
-    "</div>";
-  el.innerHTML = html;
 }
 
 function renderBotStatus(running, status) {
