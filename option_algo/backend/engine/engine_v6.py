@@ -142,8 +142,9 @@ def get_lot_size(symbol: str, custom: Optional[dict] = None) -> int:
 CANDLE_REFRESH_INTERVAL = 65
 
 ADX_TREND_MIN = 20
-ADX_RANGE_MAX = 18
-ATR_PCT_MIN   = 0.002   # 0.2% — Nifty options have lower ATR%
+ADX_RANGE_MAX = 22
+ATR_PCT_MIN   = 0.0005   # 0.05% — Nifty options have lower ATR%
+RANGE_RATIO_MAX = 1.3
 VWAP_BAND_PCT = 0.004
 
 
@@ -215,7 +216,7 @@ class MarketRegimeAnalyzer:
             regime = "TRENDING_UP" if ef > em else "TRENDING_DOWN"
         elif atr_pct > ATR_PCT_MIN * 2.5 and adx < 25:
             regime = "VOLATILE"
-        elif adx < ADX_RANGE_MAX and range_ratio < 0.7:
+        elif adx < ADX_RANGE_MAX and range_ratio < RANGE_RATIO_MAX:
             regime = "RANGING"
         elif atr_pct < ATR_PCT_MIN:
             regime = "NO_TRADE"
