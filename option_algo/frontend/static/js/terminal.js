@@ -93,6 +93,7 @@ async function loadBootstrap() {
   const data = await r.json();
   state.bootstrap = data;
   renderUser(data.user);
+  initSiteNav(data.user, data.config);
   renderWatchlist(data.symbols, data.available_symbols);
   renderBotStatus(data.bot_running, data.bot_status);
   renderPositions(data.positions || []);
@@ -639,6 +640,92 @@ function renderUser(user) {
   $("term-user-label").textContent = user.name + " (" + (user.role || "user") + ")";
 }
 
+/* ─────────────── Site header (navbar) + admin Auto Trade panel ─────────────── */
+function initSiteNav(user, config) {
+  const role = (user && user.role) || "user";
+  if (role === "admin") {
+    const adminWrap = $("nav-admin-wrap");
+    if (adminWrap) adminWrap.style.display = "inline";
+    initAutoPanel(config);
+  }
+}
+
+const AUTO_HIDDEN_KEY = "term.autoPanelHidden";
+function applyAutoHidden(hidden) {
+  const body = $("auto-body");
+  const btn = $("auto-toggle");
+  if (body) body.hidden = !!hidden;
+  if (btn) {
+    btn.textContent = hidden ? "Show" : "Hide";
+    btn.title = hidden ? "Show the Auto Trade Control panel" : "Hide the Auto Trade Control panel";
+  }
+}
+
+function renderAutoMode(mode) {
+  document.querySelectorAll(".term-auto-mode").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === mode);
+  });
+  const note = $("auto-note");
+  if (!note) return;
+  if (mode === "AUTO") {
+    note.textContent = "Live orders — no approval step.";
+    note.classList.add("danger");
+  } else {
+    note.textContent = "Applies on next bot start.";
+    note.classList.remove("danger");
+  }
+}
+
+async function saveAutoMode() {
+  const mode = state.autoMode || "PAPER";
+  const btn = $("auto-save");
+  if (btn) btn.disabled = true;
+  const r = await apiFetch("/api/users/execution-mode", {
+    method: "POST",
+    body: JSON.stringify({ execution_mode: mode })
+  });
+  if (btn) btn.disabled = false;
+  if (!r) return;
+  if (!r.ok) {
+    let msg = "Failed to save execution mode";
+    try { const j = await r.json(); msg = j.detail || msg; } catch (e) { }
+    toast(msg, "err");
+    return;
+  }
+  const label = mode === "AUTO" ? "Fully Auto" : (mode === "SEMI_AUTO" ? "Semi-Auto" : "Paper");
+  toast("Mode set to " + label + " — applies on next bot start", "ok");
+}
+
+function initAutoPanel(config) {
+  const card = $("auto-trade-card");
+  if (!card) return;
+  card.hidden = false;
+  state.autoMode = String((config && config.execution_mode) || "PAPER").toUpperCase();
+  renderAutoMode(state.autoMode);
+
+  const toggle = $("auto-toggle");
+  if (toggle) {
+    let hidden = false;
+    try { hidden = localStorage.getItem(AUTO_HIDDEN_KEY) === "1"; } catch (e) { }
+    applyAutoHidden(hidden);
+    toggle.addEventListener("click", () => {
+      hidden = !hidden;
+      applyAutoHidden(hidden);
+      try { localStorage.setItem(AUTO_HIDDEN_KEY, hidden ? "1" : "0"); } catch (e) { }
+    });
+  }
+
+  document.querySelectorAll(".term-auto-mode").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.autoMode = b.dataset.mode;
+      renderAutoMode(state.autoMode);
+    });
+  });
+
+  const save = $("auto-save");
+  if (save) save.addEventListener("click", saveAutoMode);
+}
+
 function renderSelectedSymbol(info) {
   if (!info) return;
   const under = info.underlying || {};
@@ -934,6 +1021,30 @@ function renderPnlThrottled() {
   updatePositionChipLive(selectedPosition());
 }
 
+/* ─────────────── Live PnL panel: hide / unhide ─────────────── */
+const PNL_HIDDEN_KEY = "term.pnlHidden";
+function applyPnlHidden(hidden) {
+  const body = $("pnl-body");
+  const btn = $("pnl-toggle");
+  if (body) body.hidden = !!hidden;
+  if (btn) {
+    btn.textContent = hidden ? "Show" : "Hide";
+    btn.title = hidden ? "Show the Live PnL panel" : "Hide the Live PnL panel";
+  }
+}
+function bindPnlToggle() {
+  const btn = $("pnl-toggle");
+  if (!btn) return;
+  let hidden = false;
+  try { hidden = localStorage.getItem(PNL_HIDDEN_KEY) === "1"; } catch (e) { }
+  applyPnlHidden(hidden);
+  btn.addEventListener("click", () => {
+    hidden = !hidden;
+    applyPnlHidden(hidden);
+    try { localStorage.setItem(PNL_HIDDEN_KEY, hidden ? "1" : "0"); } catch (e) { }
+  });
+}
+
 /* ─────────────── Orders ─────────────── */
 async function sendOrder(action, value, symbol, opts) {
   const sym = symbol || state.selectedSymbol;
@@ -1123,6 +1234,7 @@ class ZoneBandPrimitive {
     this._series = series;
     this._levels = [];
     this._label = null;
+    this._closeRect = null;   // hit-box of the entry-line close button (media px)
   }
   setLevels(levels) { this._levels = levels || []; }
   setLabel(label) { this._label = label || null; }
@@ -1147,6 +1259,7 @@ class EntryLabelRenderer {
   constructor(band) { this._band = band; }
   draw(target) {
     const lbl = this._band._label;
+    this._band._closeRect = null;
     if (!lbl || lbl.price == null || !lbl.text) return;
     target.useMediaCoordinateSpace((scope) => {
       const series = this._band._series;
@@ -1183,6 +1296,36 @@ class EntryLabelRenderer {
       ctx.stroke();
       ctx.fillStyle = lbl.color;
       ctx.fillText(lbl.text, cx, y);
+
+      // Square-off button to the right of the label.
+      const btnGap = 6, btnH = bh + 2;
+      const bbx = bx + bw + btnGap, bby = by - 1, btnW = btnH, br = 5;
+      ctx.beginPath();
+      ctx.moveTo(bbx + br, bby);
+      ctx.lineTo(bbx + btnW - br, bby);
+      ctx.quadraticCurveTo(bbx + btnW, bby, bbx + btnW, bby + br);
+      ctx.lineTo(bbx + btnW, bby + btnH - br);
+      ctx.quadraticCurveTo(bbx + btnW, bby + btnH, bbx + btnW - br, bby + btnH);
+      ctx.lineTo(bbx + br, bby + btnH);
+      ctx.quadraticCurveTo(bbx, bby + btnH, bbx, bby + btnH - br);
+      ctx.lineTo(bbx, bby + br);
+      ctx.quadraticCurveTo(bbx, bby, bbx + br, bby);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(239,68,68,0.18)";
+      ctx.fill();
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      const gx = bbx + btnW / 2, gy = bby + btnH / 2, g = 3.2;
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.moveTo(gx - g, gy - g);
+      ctx.lineTo(gx + g, gy + g);
+      ctx.moveTo(gx + g, gy - g);
+      ctx.lineTo(gx - g, gy + g);
+      ctx.stroke();
+      this._band._closeRect = { x1: bbx, y1: bby, x2: bbx + btnW, y2: bby + btnH };
       ctx.restore();
     });
   }
@@ -1496,11 +1639,13 @@ class LwcChart {
     this.zoneState.zones = levels;
     if (this.zonePrimitive) this.zonePrimitive.setLevels(levels);
 
-    // Centered live-PnL label on the entry line.
+    // Centered live-PnL label on the entry line, with the position
+    // quantity shown to its left.
     const label = (o.entry != null && o.pnl != null)
       ? {
           price: o.entry,
-          text: "Entry " + (o.pnl > 0 ? "+" : "") + fmtINR(o.pnl),
+          text: (o.qty != null ? "Qty " + fmt(o.qty, 0) + "  |  " : "") +
+            "Entry " + (o.pnl > 0 ? "+" : "") + fmtINR(o.pnl),
           color: o.pnl >= 0 ? "#22c55e" : "#ef4444"
         }
       : null;
@@ -1654,8 +1799,9 @@ class LwcChart {
       sendOrder(action, v, d.symbol, { source: "overlay" });
     };
     el.addEventListener("pointerdown", (e) => startDrag(e.clientX, e.clientY));
-    el.addEventListener("pointermove", (e) => moveDrag(e.clientX, e.clientY));
+    el.addEventListener("pointermove", (e) => { moveDrag(e.clientX, e.clientY); this.hoverCloseButton(e); });
     window.addEventListener("pointerup", endDrag);
+    el.addEventListener("click", (e) => this.onCloseButtonClick(e));
     el.addEventListener("touchstart", (e) => {
       if (e.touches.length) startDrag(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: true });
@@ -1663,6 +1809,35 @@ class LwcChart {
       if (e.touches.length) moveDrag(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: true });
     el.addEventListener("touchend", endDrag);
+  }
+
+  closeButtonRect() {
+    return (this.zonePrimitive && this.zonePrimitive._closeRect) || null;
+  }
+
+  inCloseButton(x, y) {
+    const r = this.closeButtonRect();
+    if (!r) return false;
+    const pad = 3;
+    return x >= r.x1 - pad && x <= r.x2 + pad && y >= r.y1 - pad && y <= r.y2 + pad;
+  }
+
+  onCloseButtonClick(e) {
+    const rect = this.el.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    if (!this.inCloseButton(x, y)) return;
+    const pos = selectedPosition();
+    if (!pos) return;
+    e.preventDefault();
+    e.stopPropagation();
+    sendOrder("squareoff", null, pos.symbol || state.selectedSymbol);
+  }
+
+  hoverCloseButton(e) {
+    if (this.drag) return;
+    const rect = this.el.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    this.el.style.cursor = this.inCloseButton(x, y) ? "pointer" : "crosshair";
   }
 
   onCrosshair(param) {
@@ -1926,22 +2101,19 @@ class UnderlyingChart {
   }
 }
 
-/* ─────────────── Overlay: position chip on the chart ─────────────── */
+/* ─────────────── Overlay: live position panel (right sidebar) ─────────────── */
 function positionChipEl() {
-  // The chip follows the visible chart: underlying chart in "1" mode,
-  // premium chart otherwise. Only one chip is ever populated.
-  return state.chartMode === "1" ? $("underlying-position-chip") : $("term-position-chip");
+  // The live position details render in the right-panel "Live Position"
+  // card — never over the chart canvas.
+  return $("live-position");
 }
 
 function renderPositionChip() {
   const el = positionChipEl();
-  const other = el === $("term-position-chip") ? $("underlying-position-chip") : $("term-position-chip");
-  if (other && other !== el) { other.hidden = true; other.innerHTML = ""; }
+  if (!el) return;
   const pos = selectedPosition();
   if (!pos) {
-    if (el) el.hidden = true;
-    if (el) el.innerHTML = "";
-    clearTimeout(state.chipHideTimer);
+    el.innerHTML = '<div class="term-empty">No open position</div>';
     state.overlayKey = null;
     state.chipEl = null;
     state.overlayBaseline = null;
@@ -1955,47 +2127,10 @@ function renderPositionChip() {
     state.chipEl = el;
     state.overlayBaseline = { sl: num(pos.sl_trigger), tgt: num(pos.target) };
     state.overlayPnl = num(pos.unrealized_pnl);
-    el.hidden = false;
     el.innerHTML = chipHtml(pos);
     bindChipActions(el, pos);
-    scheduleChipAutoHide(el);
-  } else {
-    el.hidden = false;
   }
   updatePositionChipLive(pos, el);
-}
-
-/* ─────────────── Overlay chip: mobile auto-hide ───────────────
-   On mobile the stacked charts are short, so the position chip would
-   hide most of the canvas. It fades out a few seconds after appearing
-   (or after a level change) and returns when the chart is tapped. */
-const CHIP_AUTOHIDE_MS = 5000;
-function isMobileView() {
-  return !!(window.matchMedia && window.matchMedia("(max-width: 880px)").matches);
-}
-function scheduleChipAutoHide(el) {
-  el = el || state.chipEl || positionChipEl();
-  clearTimeout(state.chipHideTimer);
-  if (!el) return;
-  el.classList.remove("term-chip-dim");
-  if (!isMobileView()) return;
-  state.chipHideTimer = setTimeout(() => {
-    const cur = state.chipEl || positionChipEl();
-    if (cur && !cur.hidden) cur.classList.add("term-chip-dim");
-  }, CHIP_AUTOHIDE_MS);
-}
-function revealChip() {
-  const el = state.chipEl || positionChipEl();
-  if (!el || el.hidden) return;
-  scheduleChipAutoHide(el);
-}
-function syncChipForViewport() {
-  if (isMobileView()) return;
-  clearTimeout(state.chipHideTimer);
-  ["term-position-chip", "underlying-position-chip"].forEach((id) => {
-    const el = $(id);
-    if (el) el.classList.remove("term-chip-dim");
-  });
 }
 
 function chipHtml(pos) {
@@ -2050,7 +2185,7 @@ function bindChipActions(el, pos) {
 
 function updatePositionChipLive(pos, el) {
   el = el || state.chipEl || positionChipEl();
-  if (!el || el.hidden || !pos) return;
+  if (!el || !pos) return;
   const set = (id, v, f) => {
     const n = $(id);
     if (n) n.textContent = f ? f(v) : (v == null ? "--" : String(v));
@@ -2214,11 +2349,6 @@ function setChartMode(mode) {
   if (wrap) wrap.classList.remove("mode-1", "mode-2");
   if (mode === "1") wrap && wrap.classList.add("mode-1");
   else if (mode === "2") wrap && wrap.classList.add("mode-2");
-  // The chip lives on whichever chart is now visible — force a rebuild
-  // into the active column so the position details follow the chart.
-  state.overlayKey = null;
-  state.chipEl = null;
-  renderPositionChip();
   setTimeout(resizeCharts, 0);
 }
 
@@ -2374,7 +2504,8 @@ function bindToolbar() {
     });
   });
 
-  $("term-logout").addEventListener("click", logout);
+  const navLogout = $("nav-logout");
+  if (navLogout) navLogout.addEventListener("click", logout);
 
   const toggleLeft = $("term-toggle-left");
   const syncLeftToggle = (collapsed) => {
@@ -2397,13 +2528,10 @@ function bindToolbar() {
 document.addEventListener("DOMContentLoaded", () => {
   if (!getToken()) { redirectLogin(); return; }
   bindToolbar();
+  bindPnlToggle();
   state.chart = new LwcChart($("term-chart"), $("premium-col"));
   state.underlyingChart = new UnderlyingChart($("term-chart-underlying"), $("underlying-col"));
-  ["premium-col", "underlying-col"].forEach((id) => {
-    const col = $(id);
-    if (col) col.addEventListener("click", revealChip);
-  });
-  window.addEventListener("resize", () => { resizeCharts(); syncChipForViewport(); });
+  window.addEventListener("resize", resizeCharts);
   updateCandleTimer();
   setInterval(updateCandleTimer, 1000);
   loadBootstrap();

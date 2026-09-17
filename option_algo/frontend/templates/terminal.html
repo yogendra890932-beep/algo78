@@ -8,6 +8,25 @@
 </head>
 <body class="term-body">
 
+<!-- ═══════════════ SITE HEADER ═══════════════ -->
+<nav class="navbar">
+  <div class="nav-brand">AlgoBot</div>
+  <div class="nav-links">
+    <a href="/dashboard" id="nav-dashboard">Dashboard</a>
+    <a href="/trades" id="nav-trades">Trades</a>
+    <a href="/terminal" id="nav-terminal" class="active">Terminal</a>
+    <a href="/billing" id="nav-billing">Billing</a>
+    <a href="/settings" id="nav-settings">Settings</a>
+    <span id="nav-admin-wrap" style="display:none">
+      <a href="/admin" id="nav-admin">Admin</a>
+      <a href="/admin/billing" id="nav-admin-billing">Billing Admin</a>
+      <a href="/admin/rewards" id="nav-admin-rewards">Rewards Admin</a>
+      <a href="/admin/rewards/settings" id="nav-admin-rewards-settings">Campaign Settings</a>
+    </span>
+    <button id="nav-logout" class="btn-logout">Logout</button>
+  </div>
+</nav>
+
 <!-- ═══════════════ TOP BAR ═══════════════ -->
 <header class="term-topbar">
   <div class="term-brand">
@@ -26,7 +45,6 @@
   <div class="term-top-actions">
     <button id="term-toggle-left" class="term-btn term-btn-ghost" title="Show / hide left panel (watchlist)">Watchlist</button>
     <span id="term-user-label" class="term-user">--</span>
-    <button id="term-logout" class="term-btn term-btn-ghost">Logout</button>
   </div>
 </header>
 
@@ -102,7 +120,6 @@
       <div class="term-chart-col" id="underlying-col">
         <div id="term-chart-underlying" class="term-chart-lwc"></div>
         <div class="term-chart-symbol" id="underlying-symbol-label">--</div>
-        <div class="term-position-chip" id="underlying-position-chip" hidden></div>
         <div class="term-chart-crosshair" id="underlying-crosshair">
           <span id="u-ch-time">--</span>
           <span id="u-ch-ohlc">O -- H -- L -- C --</span>
@@ -111,7 +128,6 @@
       <div class="term-chart-col" id="premium-col">
         <div id="term-chart" class="term-chart-lwc"></div>
         <div class="term-chart-symbol" id="chart-symbol-label">--</div>
-        <div class="term-position-chip" id="term-position-chip" hidden></div>
         <div class="term-chart-crosshair" id="term-crosshair">
           <span id="ch-time">--</span>
           <span id="ch-ohlc">O -- H -- L -- C --</span>
@@ -154,6 +170,21 @@
 
   <!-- ── RIGHT PANEL ── -->
   <aside class="term-right">
+    <section class="term-card" id="auto-trade-card" hidden>
+      <div class="term-card-head"><span>Auto Trade Control</span>
+        <button id="auto-toggle" class="term-btn term-btn-xs" title="Hide / show this panel">Hide</button>
+      </div>
+      <div class="term-auto" id="auto-body">
+        <div class="term-auto-modes" id="auto-modes">
+          <button class="term-auto-mode" data-mode="PAPER">Paper</button>
+          <button class="term-auto-mode" data-mode="SEMI_AUTO">Semi-Auto</button>
+          <button class="term-auto-mode" data-mode="AUTO">Fully Auto</button>
+        </div>
+        <div class="term-auto-note" id="auto-note">Applies on next bot start.</div>
+        <button id="auto-save" class="term-btn term-btn-primary term-btn-block">Save Mode</button>
+      </div>
+    </section>
+
     <section class="term-card" id="pending-card">
       <div class="term-card-head"><span>Pending Trades</span>
         <span class="term-pending-count term-muted" id="pending-count">0</span>
@@ -164,10 +195,18 @@
     </section>
 
     <section class="term-card">
+      <div class="term-card-head"><span>Live Position</span></div>
+      <div class="term-live-pos" id="live-position">
+        <div class="term-empty">No open position</div>
+      </div>
+    </section>
+
+    <section class="term-card" id="pnl-card">
       <div class="term-card-head"><span>Live PnL</span>
+        <button id="pnl-toggle" class="term-btn term-btn-xs" title="Hide / show the Live PnL panel">Hide</button>
         <button id="sq-off-all" class="term-btn term-btn-danger term-btn-xs" title="Square off all open positions">Square Off All</button>
       </div>
-      <div class="term-pnl">
+      <div class="term-pnl" id="pnl-body">
         <div class="term-pnl-net" id="pnl-net">₹ 0.00</div>
         <div class="term-pnl-row">
           <span>Unrealized</span><span id="pnl-unreal">₹ 0.00</span>

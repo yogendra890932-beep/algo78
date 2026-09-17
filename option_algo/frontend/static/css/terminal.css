@@ -57,6 +57,60 @@
 .term-top-actions { display: flex; align-items: center; gap: 10px; }
 .term-user        { color: var(--term-muted); font-size: 12px; }
 
+/* ── Site header (navbar) ─────────────────────────────────────── */
+.navbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0 20px; height: 52px;
+  background: rgba(17,22,36,0.96);
+  border-bottom: 1px solid var(--term-border);
+  position: sticky; top: 0; z-index: 100;
+  flex: 0 0 auto;
+}
+.nav-brand {
+  font-size: 17px; font-weight: 700; letter-spacing: -0.3px;
+  background: linear-gradient(135deg, var(--term-green), var(--term-accent));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.nav-links { display: flex; align-items: center; gap: 4px; }
+.nav-links a {
+  color: var(--term-muted); text-decoration: none;
+  padding: 6px 12px; border-radius: 8px; font-size: 13px;
+  transition: all 0.2s;
+}
+.nav-links a:hover,
+.nav-links a.active { color: var(--term-text); background: var(--term-panel-2); }
+.btn-logout {
+  background: none; border: 1px solid var(--term-border);
+  color: var(--term-muted); padding: 6px 14px; border-radius: 8px;
+  cursor: pointer; font-size: 13px; margin-left: 8px;
+  font-family: inherit; transition: all 0.2s;
+}
+.btn-logout:hover { color: var(--term-red); border-color: var(--term-red); }
+
+/* ── Auto trade control (admin-only) ──────────────────────────── */
+.term-auto { display: flex; flex-direction: column; gap: 8px; }
+.term-auto-modes { display: flex; gap: 6px; }
+.term-auto-mode {
+  flex: 1;
+  background: var(--term-panel-2); color: var(--term-muted);
+  border: 1px solid var(--term-border); border-radius: 7px;
+  padding: 7px 6px; font-size: 12px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+}
+.term-auto-mode:hover { color: var(--term-text); border-color: var(--term-border-2); }
+.term-auto-mode.active {
+  background: var(--term-accent); border-color: var(--term-accent);
+  color: #fff; font-weight: 600;
+}
+.term-auto-mode[data-mode="AUTO"].active {
+  background: var(--term-red); border-color: var(--term-red);
+}
+.term-auto-note { font-size: 11px; color: var(--term-muted); }
+.term-auto-note.danger { color: var(--term-red); font-weight: 600; }
+.term-btn-block { width: 100%; }
+.term-auto[hidden] { display: none !important; }
+
 /* ── Buttons / pills ──────────────────────────────────────────── */
 .term-btn {
   background: var(--term-panel-2);
@@ -146,6 +200,8 @@
   letter-spacing: 0.6px; color: var(--term-accent-2);
   margin-bottom: 8px;
 }
+.term-card-head > span:first-child { margin-right: auto; }
+.term-card-head .term-btn + .term-btn { margin-left: 6px; }
 .term-muted { color: var(--term-muted); font-weight: 400; font-size: 11px; }
 
 /* ── Watchlist ────────────────────────────────────────────────── */
@@ -275,23 +331,15 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.term-position-chip {
-  position: absolute; top: 34px; left: 10px; z-index: 5;
-  min-width: 210px;
-  font-size: 11px; line-height: 1.5;
+.term-live-pos {
+  font-size: 12px; line-height: 1.55;
   color: var(--term-text);
-  background: rgba(17,22,36,0.9);
+  padding: 8px 10px;
+  background: var(--term-panel-2, rgba(17,22,36,0.6));
   border: 1px solid var(--term-border);
   border-left: 3px solid var(--term-accent);
-  border-radius: 6px; padding: 6px 10px;
-  pointer-events: auto;
+  border-radius: 6px;
   font-variant-numeric: tabular-nums;
-  box-shadow: var(--term-shadow);
-  transition: opacity 0.25s ease;
-}
-.term-position-chip.term-chip-dim {
-  opacity: 0;
-  pointer-events: none;
 }
 .term-chip-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .term-chip-entry { font-weight: 700; font-size: 12px; color: #dbe3f0; }
@@ -328,8 +376,7 @@
 /* `hidden` must always win over the display rules above */
 .term-modal[hidden],
 .term-toast[hidden],
-.term-drag-preview[hidden],
-.term-position-chip[hidden] { display: none !important; }
+.term-drag-preview[hidden] { display: none !important; }
 .term-modal-box {
   width: 340px; max-width: 92vw;
   background: var(--term-panel);
@@ -421,6 +468,7 @@
 
 /* ── PnL panel ────────────────────────────────────────────────── */
 .term-pnl { display: flex; flex-direction: column; gap: 8px; }
+.term-pnl[hidden] { display: none !important; }
 .term-pnl-net { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .term-pnl-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--term-muted); }
 .term-pnl-row span:last-child { color: var(--term-text); font-variant-numeric: tabular-nums; font-weight: 600; }
