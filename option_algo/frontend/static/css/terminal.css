@@ -88,29 +88,6 @@
 }
 .btn-logout:hover { color: var(--term-red); border-color: var(--term-red); }
 
-/* ── Auto trade control (admin-only) ──────────────────────────── */
-.term-auto { display: flex; flex-direction: column; gap: 8px; }
-.term-auto-modes { display: flex; gap: 6px; }
-.term-auto-mode {
-  flex: 1;
-  background: var(--term-panel-2); color: var(--term-muted);
-  border: 1px solid var(--term-border); border-radius: 7px;
-  padding: 7px 6px; font-size: 12px; cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
-}
-.term-auto-mode:hover { color: var(--term-text); border-color: var(--term-border-2); }
-.term-auto-mode.active {
-  background: var(--term-accent); border-color: var(--term-accent);
-  color: #fff; font-weight: 600;
-}
-.term-auto-mode[data-mode="AUTO"].active {
-  background: var(--term-red); border-color: var(--term-red);
-}
-.term-auto-note { font-size: 11px; color: var(--term-muted); }
-.term-auto-note.danger { color: var(--term-red); font-weight: 600; }
-.term-btn-block { width: 100%; }
-.term-auto[hidden] { display: none !important; }
-
 /* ── Buttons / pills ──────────────────────────────────────────── */
 .term-btn {
   background: var(--term-panel-2);
@@ -235,24 +212,7 @@
 .term-change { font-size: 12px; font-weight: 600; }
 .term-sym-active { font-size: 11px; color: var(--term-accent-2); word-break: break-word; overflow-wrap: anywhere; }
 
-/* ── ATM strike info ──────────────────────────────────────────── */
-.term-strike { display: flex; flex-direction: column; gap: 6px; }
-.term-strike-row {
-  display: flex; align-items: center; gap: 8px;
-  background: var(--term-panel-2);
-  border: 1px solid var(--term-border);
-  border-radius: 7px; padding: 7px 9px;
-  flex-wrap: wrap;
-}
-.term-strike-tag {
-  font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 5px;
-}
-.term-strike-tag.atm  { background: rgba(245,158,11,0.15); color: var(--term-amber); }
-.term-strike-tag.ce   { background: rgba(34,211,238,0.15); color: var(--term-accent-2); }
-.term-strike-tag.pe   { background: rgba(239,68,68,0.15);  color: var(--term-red); }
-.term-strike-name { font-weight: 700; flex: 1; overflow-wrap: anywhere; word-break: break-word; }
-.term-strike-val  { font-variant-numeric: tabular-nums; }
-.term-strike-muted, .term-empty { color: var(--term-muted); font-size: 12px; padding: 4px 0; }
+.term-empty { color: var(--term-muted); font-size: 12px; padding: 4px 0; }
 
 /* ── Status cards ─────────────────────────────────────────────── */
 .term-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -580,6 +540,5 @@
   .term-chart-src { margin-left: auto; }
   .term-user { display: none; }
   .term-wl-item { flex-wrap: wrap; }
-  .term-strike-row { flex-wrap: wrap; }
   .term-card { padding: 8px 10px; }
 }

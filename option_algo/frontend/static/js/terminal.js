@@ -93,7 +93,7 @@ async function loadBootstrap() {
   const data = await r.json();
   state.bootstrap = data;
   renderUser(data.user);
-  initSiteNav(data.user, data.config);
+  initSiteNav(data.user);
   renderWatchlist(data.symbols, data.available_symbols);
   renderBotStatus(data.bot_running, data.bot_status);
   renderPositions(data.positions || []);
@@ -151,7 +151,6 @@ async function selectSymbol(sym) {
   renderWatchlistActive();
   const info = (state.bootstrap && state.bootstrap.symbols || {})[sym];
   renderSelectedSymbol(info);
-  renderAtm(info);
   state.premiumCandles = [];
   state.underlyingCandles = [];
   state.underlying5m = [];
@@ -232,7 +231,6 @@ function handleSnapshot(m) {
 
   const info = (state.bootstrap && state.bootstrap.symbols || {})[m.symbol];
   renderSelectedSymbol(Object.assign({}, info, { underlying: m.underlying, premium_state: m.premium_state }));
-  renderAtm(Object.assign({}, info, { underlying: m.underlying, itm: m.itm, premium_state: m.premium_state }));
   renderActiveOption(m.premium_state);
   renderPositions(m.positions || state.positions);
   renderPendingTrades(m.pending_trades || []);
@@ -299,8 +297,6 @@ function handleWSMessage(m) {
           scheduleStrikeRollRefresh(m.symbol);
         }
         renderActiveOption(state.premiumState);
-        const info = (state.bootstrap && state.bootstrap.symbols || {})[m.symbol] || {};
-        renderAtm(Object.assign({}, info, { premium_state: state.premiumState }));
       }
       break;
     case "premium_bar":
@@ -640,90 +636,13 @@ function renderUser(user) {
   $("term-user-label").textContent = user.name + " (" + (user.role || "user") + ")";
 }
 
-/* ─────────────── Site header (navbar) + admin Auto Trade panel ─────────────── */
-function initSiteNav(user, config) {
+/* ─────────────── Site header (navbar) ─────────────── */
+function initSiteNav(user) {
   const role = (user && user.role) || "user";
   if (role === "admin") {
     const adminWrap = $("nav-admin-wrap");
     if (adminWrap) adminWrap.style.display = "inline";
-    initAutoPanel(config);
   }
-}
-
-const AUTO_HIDDEN_KEY = "term.autoPanelHidden";
-function applyAutoHidden(hidden) {
-  const body = $("auto-body");
-  const btn = $("auto-toggle");
-  if (body) body.hidden = !!hidden;
-  if (btn) {
-    btn.textContent = hidden ? "Show" : "Hide";
-    btn.title = hidden ? "Show the Auto Trade Control panel" : "Hide the Auto Trade Control panel";
-  }
-}
-
-function renderAutoMode(mode) {
-  document.querySelectorAll(".term-auto-mode").forEach((b) => {
-    b.classList.toggle("active", b.dataset.mode === mode);
-  });
-  const note = $("auto-note");
-  if (!note) return;
-  if (mode === "AUTO") {
-    note.textContent = "Live orders — no approval step.";
-    note.classList.add("danger");
-  } else {
-    note.textContent = "Applies on next bot start.";
-    note.classList.remove("danger");
-  }
-}
-
-async function saveAutoMode() {
-  const mode = state.autoMode || "PAPER";
-  const btn = $("auto-save");
-  if (btn) btn.disabled = true;
-  const r = await apiFetch("/api/users/execution-mode", {
-    method: "POST",
-    body: JSON.stringify({ execution_mode: mode })
-  });
-  if (btn) btn.disabled = false;
-  if (!r) return;
-  if (!r.ok) {
-    let msg = "Failed to save execution mode";
-    try { const j = await r.json(); msg = j.detail || msg; } catch (e) { }
-    toast(msg, "err");
-    return;
-  }
-  const label = mode === "AUTO" ? "Fully Auto" : (mode === "SEMI_AUTO" ? "Semi-Auto" : "Paper");
-  toast("Mode set to " + label + " — applies on next bot start", "ok");
-}
-
-function initAutoPanel(config) {
-  const card = $("auto-trade-card");
-  if (!card) return;
-  card.hidden = false;
-  state.autoMode = String((config && config.execution_mode) || "PAPER").toUpperCase();
-  renderAutoMode(state.autoMode);
-
-  const toggle = $("auto-toggle");
-  if (toggle) {
-    let hidden = false;
-    try { hidden = localStorage.getItem(AUTO_HIDDEN_KEY) === "1"; } catch (e) { }
-    applyAutoHidden(hidden);
-    toggle.addEventListener("click", () => {
-      hidden = !hidden;
-      applyAutoHidden(hidden);
-      try { localStorage.setItem(AUTO_HIDDEN_KEY, hidden ? "1" : "0"); } catch (e) { }
-    });
-  }
-
-  document.querySelectorAll(".term-auto-mode").forEach((b) => {
-    b.addEventListener("click", () => {
-      state.autoMode = b.dataset.mode;
-      renderAutoMode(state.autoMode);
-    });
-  });
-
-  const save = $("auto-save");
-  if (save) save.addEventListener("click", saveAutoMode);
 }
 
 function renderSelectedSymbol(info) {
@@ -749,37 +668,6 @@ function renderActiveOption(premiumState) {
   if (cl) cl.textContent = name || "--";
   const ul = $("underlying-symbol-label");
   if (ul) ul.textContent = state.selectedSymbol || "--";
-}
-
-function renderAtm(info) {
-  const el = $("atm-strike");
-  if (!info || !info.itm) {
-    el.innerHTML = '<div class="term-strike-muted">Waiting for underlying…</div>';
-    return;
-  }
-  const itm = info.itm;
-  const st = info.premium_state || state.premiumState || {};
-  const cur = state.current || {};
-  const active = String(st.trading_symbol || "");
-  const activePremium = (cur && cur.close != null) ? cur.close : null;
-  const ceTxt = active.indexOf("CE") >= 0 ? fmt(activePremium) : intrinsicHint(itm.underlying, itm.itm_ce);
-  const peTxt = active.indexOf("PE") >= 0 ? fmt(activePremium) : intrinsicHint(itm.underlying, itm.itm_pe);
-  el.innerHTML =
-    '<div class="term-strike-row"><span class="term-strike-tag atm">ATM</span>' +
-    '<span class="term-strike-name">' + itm.atm + '</span>' +
-    '<span class="term-strike-val term-muted">step ' + itm.strike_step + "</span></div>" +
-    '<div class="term-strike-row"><span class="term-strike-tag ce">ITM CE</span>' +
-    '<span class="term-strike-name">' + itm.itm_ce + " CE</span>" +
-    '<span class="term-strike-val up">' + ceTxt + "</span></div>" +
-    '<div class="term-strike-row"><span class="term-strike-tag pe">ITM PE</span>' +
-    '<span class="term-strike-name">' + itm.itm_pe + " PE</span>" +
-    '<span class="term-strike-val down">' + peTxt + "</span></div>";
-}
-
-function intrinsicHint(underlying, strike) {
-  if (underlying == null || strike == null) return "--";
-  const v = Math.max(0, underlying - strike);
-  return "~" + v.toFixed(0);
 }
 
 function renderBotStatus(running, status) {
