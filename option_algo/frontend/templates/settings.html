@@ -257,6 +257,7 @@
           Each lot = the exchange-defined lot size for that symbol.<br>
           1 lot → NIFTY 75 qty · BANKNIFTY 15 qty · FINNIFTY 40 qty · SENSEX 10 qty
         </span>
+        <div id="qty-plan-msg" style="font-size:11.5px;margin-top:3px"></div>
       </label>
       <label>ITM Depth (1 = 1 strike ITM)
         <input id="c-itm" type="number" class="inp" min="1" max="5" />
@@ -290,7 +291,7 @@
       <div id="lots-validate-msg" style="font-size:12px;margin-top:4px"></div>
     </details>
 
-    <button onclick="saveConfig()" class="btn-primary" style="margin-top:14px">Save Configuration</button>
+    <button onclick="saveConfig()" class="btn-primary" id="btn-save-config" style="margin-top:14px">Save Configuration</button>
     <div id="cfg-msg" class="msg"></div>
   </div>
 
@@ -390,7 +391,7 @@
     </div>
 
     <div style="display:flex;gap:10px;margin-top:12px">
-      <button onclick="saveMultiSymbol()" class="btn-primary">Save Multi-Symbol Config</button>
+      <button onclick="saveMultiSymbol()" id="btn-save-multisymbol" class="btn-primary">Save Multi-Symbol Config</button>
     </div>
     <div id="ms-msg" class="msg"></div>
   </div>
@@ -805,6 +806,8 @@
     document.getElementById('tg-summary').checked = c.telegram_on_summary !== false;
 
     // Multi-symbol is loaded separately via loadMultiSymbol()
+
+    checkLotPlan();
   }
 
   // Toggle warning when live selected
@@ -985,6 +988,9 @@
 
     document.querySelectorAll('input[name="execution_mode"]').forEach(radio => {
       radio.addEventListener('change', async () => {
+        scheduleLotPlanCheck();
+        document.querySelectorAll('#extra-symbols-cards .symbol-card')
+          .forEach(card => scheduleCardPlanCheck(card));
         if (radio.value !== 'PAPER' && await isTrialUser()) {
           showMsg('mode-msg',
             '⚠️ Semi Auto and Fully Automatic require a paid plan. Saving will open the subscription page.',
@@ -994,6 +1000,14 @@
         }
       });
     });
+
+    const qtyEl = document.getElementById('c-qty');
+    if (qtyEl) {
+      qtyEl.addEventListener('input', scheduleLotPlanCheck);
+      qtyEl.addEventListener('change', scheduleLotPlanCheck);
+    }
+    const symbolEl = document.getElementById('c-symbol');
+    if (symbolEl) symbolEl.addEventListener('change', scheduleLotPlanCheck);
   });
 
   let _subCache = null;
@@ -1014,6 +1028,7 @@
     // Returns an error string if the plan does not allow the selected
     // main symbol / lot count for the given execution mode, else ''.
     if (mode === 'PAPER') return '';
+    if (isAdminUser()) return '';
     const sub = await getSubscription();
     if (!sub || !sub.allowed_symbols || Object.keys(sub.allowed_symbols).length === 0) {
       return 'Semi Auto and Fully Automatic trading require an active subscription plan. Please subscribe to continue.';
@@ -1029,6 +1044,65 @@
       return `Maximum lot limit for ${symbol} is ${limit} — your plan allows up to ${limit} lot(s).`;
     }
     return '';
+  }
+
+  function currentExecMode() {
+    if (document.getElementById('mode-semi').checked) return 'SEMI_AUTO';
+    if (document.getElementById('mode-auto').checked) return 'AUTO';
+    return 'PAPER';
+  }
+
+  function isAdminUser() {
+    return (localStorage.getItem('role') || '').toLowerCase() === 'admin';
+  }
+
+  let _qtyPlanTimer = 0;
+  function scheduleLotPlanCheck() {
+    clearTimeout(_qtyPlanTimer);
+    _qtyPlanTimer = setTimeout(checkLotPlan, 300);
+  }
+
+  // Live check: when Semi-Auto / Fully-Auto is selected, the number of lots
+  // must stay within the subscription plan's per-symbol limit. Shows an
+  // inline message and disables Save Configuration while over the limit.
+  async function checkLotPlan() {
+    const msgEl = document.getElementById('qty-plan-msg');
+    const btn = document.getElementById('btn-save-config');
+    const qtyEl = document.getElementById('c-qty');
+    // `block` = true only for hard errors; informational (within-limit) text
+    // must NOT disable Save.
+    const setMsg = (txt, color, block) => {
+      if (msgEl) { msgEl.textContent = txt || ''; msgEl.style.color = color || ''; }
+      if (btn) btn.disabled = !!block;
+    };
+    const clearMax = () => { if (qtyEl) qtyEl.removeAttribute('max'); };
+
+    const mode = currentExecMode();
+    if (mode === 'PAPER' || isAdminUser()) { setMsg(''); clearMax(); return; }
+
+    const lots = parseInt(document.getElementById('c-qty').value, 10) || 1;
+    const symbol = (document.getElementById('c-symbol').value || '').trim().toUpperCase();
+    const sub = await getSubscription();
+
+    if (!sub || !sub.allowed_symbols || Object.keys(sub.allowed_symbols).length === 0) {
+      clearMax();
+      setMsg('Semi Auto / Fully Automatic require an active subscription plan.', 'var(--amber,#f59e0b)', true);
+      return;
+    }
+    if (!symbol) { clearMax(); setMsg(''); return; }
+    if (!(symbol in sub.allowed_symbols)) {
+      clearMax();
+      setMsg(`Your plan does not include ${symbol}. Allowed: ${Object.keys(sub.allowed_symbols).join(', ')}.`, 'var(--red)', true);
+      return;
+    }
+    const limit = sub.allowed_symbols[symbol];
+    // Hard cap: the browser will not accept more than the plan limit.
+    if (qtyEl) qtyEl.max = String(limit);
+    if (lots > limit) {
+      setMsg(`Your plan allows up to ${limit} lot(s) for ${symbol} — you selected ${lots}. Saving is disabled.`, 'var(--red)', true);
+    } else {
+      setMsg(`Plan allows up to ${limit} lot(s) for ${symbol}.`, 'var(--green)', false);
+    }
   }
 
   async function saveExecutionMode() {
@@ -1209,6 +1283,12 @@
       showMsg('cfg-msg', '❌ ' + e.message, 'error');
       return;
     }
+    const planErr = await planCheck(currentExecMode());
+    if (planErr) {
+      showMsg('cfg-msg', '❌ ' + planErr, 'error');
+      checkLotPlan();
+      return;
+    }
     const r = await apiFetch('/api/users/config', { method: 'PATCH', body: JSON.stringify(body) });
     if (r?.ok) {
       showMsg('cfg-msg', '✅ Configuration saved', 'success');
@@ -1373,6 +1453,8 @@
 
       // Validate duplicates
       validateDuplicateSymbols(sel);
+      // Validate lot/symbol against the subscription plan (live)
+      scheduleCardPlanCheck(div);
       updateIdx();
     });
 
@@ -1400,6 +1482,8 @@
       if (selectedSym && info) {
         qtyEl.textContent = val * info.lot_size;
       }
+      // Validate lot count against the subscription plan (live)
+      scheduleCardPlanCheck(div);
     });
 
     // ── Trigger symbol change for pre-populated cards ─────────────
@@ -1438,6 +1522,73 @@
     });
   }
 
+  // ── Live per-card plan validation (symbol + lots) ──────────────
+  function scheduleCardPlanCheck(card) {
+    if (!card) return;
+    clearTimeout(card._planTimer);
+    card._planTimer = setTimeout(() => { validateCardPlan(card); }, 250);
+  }
+
+  async function validateCardPlan(card) {
+    const msgEl = card.querySelector('.symbol-card-msg');
+    const planAllowed = await cardPlanStatus(card);
+    if (!card.isConnected) return planAllowed;
+    if (planAllowed === true) {
+      msgEl.textContent = '';
+      msgEl.classList.remove('show');
+    } else {
+      msgEl.textContent = planAllowed;
+      msgEl.classList.add('show');
+    }
+    syncMultiSaveBtn();
+    return planAllowed;
+  }
+
+  // Returns true when valid/not applicable, or an error string.
+  async function cardPlanStatus(card) {
+    const sel = card.querySelector('.sc-symbol');
+    const lotsInput = card.querySelector('.sc-lots');
+    if (!sel || !lotsInput) return true;
+
+    const mode = currentExecMode();
+    if (mode === 'PAPER' || isAdminUser()) { lotsInput.removeAttribute('max'); return true; }
+
+    const symbol = (sel.value || '').trim().toUpperCase();
+    if (!symbol) { lotsInput.removeAttribute('max'); return true; }
+
+    const lots = parseInt(lotsInput.value) || 1;
+    const sub = await getSubscription();
+    const allowed = (sub && sub.allowed_symbols) || null;
+
+    if (!allowed || Object.keys(allowed).length === 0) {
+      lotsInput.removeAttribute('max');
+      return 'Semi Auto and Fully Automatic trading require an active subscription plan. Please subscribe to continue.';
+    }
+    if (!(symbol in allowed)) {
+      lotsInput.removeAttribute('max');
+      return `Your subscription plan does not include ${symbol}. Allowed: ${Object.keys(allowed).join(', ')}.`;
+    }
+    // Hard cap: the browser will not accept more than the plan limit.
+    lotsInput.max = String(allowed[symbol]);
+    if (lots > allowed[symbol]) {
+      return `Maximum lot limit for ${symbol} is ${allowed[symbol]} — your plan allows up to ${allowed[symbol]} lot(s). Saving is disabled.`;
+    }
+    return true;
+  }
+
+  // Disable "Save Multi-Symbol Config" while any card fails the plan check.
+  function syncMultiSaveBtn() {
+    const btn = document.getElementById('btn-save-multisymbol');
+    if (!btn) return;
+    const container = document.getElementById('extra-symbols-cards');
+    if (!container) return;
+    const invalid = Array.from(container.querySelectorAll('.symbol-card'))
+      .some(card => card.querySelector('.symbol-card-msg')?.classList.contains('show'));
+    btn.disabled = invalid;
+    btn.style.opacity = invalid ? '0.55' : '';
+    btn.style.cursor = invalid ? 'not-allowed' : '';
+  }
+
   // ── Remove a symbol card ───────────────────────────────────────
   function removeSymbolCard(btn) {
     const card = btn.closest('.symbol-card');
@@ -1456,6 +1607,7 @@
         }
       });
     }
+    syncMultiSaveBtn();
   }
 
   // ── Load multi-symbol config from backend ─────────────────────
@@ -1519,6 +1671,9 @@
     if (processedSyms.size === 0) {
       container.innerHTML = '<div class="muted center" style="padding:20px;grid-column:1/-1">No additional symbols configured. Click <b>+ Add Symbol</b> above to get started.</div>';
     }
+
+    // Validate loaded cards against the plan (live)
+    container.querySelectorAll('.symbol-card').forEach(card => scheduleCardPlanCheck(card));
   }
 
   // ── Save multi-symbol config ────────────────────────────────────
@@ -1554,11 +1709,9 @@
     // Plan gate for additional symbols: when trading live (Semi/Auto),
     // every additional symbol + lot count must be covered by the user's
     // subscription plan — mirrors the backend check_trading_permission.
-    let execMode = 'PAPER';
-    if (document.getElementById('mode-semi').checked) execMode = 'SEMI_AUTO';
-    else if (document.getElementById('mode-auto').checked) execMode = 'AUTO';
+    let execMode = currentExecMode();
     let planSymbols = null;
-    if (execMode !== 'PAPER') {
+    if (execMode !== 'PAPER' && !isAdminUser()) {
       const sub = await getSubscription();
       planSymbols = (sub && sub.allowed_symbols) || null;
       if (!planSymbols || Object.keys(planSymbols).length === 0) {
@@ -1614,8 +1767,8 @@
       }
 
       // Plan check: lot count must not exceed the plan's limit
-      if (planSymbols && lots > sub.allowed_symbols[symbol]) {
-        msgEl.textContent = `⚠️ Maximum lot limit for ${symbol} is ${sub.allowed_symbols[symbol]} — your plan allows up to ${sub.allowed_symbols[symbol]} lot(s).`;
+      if (planSymbols && lots > planSymbols[symbol]) {
+        msgEl.textContent = `⚠️ Maximum lot limit for ${symbol} is ${planSymbols[symbol]} — your plan allows up to ${planSymbols[symbol]} lot(s).`;
         msgEl.classList.add('show');
         valid = false;
         return;

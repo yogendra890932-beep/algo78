@@ -1314,6 +1314,65 @@ async def set_execution_mode(
     old_mode = None
     res = await db.execute(select(BotConfig).where(BotConfig.user_id == user.id))
     cfg = res.scalar_one_or_none()
+
+    # Gate switching to a live mode on the subscription plan. Without this a
+    # user could save over-plan lots while in PAPER and then flip straight to
+    # Semi-Auto / AUTO, bypassing the config-save validation.
+    from backend.db.models import UserRole
+
+    if user.role != UserRole.admin and mode_raw != ExecutionMode.PAPER.value:
+        from backend.db.models import SubscriptionStatus
+        from backend.services.subscription_service import (
+            get_current_subscription,
+            validate_plan_config,
+        )
+
+        sub = await get_current_subscription(db, user.id)
+        if sub is None:
+            raise HTTPException(
+                402,
+                "Semi Auto and Fully Automatic trading require an active subscription plan. "
+                "Please subscribe to continue.",
+            )
+        if sub.status == SubscriptionStatus.trial:
+            raise HTTPException(
+                402,
+                "Free trial only allows Paper Trading — Semi Auto and Fully Automatic "
+                "require a paid plan. Please subscribe to continue.",
+            )
+        if sub.status != SubscriptionStatus.active or sub.end_date < datetime.utcnow():
+            raise HTTPException(
+                402,
+                "Your subscription is not active — please renew to continue trading.",
+            )
+
+        main_symbol = (cfg.underlying_symbol if cfg else None) or "NIFTY"
+        main_lots = int((cfg.order_qty if cfg else 1) or 1)
+
+        additional = []
+        try:
+            extra_config = json.loads(
+                (cfg.extra_symbol_config if cfg else None) or "[]"
+            )
+        except Exception:
+            extra_config = []
+        if isinstance(extra_config, list):
+            for entry in extra_config:
+                if isinstance(entry, dict) and entry.get("symbol"):
+                    additional.append((
+                        str(entry["symbol"]).upper(),
+                        max(1, int(entry.get("lots", 1) or 1)),
+                    ))
+        for sym in ((cfg.extra_symbols if cfg else "") or "").split(","):
+            if sym.strip():
+                additional.append((sym.strip().upper(), main_lots))
+
+        ok, reason = await validate_plan_config(
+            db, sub, main_symbol, main_lots, additional
+        )
+        if not ok:
+            raise HTTPException(403, reason)
+
     if cfg:
         old_mode = (
             cfg.execution_mode.value
