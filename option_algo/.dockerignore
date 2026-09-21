@@ -1,0 +1,40 @@
+# Build context exclusions for the AlgoBot image.
+
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment / secrets — injected at runtime via env_file, never baked in
+.env
+.env.*
+!.env.example
+
+# Local database + logs
+*.db
+*.sqlite
+*.sqlite3
+logs/
+*.log
+
+# Runtime caches (mounted as named volumes by compose)
+candle_cache/
+uploads/
+instance/
+
+# OS / editor / docs noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+TODO.md

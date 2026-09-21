@@ -1,0 +1,119 @@
+# docker-compose.yml — production deployment for AlgoBot
+# ================================================================
+# Topology (mirrors scripts/run.sh + the two systemd units):
+#
+#   db     : PostgreSQL 16            — application database
+#   redis  : Redis 7                  — command queue / state / events
+#   init   : one-shot DB setup        — scripts/init_db.py (idempotent)
+#   web    : uvicorn backend.main:app — HTTP + WebSockets (stateless)
+#   worker : python worker.py         — live engines. EXACTLY ONE replica.
+#
+# Usage:
+#   cp .env.example .env        # then fill in secrets + Upstox/Razorpay keys
+#   docker compose up -d --build
+#   docker compose logs -f web worker
+#   open http://localhost:8000
+#
+# NOTE: DATABASE_URL / REDIS_URL from .env are intentionally OVERRIDDEN
+#       below to point at the compose service names (db / redis).
+#       Postgres credentials default to algo_bot/algo_bot — override by
+#       exporting POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB.
+# ================================================================
+
+name: algobot
+
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:-algo_bot}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-algo_bot}
+  POSTGRES_DB: ${POSTGRES_DB:-algo_bot}
+
+x-app-base: &app-base
+  image: algobot:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  environment:
+    # Override the localhost URLs from .env with in-network service names.
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-algo_bot}:${POSTGRES_PASSWORD:-algo_bot}@db:5432/${POSTGRES_DB:-algo_bot}
+    REDIS_URL: redis://redis:6379/0
+    TZ: Asia/Kolkata
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      <<: *postgres-env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algo_bot} -d ${POSTGRES_DB:-algo_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # One-shot: create/sync schema, seed plans/holidays, ensure admin user.
+  # Safe to re-run (scripts/init_db.py is idempotent). web/worker wait for it.
+  init:
+    <<: *app-base
+    restart: "no"
+    command: ["python", "scripts/init_db.py"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    <<: *app-base
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-level", "info"]
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - candle_cache:/app/candle_cache
+      - uploads:/app/uploads
+
+  # IMPORTANT: keep this at a single replica. worker.py holds the live
+  # SymbolEngine/BotThread instances and the Telegram engine registry in
+  # process memory — two workers would double-execute orders.
+  worker:
+    <<: *app-base
+    command: ["python", "worker.py"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - candle_cache:/app/candle_cache
+      - uploads:/app/uploads
+
+volumes:
+  pgdata:
+  redisdata:
+  candle_cache:
+  uploads:
