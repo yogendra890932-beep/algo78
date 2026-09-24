@@ -95,6 +95,15 @@ class SharedOptionPremiumBuilder:
 
         self._load_from_redis()
 
+        # A restored contract whose expiry has passed yields no market data.
+        # Purge it so the fresh selection below picks the current expiry
+        # instead of re-subscribing a dead token (empty premium chart).
+        if self._option_expired():
+            print(f"{_now()} [premium:{self.symbol}] Restored option "
+                  f"{self._trading_symbol} expired ({self._expiry_str}) — "
+                  f"forcing reselect")
+            self._reset_selection()
+
         # On restart the selected option is recovered from Redis, but its
         # token was never (re)subscribed to the freshly started global
         # streamer — without this, no option-premium ticks ever arrive and
@@ -161,11 +170,30 @@ class SharedOptionPremiumBuilder:
     # OPTION SELECTION / ROLLING
     # ================================================================
 
+    def _option_expired(self) -> bool:
+        """True when the currently selected contract's expiry is in the past.
+
+        The selected option is persisted in Redis and restored on restart.
+        A weekly contract saved yesterday is already expired today, and an
+        expired instrument returns no market data — so the premium chart
+        would sit on a dead token with zero bars. Detect that here so the
+        caller re-selects the current expiry instead of keeping the corpse.
+        """
+        if not self._instrument_key or not self._expiry_str:
+            return False
+        try:
+            import pandas as pd
+            from backend.engine.history_loader import now_ist
+            exp = pd.Timestamp(self._expiry_str).date()
+            return exp < now_ist().date()
+        except Exception:
+            return False
+
     def _maybe_roll_option(self) -> bool:
         """If the underlying direction flipped, switch to the new ITM option.
 
         Idempotent — no-op when the current option already matches the
-        direction-derived opt_type.
+        direction-derived opt_type AND has not expired.
         """
         df = SharedCandleBuilder.get_1m_df_from_redis(self.symbol)
         if df.empty or len(df) < 15:
@@ -177,7 +205,7 @@ class SharedOptionPremiumBuilder:
         direction = "BULL" if ef > es else "BEAR"
         opt_type = "CE" if direction == "BULL" else "PE"
 
-        if self._opt_type == opt_type and self._instrument_key:
+        if self._opt_type == opt_type and self._instrument_key and not self._option_expired():
             return False
 
         ltp = float(df["close"].iloc[-1])
@@ -459,6 +487,29 @@ class SharedOptionPremiumBuilder:
         pipe.hset(key, "strike", str(self._strike or ""))
         pipe.hset(key, "expiry_str", str(self._expiry_str))
         pipe.execute()
+
+    def _reset_selection(self):
+        """Drop the current option selection (in memory + Redis).
+
+        Used when the restored contract has expired: clearing everything
+        makes the next _maybe_roll_option() pick a fresh current-expiry
+        ITM option and rebuild the premium candle series from scratch.
+        """
+        with self._lock:
+            self._instrument_key = None
+            self._trading_symbol = None
+            self._opt_type = None
+            self._strike = None
+            self._expiry_str = ""
+            self._bars = []
+            self._cur = {}
+            self._cur_min = None
+        try:
+            self._r.delete(shared_premium_state(self.symbol))
+            self._r.delete(shared_premium_candles_1m(self.symbol))
+            self._r.delete(shared_premium_current_1m(self.symbol))
+        except Exception:
+            pass
 
     def _save_current_candle(self):
         """Persist the developing premium candle to Redis."""
