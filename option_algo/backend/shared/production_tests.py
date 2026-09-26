@@ -537,6 +537,99 @@ def test_plan_symbol_lot_gate():
 
 
 # ================================================================
+# TEST 13: Global admin gate for FULLY AUTOMATIC (AUTO) mode
+# ================================================================
+
+def test_auto_trading_gate():
+    print("\n=== Test: Global admin AUTO trading gate ===")
+
+    models = _read_src("backend/db/models.py")
+    if "class PlatformSettings" in models and "auto_trading_enabled" in models:
+        _ok("PlatformSettings model with auto_trading_enabled exists")
+    else:
+        _fail("PlatformSettings model missing")
+    if "default=False" in models.split("class PlatformSettings", 1)[-1]:
+        _ok("PlatformSettings.auto_trading_enabled defaults to False (fail-safe)")
+    else:
+        _fail("PlatformSettings default is not False")
+
+    svc = _read_src("backend/services/platform_settings.py")
+    for fn in ("get_platform_settings", "is_auto_enabled_async", "is_auto_enabled_sync"):
+        if f"def {fn}" in svc:
+            _ok(f"platform_settings.{fn} exists")
+        else:
+            _fail(f"platform_settings.{fn} missing")
+    if "return False" in svc and "treating AUTO as disabled" in svc:
+        _ok("platform_settings accessors fail safe to disabled")
+    else:
+        _fail("platform_settings fail-safe behaviour missing")
+
+    router = _read_src("backend/routers/all_routers.py")
+    if '@admin_router.get("/platform-settings")' in router and \
+            '@admin_router.put("/platform-settings")' in router:
+        _ok("admin GET/PUT /platform-settings endpoints exist")
+    else:
+        _fail("admin platform-settings endpoints missing")
+    if _has_function_with_code(router, "update_config", "is_auto_enabled_async"):
+        _ok("update_config blocks AUTO when disabled")
+    else:
+        _fail("update_config missing AUTO gate")
+    if _has_function_with_code(router, "set_execution_mode", "is_auto_enabled_async"):
+        _ok("set_execution_mode blocks AUTO when disabled")
+    else:
+        _fail("set_execution_mode missing AUTO gate")
+    if "auto_trading_enabled" in router:
+        _ok("get_config exposes auto_trading_enabled")
+    else:
+        _fail("get_config does not expose auto_trading_enabled")
+
+    bcb = _read_src("backend/services/bot_config_builder.py")
+    if _has_function_with_code(bcb, "resolve_start_inputs", "ExecutionMode.SEMI_AUTO"):
+        _ok("bot start downgrades stored AUTO to SEMI_AUTO when disabled")
+    else:
+        _fail("bot start AUTO downgrade missing")
+    if 'config["is_admin"]' in bcb:
+        _ok("engine config carries is_admin for the runtime safety net")
+    else:
+        _fail("config is_admin flag missing")
+
+    engine = _read_src("backend/engine/engine_v6.py")
+    if _has_function_with_code(engine, "_route_via_execution_layer", "is_auto_enabled_sync"):
+        _ok("legacy engine has runtime AUTO safety net")
+    else:
+        _fail("legacy engine runtime AUTO net missing")
+
+    shared = _read_src("backend/shared/user_execution_manager.py")
+    if _has_function_with_code(shared, "_execute_auto", "is_auto_enabled_sync"):
+        _ok("shared manager has runtime AUTO safety net")
+    else:
+        _fail("shared manager runtime AUTO net missing")
+
+    page = _read_src("frontend/templates/settings.html")
+    for token in ("auto-disabled-note", "applyAutoGate", "auto_trading_enabled"):
+        if token in page:
+            _ok(f"settings page handles {token}")
+        else:
+            _fail(f"settings page missing {token}")
+    if "autoRadio.disabled = !allowed" in page:
+        _ok("settings page disables the AUTO radio when gated")
+    else:
+        _fail("settings page does not disable the AUTO radio")
+
+    admin_page = _read_src("frontend/templates/admin.html")
+    if "/api/admin/platform-settings" in admin_page and "ps-auto-enabled" in admin_page:
+        _ok("admin page has the Platform Controls toggle")
+    else:
+        _fail("admin page Platform Controls missing")
+
+    initdb = _read_src("scripts/init_db.py")
+    if "PlatformSettings(id=1" in initdb:
+        _ok("init_db seeds the PlatformSettings singleton row")
+    else:
+        _fail("init_db does not seed PlatformSettings")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -562,6 +655,7 @@ def run_all_tests():
     test_plan_symbol_picker()
     test_main_symbol_options()
     test_plan_symbol_lot_gate()
+    test_auto_trading_gate()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

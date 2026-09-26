@@ -2443,6 +2443,19 @@ class SymbolEngine:
         exec_mode = self.cfg.get("execution_mode", "PAPER")
         mode = exec_mode.upper() if exec_mode else "PAPER"
 
+        # Runtime safety net: if the admin disabled FULLY AUTO while bots
+        # are running, downgrade this entry to SEMI_AUTO (approval-gated)
+        # instead of firing unattended. Admins are exempt.
+        if mode == "AUTO" and not self.cfg.get("is_admin", False):
+            try:
+                from backend.services.platform_settings import is_auto_enabled_sync
+                if not is_auto_enabled_sync():
+                    print(_now(), f"[{self.symbol}] AUTO disabled by admin — "
+                          f"routing to SEMI_AUTO")
+                    mode = "SEMI_AUTO"
+            except Exception:
+                mode = "SEMI_AUTO"
+
         if mode == "PAPER":
             # Route via execution layer - sync (worker thread context)
             try:

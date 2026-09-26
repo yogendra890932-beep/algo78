@@ -807,3 +807,23 @@ class CampaignSettings(Base):
     campaign_end_date: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
     )
+
+
+class PlatformSettings(Base):
+    """
+    Singleton row (id=1) of platform-wide trading toggles, DB-backed so
+    an admin can change them without a redeploy (same philosophy as
+    BillingSettings/ExchangeHoliday). Defaults are fail-safe: AUTO
+    trading is disabled until an admin explicitly enables it.
+    """
+
+    __tablename__ = "platform_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Gate for the fully-automatic (AUTO) execution mode across all
+    # users. While false, AUTO cannot be selected, saved, or run; bot
+    # start downgrades any stored AUTO config to SEMI_AUTO.
+    auto_trading_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

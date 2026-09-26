@@ -152,6 +152,26 @@
   }
 </style>
 
+<!-- Platform Controls -->
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <h2 style="margin:0">Platform Controls</h2>
+    <button onclick="loadPlatformSettings()" class="abtn">↻ Refresh</button>
+  </div>
+  <p class="muted" style="font-size:12.5px;margin:-4px 0 12px">
+    Global switches that apply to every user. FULLY AUTOMATIC trading is off by default and can be enabled here later.
+  </p>
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600">
+      <input type="checkbox" id="ps-auto-enabled" style="width:16px;height:16px">
+      Allow Fully Automatic (AUTO) trading
+    </label>
+    <span id="ps-auto-state" class="muted" style="font-size:12px">—</span>
+    <button onclick="savePlatformSettings()" class="abtn success" id="ps-save">Save</button>
+  </div>
+  <div id="ps-msg" style="margin-top:8px;font-size:12.5px"></div>
+</div>
+
 <!-- Users List -->
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -752,6 +772,57 @@ function switchAuditTab(panelId, tabEl) {
   document.getElementById('panel-' + panelId).classList.add('active');
 }
 
+function setPsMsg(txt, kind) {
+  const el = document.getElementById('ps-msg');
+  if (!el) return;
+  el.textContent = txt || '';
+  el.style.color = kind === 'error' ? 'var(--red, #ef4444)'
+    : kind === 'success' ? 'var(--green, #22c55e)' : '';
+}
+
+async function loadPlatformSettings() {
+  const cb = document.getElementById('ps-auto-enabled');
+  const state = document.getElementById('ps-auto-state');
+  try {
+    const r = await apiFetch('/api/admin/platform-settings');
+    if (!r || !r.ok) throw new Error('load failed');
+    const d = await r.json();
+    cb.checked = !!d.auto_trading_enabled;
+    if (state) state.textContent = d.auto_trading_enabled
+      ? 'AUTO currently ENABLED' : 'AUTO currently DISABLED';
+  } catch (e) {
+    if (state) state.textContent = 'Failed to load';
+  }
+}
+
+async function savePlatformSettings() {
+  const cb = document.getElementById('ps-auto-enabled');
+  const btn = document.getElementById('ps-save');
+  const enabled = !!cb.checked;
+  if (!enabled && !confirm(
+    'Disable FULLY AUTOMATIC trading for all users?\n\n' +
+    'Running AUTO bots will switch to approval-gated Semi Auto on their next entry, ' +
+    'and users can no longer select AUTO.'
+  )) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await apiFetch('/api/admin/platform-settings', {
+      method: 'PUT', body: JSON.stringify({ auto_trading_enabled: enabled })
+    });
+    if (r && r.ok) {
+      setPsMsg(enabled ? '✅ Fully Automatic trading ENABLED'
+        : '✅ Fully Automatic trading DISABLED', 'success');
+      loadPlatformSettings();
+    } else {
+      let detail = 'Failed to save';
+      try { const j = await r.json(); if (j && j.detail) detail = j.detail; } catch (e) {}
+      setPsMsg('❌ ' + detail, 'error');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function loadAll() { loadStats(); loadUsers(); loadHolidays(); loadStreamerTokens(); }
 function loadCompliance() { refreshAuditLogs(); loadAdminConsentHistory(); }
 
@@ -759,6 +830,7 @@ function loadCompliance() { refreshAuditLogs(); loadAdminConsentHistory(); }
     const ok = await checkAdminAccess();
     if (!ok) return;   // already redirected
     loadAll();
+    loadPlatformSettings();
     loadCompliance();
     setInterval(loadAll, 20000);
   });

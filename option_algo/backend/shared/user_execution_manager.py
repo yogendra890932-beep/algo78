@@ -59,13 +59,16 @@ class UserExecutionManager:
         self.on_status_change = on_status_change
         self.on_trade = on_trade
 
-        # Shared mode is paper-only for now — live order placement is
-        # not implemented (see _place_order). paper_mode is therefore
-        # always True; execution_mode (from config) only controls how
-        # signals are routed (PAPER and SEMI_AUTO = approval-paper,
-        # AUTO = auto-paper with daily-consent check).
-        self.paper_mode = True
+        # Execution mode is the single source of truth for paper vs live
+        # (mirrors legacy engine_v6). PAPER — and trial users, which
+        # bot_config_builder pins to paper_mode=True — route to the paper
+        # book; SEMI_AUTO and AUTO place real Upstox orders (SEMI_AUTO
+        # waits for user approval, AUTO fires immediately after the
+        # daily-consent check).
         self.execution_mode = config.get("execution_mode", "PAPER")
+        self.paper_mode = bool(
+            config.get("paper_mode", self.execution_mode == "PAPER")
+        )
         self.symbol = config.get("underlying_symbol", "NIFTY")
         self.symbols: set[str] = {self.symbol.upper()}
 
@@ -363,9 +366,13 @@ class UserExecutionManager:
     def _route_execution(self, signal: dict):
         """Route signal to Paper / Semi-Auto / Auto execution.
 
-        Shared mode executes everything in paper; execution_mode decides
-        whether paper trades wait for approval (PAPER and SEMI_AUTO), or
-        are placed immediately with a daily-consent gate (AUTO).
+        execution_mode decides how a signal is handled:
+          - PAPER     → pending trade, fills in the paper book on approval
+          - SEMI_AUTO → pending trade, places a LIVE order on approval
+          - AUTO      → places a LIVE order immediately (after the
+                        daily-consent check)
+        Trial users are pinned to paper_mode=True by
+        bot_config_builder, so any mode fills in the paper book for them.
         """
         execution_mode = self.execution_mode
         print(f"{_now()} [exec:u{self.user_id}] Route signal → mode={execution_mode}")
@@ -517,9 +524,25 @@ class UserExecutionManager:
             print(f"{_now()} [exec:u{self.user_id}] Semi-auto err: {e}")
 
     def _execute_auto(self, signal: dict):
-        """Execute automatically — shared mode takes the paper trade
-        immediately, no approval step (mirrors legacy AUTO semantics:
-        consent is required and enforced; see bot_config_builder)."""
+        """Execute automatically — no approval step.
+
+        Paper mode takes the paper trade immediately (mirrors legacy
+        AUTO semantics: consent is required and enforced; see
+        bot_config_builder). Non-paper modes place a real Upstox order
+        immediately through the same approved-trade path used by
+        SEMI_AUTO, so plan gating and SL anchoring are identical.
+        """
+        # Runtime safety net: if the admin disabled AUTO while bots are
+        # running, route this entry to approval-gated SEMI_AUTO instead of
+        # firing unattended. Admins are exempt so they can always test.
+        if not self.config.get("is_admin", False):
+            from backend.services.platform_settings import is_auto_enabled_sync
+            if not is_auto_enabled_sync():
+                print(f"{_now()} [exec:u{self.user_id}] AUTO disabled by admin "
+                      f"— routing to SEMI_AUTO pending")
+                self._execute_semi_auto(signal)
+                return
+
         from backend.db.database import get_sync_session
         from backend.db.models import DailyAutoConsent
         from sqlalchemy import select as _select
@@ -557,10 +580,44 @@ class UserExecutionManager:
                 })
             return
 
-        self._execute_paper(signal)
-        print(f"{_now()} [exec:u{self.user_id}] AUTO ENTRY (paper) "
-              f"{signal.get('symbol')} {signal.get('strategy')} "
-              f"@ {signal.get('entry_price')} qty={signal.get('quantity')}")
+        if self.paper_mode:
+            self._execute_paper(signal)
+            print(f"{_now()} [exec:u{self.user_id}] AUTO ENTRY (paper) "
+                  f"{signal.get('symbol')} {signal.get('strategy')} "
+                  f"@ {signal.get('entry_price')} qty={signal.get('quantity')}")
+            return
+
+        # Live AUTO: place a real market BUY + exchange SL-M immediately
+        # via the shared approved-trade path (quantity, plan gate, SL
+        # from the actual fill, Telegram + snapshot notifications).
+        from backend.services.execution_layer import (
+            TradeSignal, place_order_from_engines,
+        )
+        entry_price = signal.get("entry_price", 0)
+        sl_pct = float(self.config.get("sl_pct", 0.003) or 0.003)
+        stop_loss = round(entry_price * (1 - sl_pct), 2) \
+            if entry_price else signal.get("stop_loss", 0)
+        trade_signal = TradeSignal(
+            symbol=signal.get("symbol", ""),
+            opt_type=signal.get("opt_type", "CE"),
+            direction="BUY",
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            quantity=signal.get("quantity", 0),
+            strategy_name=signal.get("strategy", ""),
+            instrument_key=signal.get("instrument_key") or "",
+            trading_symbol=signal.get("trading_symbol") or signal.get("symbol"),
+            strike=signal.get("strike"),
+        )
+        eid = place_order_from_engines(
+            self.user_id, self._engine_wrappers(), trade_signal)
+        if eid:
+            print(f"{_now()} [exec:u{self.user_id}] AUTO ENTRY (live) "
+                  f"{signal.get('symbol')} {signal.get('strategy')} "
+                  f"qty={signal.get('quantity')} order={eid}")
+        else:
+            print(f"{_now()} [exec:u{self.user_id}] AUTO live entry failed "
+                  f"{signal.get('symbol')} {signal.get('strategy')}")
 
     # ================================================================
     # POSITION MONITORING (SL / target auto-exit)
@@ -1012,7 +1069,8 @@ class UserExecutionManager:
     def _place_order_live(self, side: str, qty: int,
                           order_type: str = "MARKET",
                           trigger: float = 0,
-                          instrument_key: str = None) -> Optional[str]:
+                          instrument_key: str = None,
+                          symbol: str = None) -> Optional[str]:
         """Place a live order via Upstox (mirrors legacy _place_order)."""
         if not instrument_key:
             return None
@@ -1024,7 +1082,7 @@ class UserExecutionManager:
             )
             lots = max(1, int(self.config.get("order_qty", 1)))
             allowed, reason = check_trading_permission_sync(
-                self.user_id, self.symbol, lots)
+                self.user_id, symbol or self.symbol, lots)
             if not allowed:
                 print(f"{_now()} [exec:u{self.user_id}] LIVE entry blocked "
                       f"by plan check: {reason}")
@@ -1405,19 +1463,24 @@ class _MockEngine:
         pos = self.position
         return (pos or {}).get("expiry", "")
 
-    # ── Order placement (paper mode — same path as _execute_paper) ─
+    # ── Order placement (paper book or live broker) ───────────────
 
     def _place_order(self, side: str, qty: int, order_type: str = "MARKET",
                      trigger: float = None,
                      instrument_key: str = None) -> Optional[str]:
-        if not self.paper_mode:
-            raise NotImplementedError(
-                "Live order placement is not available in shared mode")
-        from backend.services.paper_trading import get_paper_book
-        paper = get_paper_book(self._mgr.user_id)
         ik = (instrument_key
               or (self.position or {}).get("instrument_key")
               or self.cfg.get("underlying_token", ""))
+        if not self.paper_mode:
+            # Live path (mirrors legacy engine_v6._place_order): send a
+            # real Upstox order and return the broker order id.
+            return self._mgr._place_order_live(
+                side, qty, order_type=order_type,
+                trigger=trigger or 0, instrument_key=ik,
+                symbol=self.symbol,
+            )
+        from backend.services.paper_trading import get_paper_book
+        paper = get_paper_book(self._mgr.user_id)
         ltp = self._mgr._last_ltp.get(self.symbol, 0)
         # Approved semi-auto trades must fill at the CURRENT market price
         # (not the stale signal-time entry). Pull the freshest LTP for the
@@ -1452,6 +1515,8 @@ class _MockEngine:
             pass
 
     def _get_fill_price(self, order_id: str) -> Optional[float]:
+        if not self.paper_mode:
+            return self._mgr._get_fill_price_live(order_id)
         from backend.services.paper_trading import get_paper_book
         order = get_paper_book(self._mgr.user_id).get_order(order_id)
         if not order:

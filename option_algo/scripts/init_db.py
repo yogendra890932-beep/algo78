@@ -16,6 +16,7 @@ from backend.db.models import (
     SubscriptionPlan,
     SubscriptionPlanSymbol,
     BillingSettings,
+    PlatformSettings,
 )
 from backend.services.auth_service import hash_password
 from backend.config import get_settings
@@ -265,6 +266,18 @@ async def seed_default_plans():
             )
         else:
             print("  ℹ️  Billing settings already configured")
+
+        platform_row = (
+            await db.execute(
+                select(PlatformSettings).where(PlatformSettings.id == 1)
+            )
+        ).scalar_one_or_none()
+        if not platform_row:
+            db.add(PlatformSettings(id=1, auto_trading_enabled=False))
+            await db.commit()
+            print("  ✅ Seeded platform settings (AUTO trading disabled)")
+        else:
+            print("  ℹ️  Platform settings already configured")
 
 
 async def main():

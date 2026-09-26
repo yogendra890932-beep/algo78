@@ -156,6 +156,10 @@
         </span>
       </label>
     </div>
+    <div id="auto-disabled-note" class="warn" style="display:none">
+      🔒 <b>Fully Automatic trading is currently disabled by the administrator.</b>
+      Please use Semi Auto or Paper. It will become selectable again once the admin enables it.
+    </div>
     <div id="auto-warning" class="warn" style="display:none">
       ⚠️ <b>Fully Automatic mode places real orders without per-trade confirmation.</b>
       Daily Risk Disclosure must be accepted before auto-trading starts each trading day.
@@ -777,25 +781,30 @@
 
     // Execution mode (PAPER / SEMI_AUTO / AUTO)
     const execMode = c.execution_mode || (c.paper_mode !== false ? 'PAPER' : 'AUTO');
-    if (execMode === 'PAPER') {
+    _autoTradingEnabled = (c.auto_trading_enabled !== false);
+    // If the admin has AUTO disabled, show the stored AUTO config as
+    // Semi Auto (the backend downgrades it at bot start too).
+    const effectiveMode = (execMode === 'AUTO' && !autoGateActive()) ? 'SEMI_AUTO' : execMode;
+    if (effectiveMode === 'PAPER') {
       document.getElementById('mode-paper').checked = true;
-    } else if (execMode === 'SEMI_AUTO') {
+    } else if (effectiveMode === 'SEMI_AUTO') {
       document.getElementById('mode-semi').checked = true;
     } else {
       document.getElementById('mode-auto').checked = true;
     }
 
-    document.getElementById('auto-warning').style.display = (execMode === 'AUTO') ? 'block' : 'none';
+    document.getElementById('auto-warning').style.display = (effectiveMode === 'AUTO') ? 'block' : 'none';
 
     // Show/hide risk disclosure and compliance cards
     const disclosureCard = document.getElementById('risk-disclosure-card');
-    if (disclosureCard) disclosureCard.style.display = (execMode === 'AUTO') ? '' : 'none';
+    if (disclosureCard) disclosureCard.style.display = (effectiveMode === 'AUTO') ? '' : 'none';
     const complianceCard = document.getElementById('compliance-card');
-    if (complianceCard) complianceCard.style.display = (execMode === 'AUTO') ? '' : 'none';
-    if (execMode === 'AUTO') {
+    if (complianceCard) complianceCard.style.display = (effectiveMode === 'AUTO') ? '' : 'none';
+    if (effectiveMode === 'AUTO') {
       loadDisclosureStatus();
       loadConsentHistory();
     }
+    applyAutoGate();
 
     // Telegram
     document.getElementById('tg-token').value = c.telegram_bot_token || '';
@@ -1056,6 +1065,42 @@
     return (localStorage.getItem('role') || '').toLowerCase() === 'admin';
   }
 
+  // Global admin gate for FULLY AUTOMATIC trading. Set from the config
+  // response (`auto_trading_enabled`). Default true so a missing field
+  // never hides the option; the backend still enforces the real gate.
+  let _autoTradingEnabled = true;
+
+  function autoGateActive() {
+    return !(_autoTradingEnabled === false && !isAdminUser());
+  }
+
+  function applyAutoGate() {
+    const autoRadio = document.getElementById('mode-auto');
+    if (!autoRadio) return;
+    const allowed = autoGateActive();
+    const label = autoRadio.closest('label');
+    if (label) {
+      label.style.opacity = allowed ? '' : '0.5';
+      label.style.cursor = allowed ? '' : 'not-allowed';
+    }
+    autoRadio.disabled = !allowed;
+    const note = document.getElementById('auto-disabled-note');
+    if (note) note.style.display = allowed ? 'none' : 'block';
+    if (!allowed) {
+      if (autoRadio.checked) {
+        autoRadio.checked = false;
+        const semi = document.getElementById('mode-semi');
+        if (semi) semi.checked = true;
+      }
+      const aw = document.getElementById('auto-warning');
+      if (aw) aw.style.display = 'none';
+      const dc = document.getElementById('risk-disclosure-card');
+      if (dc) dc.style.display = 'none';
+      const cc = document.getElementById('compliance-card');
+      if (cc) cc.style.display = 'none';
+    }
+  }
+
   let _qtyPlanTimer = 0;
   function scheduleLotPlanCheck() {
     clearTimeout(_qtyPlanTimer);
@@ -1109,6 +1154,13 @@
     let execMode = 'PAPER';
     if (document.getElementById('mode-semi').checked) execMode = 'SEMI_AUTO';
     else if (document.getElementById('mode-auto').checked) execMode = 'AUTO';
+
+    if (execMode === 'AUTO' && !autoGateActive()) {
+      showMsg('mode-msg',
+        '🔒 Fully Automatic trading is currently disabled by the administrator. Please choose Semi Auto or Paper.',
+        'error');
+      return;
+    }
 
     if (execMode !== 'PAPER' && await isTrialUser()) {
       showMsg('mode-msg',

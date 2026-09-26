@@ -210,6 +210,30 @@ async def resolve_start_inputs(
         return None, None, "Bot config not found"
 
     exec_mode = _normalize_execution_mode(cfg)
+
+    # Global AUTO gate: when the admin has FULLY AUTOMATIC trading
+    # disabled, silently downgrade a stored AUTO config to SEMI_AUTO for
+    # non-admin users (live, but every entry waits for manual approval)
+    # and persist it so the UI/worker reflect the change.
+    if exec_mode == ExecutionMode.AUTO.value and user.role != UserRole.admin:
+        from backend.services.platform_settings import is_auto_enabled_async
+        async with AsyncSessionLocal() as ps_db:
+            auto_enabled = await is_auto_enabled_async(ps_db)
+        if not auto_enabled:
+            async with AsyncSessionLocal() as dg_db:
+                dres = await dg_db.execute(
+                    select(BotConfig).where(BotConfig.user_id == user.id)
+                )
+                dcfg = dres.scalar_one_or_none()
+                if dcfg is not None:
+                    dcfg.execution_mode = ExecutionMode.SEMI_AUTO
+                    dcfg.paper_mode = False
+                    dg_db.add(dcfg)
+                    await dg_db.commit()
+            print(f"[bot_config_builder] AUTO disabled by admin — "
+                  f"downgraded user {user.id} to SEMI_AUTO")
+            exec_mode = ExecutionMode.SEMI_AUTO.value
+
     if exec_mode == ExecutionMode.AUTO.value:
         async with AsyncSessionLocal() as consent_db:
             res = await consent_db.execute(
@@ -266,6 +290,9 @@ async def resolve_start_inputs(
         return None, None, f"Failed to decrypt Upstox token: {e}"
 
     config = build_config_dict(cfg)
+    # Expose admin status to the engine so the runtime AUTO safety net
+    # can exempt admins (they may always run FULLY AUTO for testing).
+    config["is_admin"] = user.role == UserRole.admin
     if force_paper:
         # Trial users: paper trading only, regardless of their saved
         # BotConfig.paper_mode — enforced once here since paper_mode

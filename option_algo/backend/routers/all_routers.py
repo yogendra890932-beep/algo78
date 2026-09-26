@@ -372,6 +372,10 @@ async def get_config(
         getattr(cfg, "custom_lot_sizes", None) if user.role == UserRole.admin else None
     )
     result["extra_symbol_config"] = getattr(cfg, "extra_symbol_config", None)
+    # Global AUTO gate — surfaced so the Settings page can disable the
+    # Fully Automatic option for non-admins when it is off.
+    from backend.services.platform_settings import is_auto_enabled_async
+    result["auto_trading_enabled"] = await is_auto_enabled_async(db)
     return result
 
 
@@ -493,6 +497,15 @@ async def update_config(
             if getattr(cfg, "execution_mode", None) is not None
             else ExecutionMode.PAPER.value
         )
+
+        if eff_mode == ExecutionMode.AUTO.value:
+            from backend.services.platform_settings import is_auto_enabled_async
+            if not await is_auto_enabled_async(db):
+                raise HTTPException(
+                    403,
+                    "Fully Automatic trading is currently disabled by the "
+                    "administrator. Please use Semi Auto or Paper.",
+                )
 
         if eff_mode != ExecutionMode.PAPER.value:
             sub = await get_current_subscription(db, user.id)
@@ -1086,6 +1099,57 @@ async def admin_stats(
 
 
 # ================================================================
+# ADMIN — PLATFORM CONTROLS (global execution-mode gate)
+# ================================================================
+
+class PlatformSettingsIn(BaseModel):
+    auto_trading_enabled: bool
+
+
+@admin_router.get("/platform-settings")
+async def get_platform_settings_api(
+    admin=Depends(get_admin_user), db: AsyncSession = Depends(get_db)
+):
+    from backend.services.platform_settings import get_platform_settings
+
+    row = await get_platform_settings(db)
+    return {
+        "auto_trading_enabled": bool(row.auto_trading_enabled),
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@admin_router.put("/platform-settings")
+async def update_platform_settings_api(
+    body: PlatformSettingsIn,
+    admin=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from backend.services import platform_settings as ps
+    from backend.services.audit_log import log_event
+
+    row = await ps.get_platform_settings(db)
+    before = bool(row.auto_trading_enabled)
+    row.auto_trading_enabled = bool(body.auto_trading_enabled)
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    # Drop the local cache so this process serves the new value at once;
+    # worker processes pick it up when their short TTL expires.
+    ps.refresh()
+    try:
+        await log_event(
+            db, admin.id, "auto_trading_setting_changed",
+            f"AUTO trading {'ENABLED' if row.auto_trading_enabled else 'DISABLED'} by admin",
+            metadata={"before": before, "after": bool(row.auto_trading_enabled)},
+        )
+        await db.commit()
+    except Exception as e:
+        print(f"[platform_settings] audit log failed: {e}")
+    return {"ok": True, "auto_trading_enabled": bool(row.auto_trading_enabled)}
+
+
+# ================================================================
 # ADMIN — EXCHANGE HOLIDAYS & STREAMER SYMBOL TOKENS
 #
 # Admin-only CRUD. Reads are consumed automatically by the engine/
@@ -1321,6 +1385,16 @@ async def set_execution_mode(
     from backend.db.models import UserRole
 
     if user.role != UserRole.admin and mode_raw != ExecutionMode.PAPER.value:
+        # Global AUTO gate: when the admin has AUTO disabled, users can
+        # still choose PAPER or SEMI_AUTO but not FULLY AUTO.
+        if mode_raw == ExecutionMode.AUTO.value:
+            from backend.services.platform_settings import is_auto_enabled_async
+            if not await is_auto_enabled_async(db):
+                raise HTTPException(
+                    403,
+                    "Fully Automatic trading is currently disabled by the "
+                    "administrator. Please use Semi Auto or Paper.",
+                )
         from backend.db.models import SubscriptionStatus
         from backend.services.subscription_service import (
             get_current_subscription,
