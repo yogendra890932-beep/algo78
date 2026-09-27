@@ -722,6 +722,70 @@ def test_tick_size_rounding():
 
 
 # ================================================================
+# TEST 15: Strategy codenames in settings + engine normalisation
+# ================================================================
+
+def test_strategy_codenames():
+    print("\n=== Test: Strategy codenames ===")
+
+    page = _read_src("frontend/templates/settings.html")
+    if "Strategy Codenames" in page:
+        _ok("settings has a Strategy Codenames legend card")
+    else:
+        _fail("settings Strategy Codenames card missing")
+
+    codenames = {
+        "Gold": "Trend Follow",
+        "Diamond": "Pullback",
+        "Silver": "Breakout",
+        "Platinum": "VWAP Bounce",
+        "Bronze": "EMA Cross",
+        "Titanium": "VCGB",
+        "Obsidian": "Unified Structure",
+    }
+    for code, strategy in codenames.items():
+        if code in page and strategy in page:
+            _ok(f"legend maps {code} -> {strategy}")
+        else:
+            _fail(f"legend missing {code} / {strategy}")
+
+    options = ['value="all"', 'value="pullback"', 'value="breakout"',
+               'value="trend_follow"', 'value="vwap_bounce"',
+               'value="ema_cross"', 'value="vcgb"']
+    for opt in options:
+        if opt in page:
+            _ok(f"dropdown has option {opt}")
+        else:
+            _fail(f"dropdown missing option {opt}")
+
+    if 'value="both"' not in page and "Liquidity Sweep" not in page:
+        _ok("legacy both/liquidity dropdown options removed")
+    else:
+        _fail("legacy dropdown options still present")
+
+    if "stratAliases" in page and "both: 'all'" in page:
+        _ok("loadConfig normalises legacy strategy values")
+    else:
+        _fail("loadConfig legacy strategy normalisation missing")
+
+    engine = _read_src("backend/engine/engine_v6.py")
+    if "_strategy_aliases" in engine and "run_all" in engine:
+        _ok("engine normalises strategy aliases and has a run-all flag")
+    else:
+        _fail("engine strategy normalisation missing")
+    if '"both": "all"' in engine and '"liquidity": "all"' in engine:
+        _ok("engine treats both/liquidity as all strategies")
+    else:
+        _fail("engine does not map both/liquidity to all")
+    for key in ("trend_follow", "pullback", "breakout",
+                "vwap_bounce", "ema_cross", "vcgb"):
+        if f'cfg_strategy == "{key}"' in engine:
+            _ok(f"engine can run {key} alone")
+        else:
+            _fail(f"engine gating missing single {key} branch")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -749,6 +813,7 @@ def run_all_tests():
     test_plan_symbol_lot_gate()
     test_auto_trading_gate()
     test_tick_size_rounding()
+    test_strategy_codenames()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

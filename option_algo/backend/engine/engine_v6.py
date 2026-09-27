@@ -1366,17 +1366,24 @@ class SymbolEngine:
         if not allowed:
             return
         cfg_strategy = self.cfg.get("strategy", "all")
-        if "trend_follow" in allowed and cfg_strategy in ("trend",    "all", "both"):
+        # Normalise legacy / codename values so old saved configs keep
+        # working: both|all|liquidity -> every strategy; trend -> Gold;
+        # vwap -> Platinum.
+        _strategy_aliases = {"both": "all", "liquidity": "all", "": "all",
+                             "trend": "trend_follow", "vwap": "vwap_bounce"}
+        cfg_strategy = _strategy_aliases.get(cfg_strategy, cfg_strategy)
+        run_all = cfg_strategy == "all"
+        if "trend_follow" in allowed and (run_all or cfg_strategy == "trend_follow"):
             self._eval_trend_follow()
-        if "pullback"    in allowed and cfg_strategy in ("pullback",  "all", "both"):
+        if "pullback"    in allowed and (run_all or cfg_strategy == "pullback"):
             self._eval_pullback()
-        if "breakout"    in allowed and cfg_strategy in ("breakout",  "all", "both"):
+        if "breakout"    in allowed and (run_all or cfg_strategy == "breakout"):
             self._eval_breakout()
-        if "vwap_bounce" in allowed and cfg_strategy in ("vwap",      "all"):
+        if "vwap_bounce" in allowed and (run_all or cfg_strategy == "vwap_bounce"):
             self._eval_vwap_bounce()
-        if "ema_cross"   in allowed and cfg_strategy in ("ema_cross", "all"):
+        if "ema_cross"   in allowed and (run_all or cfg_strategy == "ema_cross"):
             self._eval_ema_cross()
-        if "vcgb"        in allowed and cfg_strategy in ("vcgb",      "all"):
+        if "vcgb"        in allowed and (run_all or cfg_strategy == "vcgb"):
             self._eval_vcgb()
 
         # ── Step 3: Unified structure-based strategy ──────────────

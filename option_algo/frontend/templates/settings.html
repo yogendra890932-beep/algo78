@@ -249,10 +249,13 @@
       </label>
       <label>Strategy
         <select id="c-strategy" class="inp">
-          <option value="both">All Strategies</option>
-          <option value="pullback">Pullback only</option>
-          <option value="breakout">Breakout only</option>
-          <option value="liquidity">Liquidity Sweep only</option>
+          <option value="all">All Strategies</option>
+          <option value="pullback">Diamond (Pullback only)</option>
+          <option value="breakout">Silver (Breakout only)</option>
+          <option value="trend_follow">Gold (Trend Follow only)</option>
+          <option value="vwap_bounce">Platinum (VWAP Bounce only)</option>
+          <option value="ema_cross">Bronze (EMA Cross only)</option>
+          <option value="vcgb">Titanium (VCGB only)</option>
         </select>
       </label>
       <label>Number of Lots
@@ -347,6 +350,27 @@
       font-weight: 700;
     }
   </style>
+
+  <!-- Strategy Codenames -->
+  <div class="card">
+    <h2>Strategy Codenames</h2>
+    <p class="muted" style="font-size:12.5px;margin:-4px 0 12px">
+      Every strategy has a codename. Pick one from the Strategy dropdown above, or
+      choose "All Strategies" to run all of them.
+    </p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px">
+      <div class="lot-row"><span class="lot-sym" style="color:#fbbf24;font-weight:700">Gold</span><span class="lot-val" style="color:var(--muted);font-weight:400">Trend Follow</span></div>
+      <div class="lot-row"><span class="lot-sym" style="color:#7dd3fc;font-weight:700">Diamond</span><span class="lot-val" style="color:var(--muted);font-weight:400">Pullback</span></div>
+      <div class="lot-row"><span class="lot-sym" style="color:#cbd5e1;font-weight:700">Silver</span><span class="lot-val" style="color:var(--muted);font-weight:400">Breakout</span></div>
+      <div class="lot-row"><span class="lot-sym" style="color:#a5b4fc;font-weight:700">Platinum</span><span class="lot-val" style="color:var(--muted);font-weight:400">VWAP Bounce</span></div>
+      <div class="lot-row"><span class="lot-sym" style="color:#d97706;font-weight:700">Bronze</span><span class="lot-val" style="color:var(--muted);font-weight:400">EMA Cross</span></div>
+      <div class="lot-row"><span class="lot-sym" style="color:#94a3b8;font-weight:700">Titanium</span><span class="lot-val" style="color:var(--muted);font-weight:400">VCGB</span></div>
+      <div class="lot-row"><span class="lot-sym" style="color:#64748b;font-weight:700">Obsidian</span><span class="lot-val" style="color:var(--muted);font-weight:400">Unified Structure (always-on)</span></div>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin-top:10px">
+      Obsidian (Unified Structure) is an additional always-on layer and is not selectable.
+    </p>
+  </div>
 
   <!-- Risk Limits -->
   <div class="card">
@@ -762,7 +786,12 @@
 
     await populateMainSymbols();
     document.getElementById('c-symbol').value = c.underlying_symbol || 'NIFTY';
-    document.getElementById('c-strategy').value = c.strategy || 'both';
+    // Legacy strategy values map onto the codename options.
+    const stratAliases = { both: 'all', liquidity: 'all',
+                           trend: 'trend_follow', vwap: 'vwap_bounce' };
+    const strat = stratAliases[c.strategy] || c.strategy || 'all';
+    const stratSel = document.getElementById('c-strategy');
+    stratSel.value = stratSel.querySelector(`option[value="${strat}"]`) ? strat : 'all';
     document.getElementById('c-qty').value = c.order_qty;
     document.getElementById('c-custom-lots').value = c.custom_lot_sizes || '';
 
