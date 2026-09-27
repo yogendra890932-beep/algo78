@@ -1,6 +1,6 @@
 # /etc/systemd/system/algo_bot-worker.service
 #
-# Production systemd service for the AlgoBot WORKER process (worker.py).
+# Production systemd service for the Optiscalper WORKER process (worker.py).
 #
 # This is the ONLY process that holds live SymbolEngine/BotThread
 # instances, the Telegram command registry, and the per-user
@@ -15,7 +15,7 @@
 # Logs:    sudo journalctl -u algo_bot-worker -f
 
 [Unit]
-Description=AlgoBot Worker (trading engines, Telegram, OC monitors)
+Description=Optiscalper Worker (trading engines, Telegram, OC monitors)
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
 

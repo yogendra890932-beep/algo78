@@ -2,7 +2,7 @@
 REM run.bat — Double-click this file to start the trading bot server on Windows
 
 echo ============================================
-echo   AlgoBot Trading Bot
+echo   Optiscalper Trading Bot
 echo ============================================
 echo.
 

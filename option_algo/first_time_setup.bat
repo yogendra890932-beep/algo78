@@ -3,7 +3,7 @@ REM first_time_setup.bat — Run ONCE after downloading
 REM Double-click this file to set up everything automatically
 
 echo ============================================
-echo   AlgoBot — First Time Setup
+echo   Optiscalper — First Time Setup
 echo ============================================
 echo.
 

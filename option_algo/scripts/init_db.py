@@ -282,7 +282,7 @@ async def seed_default_plans():
 
 async def main():
     print("=" * 50)
-    print("AlgoBot — Database Setup")
+    print("Optiscalper — Database Setup")
     print("=" * 50)
 
     print("\n[1/5] Creating tables...")

@@ -1,6 +1,6 @@
 # worker.py
 # ================================================================
-# AlgoBot WORKER PROCESS
+# Optiscalper WORKER PROCESS
 #
 # Runs SEPARATELY from the web (uvicorn/FastAPI) process. This is
 # the ONLY process that holds live SymbolEngine / BotThread
@@ -781,7 +781,7 @@ async def main():
         except NotImplementedError:
             pass
 
-    _log(f"AlgoBot worker started — waiting for commands"
+    _log(f"Optiscalper worker started — waiting for commands"
          f" [mode={'SHARED' if USE_SHARED else 'LEGACY'}]")
     await shutdown_event.wait()
 

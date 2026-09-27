@@ -1755,7 +1755,7 @@ async def push_test(
         )
     send_push_sync(
         user.id,
-        "AlgoBot",
+        "Optiscalper",
         "🔔 Test notification — push alerts are working!",
         tag="test",
     )

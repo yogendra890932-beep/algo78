@@ -84,7 +84,7 @@ Two services — one for the web API, one for the worker.
 File: /etc/systemd/system/algo_bot-web.service
 
   [Unit]
-  Description=Algo Bot Web API (FastAPI)
+  Description=Optiscalper Web API (FastAPI)
   After=network.target redis-server.service postgresql.service
   Wants=redis-server.service postgresql.service
 
@@ -110,7 +110,7 @@ File: /etc/systemd/system/algo_bot-web.service
 File: /etc/systemd/system/algo_bot-worker.service
 
   [Unit]
-  Description=Algo Bot Worker (Shared Orchestrator)
+  Description=Optiscalper Worker (Shared Orchestrator)
   After=network.target redis-server.service postgresql.service
   Wants=redis-server.service postgresql.service
   Requires=algo_bot-web.service

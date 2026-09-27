@@ -1,6 +1,6 @@
 # backend/engine/engine_v6.py
 # ================================================================
-# AlgoBot — Options Scalping Engine v6
+# Optiscalper — Options Scalping Engine v6
 #
 # EMAs : 9 / 15 / 21
 #

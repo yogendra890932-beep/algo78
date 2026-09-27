@@ -22,7 +22,7 @@ self.addEventListener('activate', (event) => {
 // Incoming push message — payload is JSON: {title, body, data, tag}
 // (see backend/services/push_notifications.py)
 self.addEventListener('push', (event) => {
-  let payload = { title: 'AlgoBot', body: 'New trading event' };
+  let payload = { title: 'Optiscalper', body: 'New trading event' };
   try {
     if (event.data) payload = event.data.json();
   } catch (e) {
@@ -33,14 +33,14 @@ self.addEventListener('push', (event) => {
     body: payload.body || '',
     icon: '/static/icons/icon-192.png',
     badge: '/static/icons/icon-192.png',
-    tag: payload.tag || 'algo-bot',
+    tag: payload.tag || 'optiscalper',
     renotify: true,
     data: payload.data || {},
     timestamp: Date.now(),
   };
 
   event.waitUntil(
-    self.registration.showNotification(payload.title || 'AlgoBot', options)
+    self.registration.showNotification(payload.title || 'Optiscalper', options)
   );
 });
 

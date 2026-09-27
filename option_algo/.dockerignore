@@ -1,4 +1,4 @@
-# Build context exclusions for the AlgoBot image.
+# Build context exclusions for the Optiscalper image.
 
 # VCS
 .git

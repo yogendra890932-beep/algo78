@@ -120,7 +120,7 @@ def render_invoice_pdf(invoice: Invoice) -> bytes:
 
     # ── Header band (brand wordmark + tagline, invoice title) ──────
     header_table = Table([[
-        Paragraph("AlgoBot", brand_style),
+        Paragraph("Optiscalper", brand_style),
         Paragraph("INVOICE", ParagraphStyle("InvTitle", parent=styles["Title"],
                                              fontSize=20, textColor=colors.white, alignment=TA_RIGHT)),
     ]], colWidths=[95 * mm, 97 * mm])
@@ -135,7 +135,7 @@ def render_invoice_pdf(invoice: Invoice) -> bytes:
     elements.append(header_table)
 
     tag_table = Table([[
-        Paragraph("Algorithmic Options Trading Platform &nbsp;|&nbsp; support@algobot.app", tagline_style),
+        Paragraph("Algorithmic Options Trading Platform &nbsp;|&nbsp; support@optiscalper.com", tagline_style),
         Paragraph("", tagline_style),
     ]], colWidths=[95 * mm, 97 * mm])
     tag_table.setStyle(TableStyle([
@@ -244,7 +244,7 @@ def render_invoice_pdf(invoice: Invoice) -> bytes:
     elements.append(HRFlowable(width="100%", thickness=0.75, color=colors.HexColor("#e2e8f0")))
     elements.append(Spacer(1, 8))
 
-    qr_data = f"AlgoBot Invoice {invoice.invoice_number} | Rs.{float(invoice.total_amount):.2f} | Payment {snap.get('payment_id','-')}"
+    qr_data = f"Optiscalper Invoice {invoice.invoice_number} | Rs.{float(invoice.total_amount):.2f} | Payment {snap.get('payment_id','-')}"
     try:
         qr_img = _make_qr_flowable(qr_data)
     except Exception:
@@ -256,7 +256,7 @@ def render_invoice_pdf(invoice: Invoice) -> bytes:
             "<b>Terms &amp; Conditions</b><br/>"
             "This invoice confirms a successful subscription payment. Subscriptions are billed in "
             "advance for the plan duration shown above and are non-refundable except where required by law.<br/><br/>"
-            "<b>Support</b><br/>Questions about this invoice? Contact support@algobot.app",
+            "<b>Support</b><br/>Questions about this invoice? Contact support@optiscalper.com",
             muted),
     ]], colWidths=[30 * mm, 147 * mm])
     footer_table.setStyle(TableStyle([
@@ -265,7 +265,7 @@ def render_invoice_pdf(invoice: Invoice) -> bytes:
     ]))
     elements.append(footer_table)
     elements.append(Spacer(1, 10))
-    elements.append(Paragraph("Thank you for subscribing to AlgoBot — this is a system-generated invoice.",
+    elements.append(Paragraph("Thank you for subscribing to Optiscalper — this is a system-generated invoice.",
                                center_small))
 
     doc.build(elements)

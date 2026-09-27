@@ -8,13 +8,13 @@
 #   SMTP_PORT=587
 #   SMTP_USER=you@gmail.com
 #   SMTP_PASSWORD=your-app-password   ← Gmail App Password, NOT your main password
-#   SMTP_FROM=AlgoBot <you@gmail.com>  ← optional, defaults to SMTP_USER
+#   SMTP_FROM=Optiscalper <you@gmail.com>  ← optional, defaults to SMTP_USER
 #   APP_BASE_URL=https://yourdomain.com
 #
 # Gmail setup:
 #   1. Enable 2-Step Verification on your Google account
 #   2. Go to myaccount.google.com/apppasswords
-#   3. Create an "App Password" for AlgoBot
+#   3. Create an "App Password" for Optiscalper
 #   4. Use that 16-char password as SMTP_PASSWORD
 # ================================================================
 
@@ -39,7 +39,7 @@ def generate_verify_token() -> str:
 def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultipart:
     verify_url = f"{settings.APP_BASE_URL}/api/auth/verify-email?token={token}"
     from_addr  = settings.SMTP_FROM or settings.SMTP_USER
-    subject    = "Verify your AlgoBot email address"
+    subject    = "Verify your Optiscalper email address"
 
     html = f"""
 <!DOCTYPE html>
@@ -47,7 +47,7 @@ def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultip
 <body style="font-family:Arial,sans-serif;background:#0f1923;color:#e2e8f0;padding:32px">
   <div style="max-width:520px;margin:0 auto;background:#1a2636;border-radius:12px;
               padding:32px;border:1px solid #2a3a4a">
-    <div style="font-size:28px;margin-bottom:8px">📈 AlgoBot</div>
+    <div style="font-size:28px;margin-bottom:8px">📈 Optiscalper</div>
     <h2 style="color:#10b981;margin-top:0">Verify your email</h2>
     <p>Hi {full_name or 'there'},</p>
     <p>Click the button below to verify your email address and activate your account.
@@ -65,14 +65,14 @@ def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultip
     </p>
     <hr style="border-color:#2a3a4a;margin:24px 0">
     <p style="font-size:12px;color:#64748b">
-      If you didn't create an AlgoBot account, you can safely ignore this email.
+      If you didn't create an Optiscalper account, you can safely ignore this email.
     </p>
   </div>
 </body>
 </html>"""
 
     text = (f"Hi {full_name or 'there'},\n\n"
-            f"Verify your AlgoBot email address:\n{verify_url}\n\n"
+            f"Verify your Optiscalper email address:\n{verify_url}\n\n"
             f"This link expires in 24 hours.\n\n"
             f"If you didn't sign up, ignore this email.")
 
@@ -126,10 +126,10 @@ def _build_welcome_email(to_email: str, full_name: str, method: str) -> MIMEMult
 <body style="font-family:Arial,sans-serif;background:#0f1923;color:#e2e8f0;padding:32px">
   <div style="max-width:520px;margin:0 auto;background:#1a2636;border-radius:12px;
               padding:32px;border:1px solid #2a3a4a">
-    <div style="font-size:28px;margin-bottom:8px">📈 AlgoBot</div>
+    <div style="font-size:28px;margin-bottom:8px">📈 Optiscalper</div>
     <h2 style="color:#10b981;margin-top:0">Welcome aboard!</h2>
     <p>Hi {full_name or 'there'},</p>
-    <p>Your AlgoBot account has been created{' via ' + method if method else ''}. 
+    <p>Your Optiscalper account has been created{' via ' + method if method else ''}. 
     You can now log in and configure your trading bot.</p>
     <div style="text-align:center;margin:32px 0">
       <a href="{settings.APP_BASE_URL}"
@@ -145,7 +145,7 @@ def _build_welcome_email(to_email: str, full_name: str, method: str) -> MIMEMult
 </body>
 </html>"""
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Welcome to AlgoBot"
+    msg["Subject"] = "Welcome to Optiscalper"
     msg["From"]    = from_addr
     msg["To"]      = to_email
     msg.attach(MIMEText(html, "html"))
@@ -165,7 +165,7 @@ async def send_welcome_email(to_email: str, full_name: str, method: str = ""):
 def _build_reset_email(to_email: str, full_name: str, token: str) -> MIMEMultipart:
     reset_url = f"{settings.APP_BASE_URL}/reset-password?token={token}"
     from_addr = settings.SMTP_FROM or settings.SMTP_USER
-    subject   = "Reset your AlgoBot password"
+    subject   = "Reset your Optiscalper password"
 
     html = f"""
 <!DOCTYPE html>
@@ -173,10 +173,10 @@ def _build_reset_email(to_email: str, full_name: str, token: str) -> MIMEMultipa
 <body style="font-family:Arial,sans-serif;background:#0f1923;color:#e2e8f0;padding:32px">
   <div style="max-width:520px;margin:0 auto;background:#1a2636;border-radius:12px;
               padding:32px;border:1px solid #2a3a4a">
-    <div style="font-size:28px;margin-bottom:8px">📈 AlgoBot</div>
+    <div style="font-size:28px;margin-bottom:8px">📈 Optiscalper</div>
     <h2 style="color:#ef4444;margin-top:0">Password Reset</h2>
     <p>Hi {full_name or 'there'},</p>
-    <p>Someone requested a password reset for your AlgoBot account.
+    <p>Someone requested a password reset for your Optiscalper account.
     Click the button below to set a new password.
     This link expires in <strong>1 hour</strong>.</p>
     <div style="text-align:center;margin:32px 0">
@@ -200,7 +200,7 @@ def _build_reset_email(to_email: str, full_name: str, token: str) -> MIMEMultipa
 </html>"""
 
     text = (f"Hi {full_name or 'there'},\n\n"
-            f"Reset your AlgoBot password:\n{reset_url}\n\n"
+            f"Reset your Optiscalper password:\n{reset_url}\n\n"
             f"This link expires in 1 hour.\n\n"
             f"If you didn't request this, ignore this email.")
 

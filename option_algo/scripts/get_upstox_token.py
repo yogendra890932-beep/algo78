@@ -14,7 +14,7 @@ STEP 1: Create an Upstox Developer App
 2. Log in with your Upstox trading account
 3. Click "Create App"
 4. Fill in:
-   - App Name: AlgoBot
+   - App Name: Optiscalper
    - Redirect URL: http://localhost:8000/upstox-callback
    - Description: Trading Bot
 5. Submit and note down your:

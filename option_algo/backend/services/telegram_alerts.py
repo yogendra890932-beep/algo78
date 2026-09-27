@@ -342,7 +342,7 @@ def test_telegram(bot_token: str, chat_id: str) -> bool:
     """Test if the bot token and chat ID are valid."""
     text = (
         "✅ <b>Telegram connected!</b>\n"
-        "AlgoBot bot is ready to send alerts.\n"
+        "Optiscalper bot is ready to send alerts.\n"
         f"Time: {_now()}"
     )
     return _send_message(bot_token, chat_id, text)

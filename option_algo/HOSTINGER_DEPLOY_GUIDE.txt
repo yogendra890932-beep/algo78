@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════════════
-  AlgoBot — Complete Hostinger VPS Deployment Guide
+  Optiscalper — Complete Hostinger VPS Deployment Guide
   For Beginners — Every Step Explained in Detail
 ═══════════════════════════════════════════════════════════════
 
@@ -7,7 +7,7 @@ This guide assumes:
   • You have never used a VPS / Linux server before
   • You have a Hostinger account
   • You have the option_algo.zip file on your computer
-  • Your domain name is ready (e.g. algobot.yourdomain.com)
+  • Your domain name is ready (e.g. optiscalper.com)
 
 Estimated time to complete: 2–3 hours
 
@@ -246,14 +246,14 @@ DATABASE_URL=postgresql+asyncpg://algo_bot:YourStrongPassword123!@localhost:5432
 REDIS_URL=redis://localhost:6379/0
 
 # Your site URL (replace with your actual domain)
-APP_BASE_URL=https://algobot.yourdomain.com
+APP_BASE_URL=https://optiscalper.com
 
 # Admin account (first login)
 ADMIN_EMAIL=your@email.com
 ADMIN_PASSWORD=ChooseAStrongAdminPassword!
 
 # CORS (replace with your domain)
-ALLOWED_ORIGINS=https://algobot.yourdomain.com
+ALLOWED_ORIGINS=https://optiscalper.com
 
 # Upstox webhook (generate a secret string)
 WEBHOOK_SECRET=another-random-secret-string-here
@@ -263,14 +263,14 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your@gmail.com
 SMTP_PASSWORD=your-16-char-app-password
-SMTP_FROM=AlgoBot <your@gmail.com>
+SMTP_FROM=Optiscalper <your@gmail.com>
 
 # Google Sign-In (optional — leave blank to disable)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 
 # Upstox redirect (replace domain)
-UPSTOX_REDIRECT_URI=https://algobot.yourdomain.com/api/users/upstox/callback
+UPSTOX_REDIRECT_URI=https://optiscalper.com/api/users/upstox/callback
 
 # Push notifications (generate with: python scripts/generate_vapid_keys.py)
 VAPID_PUBLIC_KEY=
@@ -306,7 +306,7 @@ DEBUG=false
   1. Go to myaccount.google.com → Security
   2. Enable "2-Step Verification" if not already on
   3. Go to myaccount.google.com/apppasswords
-  4. Select app: Mail, device: Other → type "AlgoBot" → Generate
+  4. Select app: Mail, device: Other → type "Optiscalper" → Generate
   5. Copy the 16-character password → paste as SMTP_PASSWORD
   NOTE: Use spaces or not — either works
 
@@ -345,7 +345,7 @@ Let's make sure everything works before setting up the domain.
 
   # Open a browser on your laptop and go to:
   # http://YOUR_VPS_IP:8000
-  # You should see the AlgoBot landing page!
+  # You should see the Optiscalper landing page!
 
   # Press Ctrl+C to stop it when done testing
 
@@ -353,7 +353,7 @@ Let's make sure everything works before setting up the domain.
   cd /opt/option_algo
   source venv/bin/activate
   python worker.py
-  # Should print: [worker] AlgoBot worker started — waiting for commands
+  # Should print: [worker] Optiscalper worker started — waiting for commands
   # Press Ctrl+C to stop
 
   # If either crashes, read the error. Common fixes:
@@ -370,7 +370,7 @@ PART 11 — POINT YOUR DOMAIN TO THE VPS
   1. hPanel → Domains → your domain → DNS / Nameservers
   2. Add a new A record:
      Type: A
-     Name: algobot  (or @ for root domain, or whatever subdomain)
+     Name: optiscalper  (or @ for root domain, or whatever subdomain)
      Value: YOUR_VPS_IP
      TTL: 300
   3. Click Save
@@ -381,7 +381,7 @@ PART 11 — POINT YOUR DOMAIN TO THE VPS
   1. Log in to that provider
   2. Find DNS settings for your domain
   3. Add A record:
-     Host/Name: algobot (or @ or subdomain)
+     Host/Name: optiscalper (or @ or subdomain)
      Value/Points to: YOUR_VPS_IP
      TTL: 300 or lowest available
   4. Save and wait 15–30 minutes
@@ -389,7 +389,7 @@ PART 11 — POINT YOUR DOMAIN TO THE VPS
 ─── Check if DNS is working ──────────────────────────────────
 
   # On your laptop terminal/command prompt:
-  nslookup algobot.yourdomain.com
+  nslookup optiscalper.com
   # Should show YOUR_VPS_IP in the answer
 
   # Or visit: https://www.whatsmydns.net
@@ -404,14 +404,14 @@ and forwards requests to your Python app.
 
 ─── Step 12.1: Create nginx config ───────────────────────────
 
-  nano /etc/nginx/sites-available/algobot
+  nano /etc/nginx/sites-available/optiscalper
 
-  # Paste this (replace algobot.yourdomain.com with YOUR domain):
+  # Paste this (replace optiscalper.com with YOUR domain):
 
 ─────────────────────────────────────────────────────────────
 server {
     listen 80;
-    server_name algobot.yourdomain.com;
+    server_name optiscalper.com;
 
     # Max upload size (for file uploads if any)
     client_max_body_size 10M;
@@ -435,7 +435,7 @@ server {
 
 ─── Step 12.2: Enable the site ───────────────────────────────
 
-  ln -s /etc/nginx/sites-available/algobot /etc/nginx/sites-enabled/
+  ln -s /etc/nginx/sites-available/optiscalper /etc/nginx/sites-enabled/
   rm /etc/nginx/sites-enabled/default   # remove default nginx page
   nginx -t                              # test config (should say OK)
   systemctl restart nginx
@@ -443,16 +443,16 @@ server {
 
 ─── Step 12.3: Test without SSL first ───────────────────────
 
-  # In your browser: http://algobot.yourdomain.com
-  # Should show the AlgoBot landing page (but "Not Secure")
+  # In your browser: http://optiscalper.com
+  # Should show the Optiscalper landing page (but "Not Secure")
   # If it works → proceed to SSL
 
 ═══════════════════════════════════════════════════════════════
 PART 13 — FREE SSL CERTIFICATE (HTTPS)
 ═══════════════════════════════════════════════════════════════
 
-  # Replace algobot.yourdomain.com with YOUR actual domain:
-  certbot --nginx -d algobot.yourdomain.com
+  # Replace optiscalper.com with YOUR actual domain:
+  certbot --nginx -d optiscalper.com
 
   # Follow the prompts:
   # - Enter your email address
@@ -461,8 +461,8 @@ PART 13 — FREE SSL CERTIFICATE (HTTPS)
   # - Certbot automatically configures HTTPS in nginx!
 
   # After it finishes, visit:
-  # https://algobot.yourdomain.com
-  # Should show AlgoBot with a padlock (🔒) in the browser
+  # https://optiscalper.com
+  # Should show Optiscalper with a padlock (🔒) in the browser
 
   # SSL certificates auto-renew. Set up automatic renewal:
   systemctl enable certbot.timer
@@ -545,8 +545,8 @@ PART 16 — FIRST LOGIN AND INITIAL SETUP
 ═══════════════════════════════════════════════════════════════
 
   1. Open your browser
-  2. Go to: https://algobot.yourdomain.com
-  3. You'll see the AlgoBot landing page ✅
+  2. Go to: https://optiscalper.com
+  3. You'll see the Optiscalper landing page ✅
   4. Click "Get Started" or go to /login
   5. Accept the risk disclaimer ← you must tick the checkbox
   6. Log in with the admin email/password you set in .env
@@ -557,7 +557,7 @@ PART 16 — FIRST LOGIN AND INITIAL SETUP
   a) Go to Settings → change your admin password
   b) Go to Settings → Upstox Connection → enter your API Key
      and API Secret (from account.upstox.com/developer/apps)
-     Add redirect URI: https://algobot.yourdomain.com/api/users/upstox/callback
+     Add redirect URI: https://optiscalper.com/api/users/upstox/callback
   c) Click "Connect to Upstox" → log in on Upstox → you get redirected back
   d) Go to Settings → Bot Configuration:
      - Select symbol (NIFTY / BANKNIFTY)
@@ -576,12 +576,12 @@ This makes order confirmations arrive in under 200ms instead of
   1. Go to account.upstox.com/developer/apps
   2. Click on your app
   3. Find "Webhook" or "Postback" settings
-  4. Set URL: https://algobot.yourdomain.com/api/webhook/upstox
+  4. Set URL: https://optiscalper.com/api/webhook/upstox
   5. Set the Postback Secret to whatever you put in WEBHOOK_SECRET
      in your .env file
   6. Save
 
-  Test it: https://algobot.yourdomain.com/api/webhook/upstox/test
+  Test it: https://optiscalper.com/api/webhook/upstox/test
   Should return: {"status":"ok"}
 
 ═══════════════════════════════════════════════════════════════
@@ -590,7 +590,7 @@ PART 18 — DAILY OPERATIONS
 
 EVERY MORNING BEFORE 9:15 AM:
 
-  1. Open https://algobot.yourdomain.com/settings
+  1. Open https://optiscalper.com/settings
   2. Under "Upstox Connection" → click "Refresh Token"
      (Upstox tokens expire daily at ~3:30 AM IST)
   3. Log in on Upstox when prompted → redirected back

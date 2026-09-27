@@ -24,7 +24,7 @@ if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
-echo "Starting AlgoBot ($MODE mode)..."
+echo "Starting Optiscalper ($MODE mode)..."
 echo "Web:    http://localhost:8000"
 echo "Worker: trading engines, Telegram, OC monitors"
 echo "Press Ctrl+C to stop both"

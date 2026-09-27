@@ -92,7 +92,7 @@ def _validate_production_config():
 
 
 app = FastAPI(
-    title="AlgoBot",
+    title="Optiscalper",
     description="Multi-user 1-minute options scalping bot",
     version="7.0",
     lifespan=lifespan,

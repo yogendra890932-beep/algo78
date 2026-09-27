@@ -1,4 +1,4 @@
-# 🚀 Complete Setup Guide — AlgoBot Trading Bot
+# 🚀 Complete Setup Guide — Optiscalper Trading Bot
 # For Beginners — Every Step Explained
 
 =============================================================
@@ -183,7 +183,7 @@ HOST=0.0.0.0
 PORT=8000
 DEBUG=true
 
-ALLOWED_ORIGINS=http://localhost:8000,https://algo_bot.com
+ALLOWED_ORIGINS=http://localhost:8000,https://optiscalper.com
 
 ------ end of .env file ------
 
@@ -340,11 +340,11 @@ When you are ready to run 24/7 on your Hostinger VPS:
    python scripts/init_db.py
    bash scripts/run.sh
 
-6. Point algo_bot.com to your VPS IP in Hostinger DNS
+6. Point optiscalper.com to your VPS IP in Hostinger DNS
 
 7. Set up SSL (free HTTPS):
    apt install certbot python3-certbot-nginx -y
-   certbot --nginx -d algo_bot.com
+   certbot --nginx -d optiscalper.com
 
 =============================================================
 PRODUCTION / MULTI-USER ARCHITECTURE (READ THIS)
@@ -435,7 +435,7 @@ BEFORE GOING LIVE — change these in .env:
       python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
   - ADMIN_PASSWORD  → strong password (not "admin123")
   - DEBUG=false
-  - ALLOWED_ORIGINS → your real domain(s), e.g. https://algo_bot.com
+  - ALLOWED_ORIGINS → your real domain(s), e.g. https://optiscalper.com
                        (never "*" in production)
   - REDIS_URL       → reachable by BOTH processes (same host = fine
                        with the default; separate hosts need a
@@ -597,13 +597,13 @@ EMAIL VERIFICATION SETUP (recommended for production)
   Gmail App Password (easiest):
   1. Enable 2-Step Verification at myaccount.google.com/security
   2. Go to myaccount.google.com/apppasswords
-  3. Create an App Password for AlgoBot (select "Mail")
+  3. Create an App Password for Optiscalper (select "Mail")
   4. Set in .env:
        SMTP_HOST=smtp.gmail.com
        SMTP_PORT=587
        SMTP_USER=you@gmail.com
        SMTP_PASSWORD=xxxx-xxxx-xxxx-xxxx   ← 16-char App Password
-       SMTP_FROM=AlgoBot <you@gmail.com>
+       SMTP_FROM=Optiscalper <you@gmail.com>
        APP_BASE_URL=https://yourdomain.com  ← used in email links
 
   Dev / no email:

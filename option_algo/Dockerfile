@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# AlgoBot application image — used for BOTH the web (uvicorn) and
+# Optiscalper application image — used for BOTH the web (uvicorn) and
 # worker (worker.py) services in docker-compose.yml.
 #
 #   Web   : uvicorn backend.main:app  (stateless, talks to Redis/Postgres)

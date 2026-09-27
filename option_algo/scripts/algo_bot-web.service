@@ -1,6 +1,6 @@
 # /etc/systemd/system/algo_bot-web.service
 #
-# Production systemd service for the AlgoBot WEB process (FastAPI/uvicorn).
+# Production systemd service for the Optiscalper WEB process (FastAPI/uvicorn).
 #
 # This process is now STATELESS — all per-user bot state lives in Redis
 # and the worker process (worker.py, see algo_bot-worker.service). You
@@ -22,7 +22,7 @@
 # registry). The web process can be scaled freely.
 
 [Unit]
-Description=AlgoBot Web (FastAPI/uvicorn)
+Description=Optiscalper Web (FastAPI/uvicorn)
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
 

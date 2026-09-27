@@ -1,4 +1,4 @@
-# docker-compose.yml — production deployment for AlgoBot
+# docker-compose.yml — production deployment for Optiscalper
 # ================================================================
 # Topology (mirrors scripts/run.sh + the two systemd units):
 #
