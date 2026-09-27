@@ -48,6 +48,7 @@ from backend.db.models import (
     BotConfig,
 )
 from backend.services.paper_trading import get_paper_book
+from backend.services.tick_size import round_to_tick
 from backend.services.audit_log import log_event
 
 
@@ -184,7 +185,7 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
         # from the actual fill (sl_pct of the fill) so risk is anchored
         # to the real entry, not the stale signal price.
         sl_pct = float(eng.cfg.get("sl_pct", 0.003) or 0.003)
-        stop_loss = round(fill * (1 - sl_pct), 2) if fill else signal.stop_loss
+        stop_loss = round_to_tick(fill * (1 - sl_pct)) if fill else signal.stop_loss
 
         sl_id = eng._place_order("SELL", qty, order_type="SL-M",
                                  trigger=stop_loss, **kw)
@@ -194,13 +195,13 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
 
         rr = eng.cfg.get("target_rr", 1.3)
         risk = abs(fill - stop_loss)
-        target = round(fill + risk * rr, 2)
+        target = round_to_tick(fill + risk * rr)
         near_pct = eng.cfg.get("target_near_pct", 0.003)
         eng.position = {
             "entry_price": fill, "qty": qty,
             "entry_order_id": eid, "sl_order_id": sl_id,
             "sl_trigger": stop_loss, "target": target,
-            "near_target": round(target * (1 - near_pct), 2),
+            "near_target": round_to_tick(target * (1 - near_pct)),
             "strategy": signal.strategy_name or signal.strategy or "",
             "entry_ts": datetime.now(timezone.utc).replace(tzinfo=None),
             "instrument_key": signal.instrument_key or eng.instrument_key,

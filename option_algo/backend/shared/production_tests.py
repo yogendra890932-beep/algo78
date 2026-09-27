@@ -630,6 +630,98 @@ def test_auto_trading_gate():
 
 
 # ================================================================
+# TEST 14: Prices rounded to the instrument tick before Upstox orders
+# ================================================================
+
+def _load_tick_helper():
+    import importlib.util
+    path = os.path.join(BASE, "backend/services/tick_size.py")
+    spec = importlib.util.spec_from_file_location("tick_size", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_tick_size_rounding():
+    print("\n=== Test: Upstox order prices rounded to tick size ===")
+
+    if not os.path.exists(os.path.join(BASE, "backend/services/tick_size.py")):
+        _fail("tick_size helper module missing")
+        return
+    _ok("tick_size helper module exists")
+
+    mod = _load_tick_helper()
+    if getattr(mod, "TICK_SIZE", None) == 0.05:
+        _ok("TICK_SIZE is 0.05 (NSE/BSE index options)")
+    else:
+        _fail("TICK_SIZE is not 0.05")
+
+    r = mod.round_to_tick
+    cases = {123.4567: 123.45, 100.025: 100.05, 100.024: 100.0,
+             0.04: 0.05, 99.999: 100.0, 2.0: 2.0}
+    good = all(abs(r(p) - e) < 1e-9 for p, e in cases.items())
+    if good:
+        _ok("round_to_tick rounds half-up onto the 0.05 grid")
+    else:
+        _fail(f"round_to_tick grid wrong: {[(p, r(p)) for p in cases]}")
+
+    if r(0) == 0.05 and r(-5) == 0.05:
+        _ok("round_to_tick never returns a zero/negative price")
+    else:
+        _fail("round_to_tick does not clamp to one tick")
+
+    for side, want in (("SELL", "below"), ("BUY", "above")):
+        trig, limit = mod.sl_trigger_and_limit(123.4567, side)
+        on_grid = (abs(trig / 0.05 - round(trig / 0.05)) < 1e-9 and
+                   abs(limit / 0.05 - round(limit / 0.05)) < 1e-9)
+        ordered = limit < trig if side == "SELL" else limit > trig
+        if on_grid and ordered:
+            _ok(f"SL {side}: trigger and limit on grid, limit {want} trigger")
+        else:
+            _fail(f"SL {side}: trig={trig} limit={limit} on_grid={on_grid} ordered={ordered}")
+
+    trig, limit = mod.sl_trigger_and_limit(0.05, "SELL")
+    if trig > limit > 0:
+        _ok("tiny premium still yields a valid SELL stop-limit gap")
+    else:
+        _fail(f"tiny premium gap invalid: trig={trig} limit={limit}")
+
+    engine = _read_src("backend/engine/engine_v6.py")
+    if _has_function_with_code(engine, "_place_order", "sl_trigger_and_limit"):
+        _ok("legacy engine places SL orders tick-rounded")
+    else:
+        _fail("legacy engine _place_order does not tick-round")
+    if _has_function_with_code(engine, "_modify_sl_from_telegram", "sl_trigger_and_limit"):
+        _ok("legacy engine telegram SL modify is tick-rounded")
+    else:
+        _fail("legacy engine _modify_sl_from_telegram not tick-rounded")
+    if _has_function_with_code(engine, "_maybe_trail", "sl_trigger_and_limit"):
+        _ok("legacy engine trailing SL modify is tick-rounded")
+    else:
+        _fail("legacy engine _maybe_trail not tick-rounded")
+    if _has_function_with_code(engine, "_place_trade", "round_to_tick"):
+        _ok("legacy engine rounds the signal SL before storing it")
+    else:
+        _fail("legacy engine _place_trade does not round the SL")
+
+    shared = _read_src("backend/shared/user_execution_manager.py")
+    if _has_function_with_code(shared, "_place_order_live", "sl_trigger_and_limit"):
+        _ok("shared manager places live SL orders tick-rounded")
+    else:
+        _fail("shared manager _place_order_live not tick-rounded")
+    if _has_function_with_code(shared, "_modify_sl_live", "sl_trigger_and_limit"):
+        _ok("shared manager live SL modify is tick-rounded")
+    else:
+        _fail("shared manager _modify_sl_live not tick-rounded")
+
+    layer = _read_src("backend/services/execution_layer.py")
+    if _has_function_with_code(layer, "place_order_from_engines", "round_to_tick"):
+        _ok("execution layer stores tick-rounded SL/target")
+    else:
+        _fail("execution layer place_order_from_engines not tick-rounded")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -656,6 +748,7 @@ def run_all_tests():
     test_main_symbol_options()
     test_plan_symbol_lot_gate()
     test_auto_trading_gate()
+    test_tick_size_rounding()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

@@ -47,6 +47,7 @@ from backend.engine.instruments import (
 )
 from backend.services.paper_trading import get_paper_book
 from backend.services import telegram_alerts as tg
+from backend.services.tick_size import round_to_tick, sl_trigger_and_limit
 
 # Analysis engine imports — used for incremental structure analysis
 # These MUST NOT be modified; engine.py is an orchestration layer only.
@@ -559,7 +560,8 @@ class SymbolEngine:
         pos = self.position
         if not pos:
             raise ValueError("No open position")
-        limit_price = round(new_sl * 0.995, 2)
+        # Upstox rejects any price/trigger off the 0.05 tick.
+        new_sl, limit_price = sl_trigger_and_limit(new_sl, "SELL")
         print(_now(), f"[{self.symbol}] Telegram request: Modify SL trigger={new_sl} limit={limit_price} for order_id={pos['sl_order_id']}")
         if self.paper_mode and self._paper:
             self._paper.modify_sl_order(pos["sl_order_id"], new_sl)
@@ -2306,8 +2308,8 @@ class SymbolEngine:
             limit_price    = 0
             if order_type == "SL-M":
                 order_type_api = "SL"
-                limit_price    = round(trigger*0.995, 2) if side == "SELL" \
-                                 else round(trigger*1.005, 2)
+                # Upstox rejects any price/trigger off the 0.05 tick.
+                trigger, limit_price = sl_trigger_and_limit(trigger, side)
             api  = upstox_client.OrderApiV3(self._api_client())
             body = upstox_client.PlaceOrderV3Request(
                 quantity=qty, product=self.cfg.get("product","I"),
@@ -2580,6 +2582,9 @@ class SymbolEngine:
         3. For Semi Auto: creates PendingTrade record for user approval
         4. VOLATILE regime: lots halved (rounded down, min 1 lot)
         """
+        # Upstox rejects SL prices off the 0.05 tick; round once here so
+        # the signal, the broker order and the stored position agree.
+        initial_sl = round_to_tick(initial_sl)
         # ── Build standardised signal ───────────────────────────
         signal = self._build_trade_signal(entry_ref, initial_sl, strategy)
         qty = signal.quantity
@@ -2776,7 +2781,8 @@ class SymbolEngine:
         if proposed <= self.trailing_sl or proposed >= ltp: return
         if abs((proposed-self.trailing_sl)/self.trailing_sl) < 0.0006: return
         old_sl      = self.trailing_sl
-        limit_price = round(proposed*0.995, 2)
+        # Upstox rejects any price/trigger off the 0.05 tick.
+        proposed, limit_price = sl_trigger_and_limit(proposed, "SELL")
         print(_now(), f"[{self.symbol}] Trailing SL trigger proposed: old={old_sl} new={proposed} limit={limit_price}")
         if self.paper_mode and self._paper:
             self._paper.modify_sl_order(self.sl_order_id, proposed)

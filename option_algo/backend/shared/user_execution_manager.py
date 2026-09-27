@@ -32,6 +32,7 @@ from backend.shared.redis_infra import (
     user_risk_snapshot,
 )
 from backend.shared.shared_cache import get_lot_size
+from backend.services.tick_size import round_to_tick, sl_trigger_and_limit
 from backend.shared.symbol_manager import (
     add_subscriber, remove_subscriber, get_user_symbols,
 )
@@ -397,7 +398,7 @@ class UserExecutionManager:
         # SL / target come from the user's settings (sl_pct, target_rr),
         # not the strategy's hardcoded levels.
         sl_pct = float(self.config.get("sl_pct", 0.003) or 0.003)
-        stop_loss = round(entry_price * (1 - sl_pct), 2) \
+        stop_loss = round_to_tick(entry_price * (1 - sl_pct)) \
             if entry_price else signal.get("stop_loss", 0)
 
         entry_id = paper.place_market_order(
@@ -478,7 +479,7 @@ class UserExecutionManager:
 
             entry_price = signal.get("entry_price", 0)
             sl_pct = float(self.config.get("sl_pct", 0.003) or 0.003)
-            stop_loss = round(entry_price * (1 - sl_pct), 2) \
+            stop_loss = round_to_tick(entry_price * (1 - sl_pct)) \
                 if entry_price else signal.get("stop_loss", 0)
 
             trade_signal = TradeSignal(
@@ -595,7 +596,7 @@ class UserExecutionManager:
         )
         entry_price = signal.get("entry_price", 0)
         sl_pct = float(self.config.get("sl_pct", 0.003) or 0.003)
-        stop_loss = round(entry_price * (1 - sl_pct), 2) \
+        stop_loss = round_to_tick(entry_price * (1 - sl_pct)) \
             if entry_price else signal.get("stop_loss", 0)
         trade_signal = TradeSignal(
             symbol=signal.get("symbol", ""),
@@ -832,7 +833,7 @@ class UserExecutionManager:
             print(f"{_now()} [exec:u{self.user_id}] Trail {sym} err: {e}")
             return
 
-        proposed = round(ltp - atr_val * 1.2, 2)
+        proposed = round_to_tick(ltp - atr_val * 1.2)
         cur = self._trailing_sl.get(sym, 0)
         if proposed <= cur or proposed >= ltp:
             return
@@ -1092,8 +1093,8 @@ class UserExecutionManager:
         limit_price = 0
         if order_type == "SL-M":
             order_type_api = "SL"
-            limit_price = round(trigger * 0.995, 2) if side == "SELL" \
-                else round(trigger * 1.005, 2)
+            # Upstox rejects any price/trigger off the 0.05 tick.
+            trigger, limit_price = sl_trigger_and_limit(trigger, side)
         api = upstox_client.OrderApiV3(self._api_client())
         body = upstox_client.PlaceOrderV3Request(
             quantity=qty, product=self.config.get("product", "I"),
@@ -1150,7 +1151,8 @@ class UserExecutionManager:
 
     def _modify_sl_live(self, sl_id: str, new_sl: float, qty: int):
         """Trail a live SL order (SL with limit = trigger x 0.995)."""
-        limit_price = round(new_sl * 0.995, 2)
+        # Upstox rejects any price/trigger off the 0.05 tick.
+        new_sl, limit_price = sl_trigger_and_limit(new_sl, "SELL")
         body = upstox_client.ModifyOrderRequest(
             order_id=sl_id, price=limit_price, trigger_price=new_sl,
             order_type="SL", quantity=qty, validity="DAY",
