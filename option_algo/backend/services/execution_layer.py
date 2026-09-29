@@ -122,6 +122,36 @@ class ExecutionResult:
 # Approved-trade placement (shared by worker.py + shared_worker.py)
 # ================================================================
 
+def _emit_entry_failed(eng, user_id: int, signal: TradeSignal,
+                       trade_id, reason: str):
+    """Surface an entry failure on the dashboard/terminal + push.
+
+    Emits an ORDER_ALERT through the same on_trade pipeline used by
+    ENTRY/EXIT, so the reason shows up in the dashboard live feed, the
+    terminal event log and the Web Push notification — not just the
+    worker log.
+    """
+    reason = str(reason or "Entry order failed").strip()
+    print(f"[execution_layer] ENTRY FAILED trade #{trade_id} "
+          f"{signal.symbol}: {reason}")
+    cb = getattr(eng, "on_trade", None)
+    if not cb:
+        return
+    try:
+        cb({
+            "event": "ORDER_ALERT",
+            "user_id": user_id,
+            "mode": "paper" if getattr(eng, "paper_mode", False) else "live",
+            "symbol": signal.symbol,
+            "trading_symbol": signal.trading_symbol or signal.symbol,
+            "opt_type": signal.opt_type or "",
+            "reason": reason,
+            "trade_id": trade_id,
+        })
+    except Exception as e:
+        print(f"[execution_layer] failed to emit ORDER_ALERT: {e}")
+
+
 def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
                              trade_id: Optional[int] = None) -> Optional[str]:
     """
@@ -171,22 +201,27 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
             if not allowed:
                 print(f"[execution_layer] LIVE ENTRY BLOCKED user={user_id} "
                       f"symbol={eng.symbol} lots={num_lots}: {reason}")
+                _emit_entry_failed(
+                    eng, user_id, signal, trade_id,
+                    f"Live entry blocked by plan: {reason}")
                 return None
 
         eid = eng._place_order("BUY", qty, **kw)
         if not eid:
-            print(f"[execution_layer] entry order not placed for trade "
-                  f"#{trade_id} {signal.symbol} — broker returned no order id "
-                  f"(check logs above for the rejection reason)")
+            _emit_entry_failed(
+                eng, user_id, signal, trade_id,
+                getattr(eng, "last_order_error", "")
+                or "Broker rejected the entry order (no order id returned)")
             return None
         fill = eng._get_fill_price(eid)
         if not fill:
             from backend.services.order_store import get_last_rejection
-            reason = get_last_rejection(eid)
-            print(f"[execution_layer] entry order {eid} for trade #{trade_id} "
-                  f"{signal.symbol} not filled"
-                  + (f" — broker rejected: {reason}" if reason
-                     else " (timeout, no fill confirmation)"))
+            reason = (get_last_rejection(eid)
+                      or getattr(eng, "last_order_error", "")
+                      or "Entry order was not filled (no confirmation)")
+            _emit_entry_failed(
+                eng, user_id, signal, trade_id,
+                f"Entry order {eid} not filled — {reason}")
             return None
 
         # Approved semi-auto trades fill at the CURRENT market price,
@@ -200,6 +235,10 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
                                  trigger=stop_loss, **kw)
         if not sl_id:
             eng._place_order("SELL", qty)
+            _emit_entry_failed(
+                eng, user_id, signal, trade_id,
+                getattr(eng, "last_order_error", "")
+                or "Stop-loss order rejected after entry — emergency exit placed")
             return None
 
         rr = eng.cfg.get("target_rr", 1.3)

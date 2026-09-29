@@ -537,6 +537,10 @@ function handleEvent(m) {
     msg = (msg || symbol) + " SL → ₹" + fmt(m.new_sl) + " | LTP ₹" + fmt(m.ltp);
   }
 
+  if (evt === "ORDER_ALERT" || evt === "ORDER_FAILED") {
+    msg = "ORDER FAILED: " + (m.reason || msg || symbol);
+  }
+
   addEventRow({ ts, evt, msg, symbol });
   addOrderInfo({ ts, evt, msg, symbol });
 

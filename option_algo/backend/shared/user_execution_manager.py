@@ -98,6 +98,11 @@ class UserExecutionManager:
         # Last known LTP per symbol (used by the Telegram /status command)
         self._last_ltp: dict[str, float] = {}
 
+        # Most recent live-order failure text (broker body / guard reason),
+        # surfaced to the dashboard + terminal via ORDER_ALERT on entry
+        # failure. Reset before every live order attempt.
+        self._last_order_error: str = ""
+
         # Re-entry memory per symbol: records the most recent exit so a
         # target/manual close does not immediately re-enter the SAME
         # setup. Re-entry is only allowed once a fresh signal regenerates
@@ -1073,7 +1078,9 @@ class UserExecutionManager:
                           instrument_key: str = None,
                           symbol: str = None) -> Optional[str]:
         """Place a live order via Upstox (mirrors legacy _place_order)."""
+        self._last_order_error = ""
         if not instrument_key:
+            self._last_order_error = "No option instrument_key for the entry"
             return None
         # Trade-time plan gate before a LIVE entry — exits/SL are never
         # blocked, only BUY entries. Catches plans that lapse mid-session.
@@ -1085,6 +1092,7 @@ class UserExecutionManager:
             allowed, reason = check_trading_permission_sync(
                 self.user_id, symbol or self.symbol, lots)
             if not allowed:
+                self._last_order_error = f"Live entry blocked by plan: {reason}"
                 print(f"{_now()} [exec:u{self.user_id}] LIVE entry blocked "
                       f"by plan check: {reason}")
                 return None
@@ -1107,10 +1115,13 @@ class UserExecutionManager:
             resp = api.place_order(body)
             oid = self._get_order_id(resp)
         except ApiException as e:
+            self._last_order_error = (
+                f"Broker rejected the order: {getattr(e, 'body', str(e))}")
             print(f"{_now()} [exec:u{self.user_id}] Live order failed: "
                   f"{getattr(e, 'body', str(e))}")
             return None
         except Exception as e:
+            self._last_order_error = f"Order placement error: {e}"
             print(f"{_now()} [exec:u{self.user_id}] Live order failed: {e}")
             return None
         if oid:
@@ -1400,6 +1411,11 @@ class _MockEngine:
     def on_trade(self):
         return self._mgr.on_trade
 
+    @property
+    def last_order_error(self) -> str:
+        """Text of the most recent live-order failure (for ORDER_ALERT)."""
+        return getattr(self._mgr, "_last_order_error", "")
+
     # ── Attributes used by the approve / place-order path ─────────
 
     @property
@@ -1496,6 +1512,9 @@ class _MockEngine:
             # of placing a dead order against the index.
             underlying = self.cfg.get("underlying_token", "")
             if not ik or ik == underlying:
+                self._mgr._last_order_error = (
+                    f"No option instrument_key for {self.symbol} "
+                    f"(refused to send index token)")
                 print(f"{_now()} [exec:u{self._mgr.user_id}] ⛔ No option "
                       f"instrument_key for {self.symbol} live order — refusing "
                       f"to send index token {ik or '(empty)'}")

@@ -807,7 +807,7 @@ def test_rejection_reason_reporting():
         _fail("wait_for_fill_sync still misreports rejections as timeouts")
 
     layer = _read_src("backend/services/execution_layer.py")
-    if "get_last_rejection" in layer and "broker rejected" in layer:
+    if "get_last_rejection" in layer and "_emit_entry_failed" in layer:
         _ok("execution_layer surfaces the entry rejection reason")
     else:
         _fail("execution_layer does not surface entry rejection reason")
@@ -864,6 +864,43 @@ def test_webhook_signature_optin():
 
 
 # ================================================================
+# TEST 18: Entry failures are surfaced on dashboard + terminal
+# ================================================================
+
+def test_entry_failure_surfaced():
+    print("\n=== Test: Entry failure surfaced on dashboard + terminal ===")
+
+    layer = _read_src("backend/services/execution_layer.py")
+    if "def _emit_entry_failed" in layer and '"event": "ORDER_ALERT"' in layer:
+        _ok("execution layer emits ORDER_ALERT on entry failure")
+    else:
+        _fail("execution layer does not emit an ORDER_ALERT on failure")
+    for code in ("last_order_error", "get_last_rejection"):
+        if code in layer:
+            _ok(f"entry failure reason uses {code}")
+        else:
+            _fail(f"entry failure reason missing {code}")
+
+    mgr = _read_src("backend/shared/user_execution_manager.py")
+    if "_last_order_error" in mgr and "def last_order_error" in mgr:
+        _ok("live order failures are recorded and exposed")
+    else:
+        _fail("live order failures are not recorded/exposed")
+
+    dash = _read_src("frontend/templates/dashboard.html")
+    if "case 'ORDER_ALERT'" in dash and "ORDER ALERT" in dash:
+        _ok("dashboard renders ORDER_ALERT with the reason")
+    else:
+        _fail("dashboard does not render ORDER_ALERT")
+
+    term = _read_src("frontend/static/js/terminal.js")
+    if 'evt === "ORDER_ALERT"' in term and "ORDER FAILED" in term:
+        _ok("terminal renders ORDER_ALERT with the reason")
+    else:
+        _fail("terminal does not render ORDER_ALERT")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -894,6 +931,7 @@ def run_all_tests():
     test_strategy_codenames()
     test_rejection_reason_reporting()
     test_webhook_signature_optin()
+    test_entry_failure_surfaced()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL
