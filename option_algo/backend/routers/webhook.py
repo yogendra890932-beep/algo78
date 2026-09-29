@@ -9,7 +9,8 @@
 #   open → trigger_pending → complete / rejected / cancelled
 #
 # This endpoint:
-#   1. Verifies the HMAC-SHA256 signature (config: WEBHOOK_SECRET)
+#   1. Optionally verifies an HMAC-SHA256 signature (only when
+#      WEBHOOK_ENFORCE_SIGNATURE=true — Upstox postbacks are unsigned)
 #   2. Normalises the payload (handles V2 and V3 field names)
 #   3. Identifies which user owns this order (by order tag or
 #      scanning active subscriptions via Redis)
@@ -17,9 +18,11 @@
 #   5. Publishes an ORDER_UPDATE event on the Redis event bus so the
 #      dashboard live feed updates instantly
 #
-# WEBHOOK_SECRET — set to the "Postback Secret" shown in your
-# Upstox developer app. If not set, signature verification is
-# skipped (only suitable for local dev / testing).
+# SIGNATURES: Upstox order-update postbacks do NOT carry a signature
+# or "Postback Secret", so verification is OFF by default. A missing
+# signature must never drop a real order update (that would stall fill
+# detection and SL tracking). Set WEBHOOK_ENFORCE_SIGNATURE=true only
+# if postbacks are signed by a proxy you control.
 #
 # IMPORTANT: this endpoint MUST be publicly reachable over HTTPS.
 # For local dev, use ngrok: ngrok http 8000
@@ -49,26 +52,34 @@ settings = get_settings()
 
 def _verify_signature(raw_body: bytes, sig_header: Optional[str]) -> bool:
     """
-    Upstox signs the raw request body with HMAC-SHA256 using the
-    Postback Secret. Header name: x-upstox-signature (or similar —
-    Upstox documentation calls it "x-upstox-webhook-signature").
-    We accept either header name for forward compatibility.
+    Optional HMAC-SHA256 verification.
 
-    If WEBHOOK_SECRET is not configured, verification is skipped
-    (logs a warning). In production, always configure the secret.
+    Upstox order-update postbacks are UNSIGNED — there is no postback
+    secret — so by default this returns True and the update is always
+    processed. Verification only runs when WEBHOOK_ENFORCE_SIGNATURE
+    is true (e.g. a signing proxy you control in front of Upstox).
+
+    Returns False only when enforcement is on and the signature is
+    missing or does not match.
     """
+    enforce = bool(getattr(settings, "WEBHOOK_ENFORCE_SIGNATURE", False))
     secret = getattr(settings, "WEBHOOK_SECRET", "")
-    if not secret:
-        # No secret configured — accept all (dev/testing only)
-        print("[webhook] ⚠️  WEBHOOK_SECRET not set — skipping signature verification")
+    if not enforce:
+        if sig_header:
+            print("[webhook] ℹ️ Signature header present but verification "
+                  "is disabled (WEBHOOK_ENFORCE_SIGNATURE not set) — accepting")
         return True
+    if not secret:
+        print("[webhook] ❌ Enforcement is on but WEBHOOK_SECRET is empty — "
+              "cannot verify signature")
+        return False
     if not sig_header:
-        print("[webhook] ❌ Signature verification failed: No signature header received in request.")
+        print("[webhook] ❌ Signature verification failed: no signature header")
         return False
     expected = hmac.new(
         secret.encode(), raw_body, hashlib.sha256
     ).hexdigest()
-    # Upstox may prefix with "sha256=" — strip if present
+    # Some senders prefix with "sha256=" — strip if present
     received = sig_header.replace("sha256=", "").strip()
     match = hmac.compare_digest(expected, received)
     if match:

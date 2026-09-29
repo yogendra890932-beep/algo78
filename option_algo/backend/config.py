@@ -36,10 +36,15 @@ class Settings:
     VAPID_PRIVATE_KEY: str            = os.getenv("VAPID_PRIVATE_KEY", "")
     VAPID_CLAIM_EMAIL: str            = os.getenv("VAPID_CLAIM_EMAIL", "admin@algo_bot.com")
 
-    # Upstox webhook signature secret (set in Upstox developer app
-    # → Webhook → Postback Secret). Leave blank in dev to skip
-    # signature verification (NOT safe for production).
+    # Upstox webhook signature secret. NOTE: Upstox order-update
+    # postbacks are sent UNSIGNED — there is no postback secret/HMAC.
+    # Signature verification is therefore OFF by default and only runs
+    # when WEBHOOK_ENFORCE_SIGNATURE=true (for brokers/proxies that do
+    # sign). Never let a missing signature drop a real order update.
     WEBHOOK_SECRET: str               = os.getenv("WEBHOOK_SECRET", "")
+    WEBHOOK_ENFORCE_SIGNATURE: bool   = (
+        os.getenv("WEBHOOK_ENFORCE_SIGNATURE", "false").lower() == "true"
+    )
 
     # ── Shared Worker Feature Flags ────────────────────────────────
     # When USE_SHARED_WORKER=true, the worker process uses the
@@ -215,10 +220,11 @@ def validate_config() -> Dict[str, List[str]]:
             "DEBUG=true — disable in production (enables verbose SQL "
             "echo and other dev-only behaviour)"
         )
-    if not settings.WEBHOOK_SECRET:
+    if settings.WEBHOOK_ENFORCE_SIGNATURE and not settings.WEBHOOK_SECRET:
         warnings.append(
-            "WEBHOOK_SECRET is empty — Upstox webhook signature "
-            "verification is disabled (unsafe for production)"
+            "WEBHOOK_ENFORCE_SIGNATURE=true but WEBHOOK_SECRET is empty — "
+            "signature verification cannot run; all webhook postbacks "
+            "would be rejected"
         )
     if settings.USE_SHARED_WORKER:
         if not _raw_env("UPSTOX_API_KEY"):

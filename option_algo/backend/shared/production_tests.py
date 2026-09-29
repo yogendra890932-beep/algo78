@@ -830,6 +830,40 @@ def test_rejection_reason_reporting():
 
 
 # ================================================================
+# TEST 17: Upstox webhook signature verification is opt-in
+# ================================================================
+
+def test_webhook_signature_optin():
+    print("\n=== Test: Webhook signature verification is opt-in ===")
+
+    wh = _read_src("backend/routers/webhook.py")
+    if "WEBHOOK_ENFORCE_SIGNATURE" in wh:
+        _ok("webhook honours the WEBHOOK_ENFORCE_SIGNATURE flag")
+    else:
+        _fail("webhook does not gate verification behind a flag")
+    if "if not enforce:" in wh:
+        _ok("webhook accepts unsigned postbacks by default")
+    else:
+        _fail("webhook can still reject unsigned postbacks by default")
+    if "no signature header" in wh and "return False" in wh:
+        _ok("webhook only fails when enforcement is on")
+    else:
+        _fail("webhook failure path missing")
+
+    cfg = _read_src("backend/config.py")
+    if 'WEBHOOK_ENFORCE_SIGNATURE' in cfg and '"false"' in cfg:
+        _ok("config defaults WEBHOOK_ENFORCE_SIGNATURE to false")
+    else:
+        _fail("config is missing the default-off flag")
+
+    env = _read_src(".env.example")
+    if "WEBHOOK_ENFORCE_SIGNATURE=false" in env:
+        _ok(".env.example documents the opt-in flag")
+    else:
+        _fail(".env.example missing WEBHOOK_ENFORCE_SIGNATURE")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -859,6 +893,7 @@ def run_all_tests():
     test_tick_size_rounding()
     test_strategy_codenames()
     test_rejection_reason_reporting()
+    test_webhook_signature_optin()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL
