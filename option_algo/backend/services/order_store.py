@@ -41,6 +41,36 @@ ORDER_TTL_SEC   = 7200   # 2 hours — covers a full trading session
 FILLED_STATUSES   = {"complete", "filled", "traded"}
 REJECTED_STATUSES = {"rejected", "cancelled", "error", "failed"}
 
+# Last broker rejection reason per order_id. wait_for_fill_sync records
+# the reason here so callers (execution layer / engines) can surface WHY
+# an order failed instead of just seeing a bare None.
+_LAST_REJECTION: dict = {}
+
+
+def _rejection_reason(update: dict) -> str:
+    """Pull the human-readable reason out of a normalised order update."""
+    if not isinstance(update, dict):
+        return ""
+    msg = update.get("message")
+    if not msg:
+        raw = update.get("raw")
+        if isinstance(raw, dict):
+            msg = (raw.get("status_message") or raw.get("message")
+                   or raw.get("rejection_reason"))
+    return str(msg or "").strip()
+
+
+def _note_rejection(order_id: str, where: str, update: dict) -> None:
+    reason = _rejection_reason(update)
+    _LAST_REJECTION[order_id] = reason
+    print(f"[worker-store] ❌ {where}: Order rejected/cancelled"
+          + (f" — reason: {reason}" if reason else ""))
+
+
+def get_last_rejection(order_id: str) -> str:
+    """Broker rejection reason for order_id, or '' if none recorded."""
+    return _LAST_REJECTION.get(str(order_id), "")
+
 
 def _normalise_status(raw: str) -> str:
     return raw.lower().strip().replace(" ", "_")
@@ -162,7 +192,7 @@ def wait_for_fill_sync(order_id: str, timeout: float = 15.0) -> Optional[float]:
                 pass
             return fill_price
         if is_rejected_status(status):
-            print(f"[worker-store] ❌ Fast path match: Order rejected/cancelled. Unsubscribing.")
+            _note_rejection(order_id, "Fast path match", update)
             try:
                 pubsub.unsubscribe(notify_channel)
                 pubsub.close()
@@ -173,6 +203,7 @@ def wait_for_fill_sync(order_id: str, timeout: float = 15.0) -> Optional[float]:
     # 3. Message loop with polling fallback
     deadline = _time.time() + timeout
     fill_price = None
+    rejected = False
     print(f"[worker-store] 🔁 Entering Pub/Sub wait loop for order_id={order_id} (deadline={_time.strftime('%H:%M:%S', _time.localtime(deadline))})")
     
     try:
@@ -188,7 +219,8 @@ def wait_for_fill_sync(order_id: str, timeout: float = 15.0) -> Optional[float]:
                         print(f"[worker-store] ✅ Loop fallback check: Order filled @ ₹{fill_price} inside wait loop.")
                         break
                     if is_rejected_status(status):
-                        print(f"[worker-store] ❌ Loop fallback check: Order rejected/cancelled inside wait loop.")
+                        _note_rejection(order_id, "Loop fallback check", update)
+                        rejected = True
                         break
                 continue
                 
@@ -206,7 +238,8 @@ def wait_for_fill_sync(order_id: str, timeout: float = 15.0) -> Optional[float]:
                 print(f"[worker-store] ✅ Pub/Sub match: Order filled @ ₹{fill_price}")
                 break
             if is_rejected_status(status):
-                print(f"[worker-store] ❌ Pub/Sub match: Order rejected/cancelled")
+                _note_rejection(order_id, "Pub/Sub match", data)
+                rejected = True
                 break
     finally:
         try:
@@ -216,6 +249,6 @@ def wait_for_fill_sync(order_id: str, timeout: float = 15.0) -> Optional[float]:
         except Exception as e:
             print(f"[worker-store] ⚠️ Error closing pubsub: {e}")
 
-    if fill_price is None:
+    if fill_price is None and not rejected:
         print(f"[worker-store] ⚠️ wait_for_fill_sync timed out after {timeout}s for order_id={order_id}")
     return fill_price

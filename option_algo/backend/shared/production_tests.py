@@ -786,6 +786,50 @@ def test_strategy_codenames():
 
 
 # ================================================================
+# TEST 16: Broker rejection reasons are logged, not misreported
+# ================================================================
+
+def test_rejection_reason_reporting():
+    print("\n=== Test: Order rejection reason reporting ===")
+
+    store = _read_src("backend/services/order_store.py")
+    if "_note_rejection" in store and "def get_last_rejection" in store:
+        _ok("order_store records and exposes the rejection reason")
+    else:
+        _fail("order_store rejection-reason plumbing missing")
+    if "status_message" in store and "rejection_reason" in store:
+        _ok("order_store extracts status_message/rejection_reason")
+    else:
+        _fail("order_store does not extract the broker message")
+    if "fill_price is None and not rejected" in store:
+        _ok("wait_for_fill_sync no longer reports a rejection as a timeout")
+    else:
+        _fail("wait_for_fill_sync still misreports rejections as timeouts")
+
+    layer = _read_src("backend/services/execution_layer.py")
+    if "get_last_rejection" in layer and "broker rejected" in layer:
+        _ok("execution_layer surfaces the entry rejection reason")
+    else:
+        _fail("execution_layer does not surface entry rejection reason")
+
+    mgr = _read_src("backend/shared/user_execution_manager.py")
+    if "get_last_rejection" in mgr and "rejected by broker" in mgr:
+        _ok("shared live fill-wait logs the broker rejection reason")
+    else:
+        _fail("shared live fill-wait does not log the broker reason")
+    if "refusing" in mgr and "index token" in mgr:
+        _ok("shared order placement refuses to send the index token")
+    else:
+        _fail("shared order placement can still send the index token")
+
+    engine = _read_src("backend/engine/engine_v6.py")
+    if "get_last_rejection" in engine and "rejected by broker" in engine:
+        _ok("engine fill-wait logs the broker rejection reason")
+    else:
+        _fail("engine fill-wait does not log the broker reason")
+
+
+# ================================================================
 # MAIN
 # ================================================================
 
@@ -814,6 +858,7 @@ def run_all_tests():
     test_auto_trading_gate()
     test_tick_size_rounding()
     test_strategy_codenames()
+    test_rejection_reason_reporting()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

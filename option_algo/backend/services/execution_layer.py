@@ -175,9 +175,18 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
 
         eid = eng._place_order("BUY", qty, **kw)
         if not eid:
+            print(f"[execution_layer] entry order not placed for trade "
+                  f"#{trade_id} {signal.symbol} — broker returned no order id "
+                  f"(check logs above for the rejection reason)")
             return None
         fill = eng._get_fill_price(eid)
         if not fill:
+            from backend.services.order_store import get_last_rejection
+            reason = get_last_rejection(eid)
+            print(f"[execution_layer] entry order {eid} for trade #{trade_id} "
+                  f"{signal.symbol} not filled"
+                  + (f" — broker rejected: {reason}" if reason
+                     else " (timeout, no fill confirmation)"))
             return None
 
         # Approved semi-auto trades fill at the CURRENT market price,

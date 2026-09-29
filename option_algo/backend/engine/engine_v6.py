@@ -2365,11 +2365,17 @@ class SymbolEngine:
         # Blocks on Redis pub/sub until webhook delivers the fill
         # or `timeout` seconds elapse.
         try:
-            from backend.services.order_store import wait_for_fill_sync
+            from backend.services.order_store import (
+                get_last_rejection, wait_for_fill_sync,
+            )
             fill = wait_for_fill_sync(order_id, timeout=float(timeout))
             if fill is not None:
                 print(_now(), f"[{self.symbol}] ✅ Entry fill confirmed via Webhook. Price: ₹{fill}")
                 return fill
+            rej = get_last_rejection(order_id)
+            if rej:
+                print(_now(), f"[{self.symbol}] ❌ Entry order {order_id} "
+                              f"rejected by broker: {rej}")
         except Exception as e:
             print(_now(), f"[{self.symbol}] webhook fill wait exception: {e}")
 

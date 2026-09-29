@@ -1183,10 +1183,16 @@ class UserExecutionManager:
     def _get_fill_price_live(self, order_id: str, timeout: int = 5) -> Optional[float]:
         """Webhook fill wait, then Upstox API polling fallback."""
         try:
-            from backend.services.order_store import wait_for_fill_sync
+            from backend.services.order_store import (
+                get_last_rejection, wait_for_fill_sync,
+            )
             fill = wait_for_fill_sync(order_id, timeout=float(timeout))
             if fill is not None:
                 return fill
+            reason = get_last_rejection(order_id)
+            if reason:
+                print(f"{_now()} [exec:u{self.user_id}] ❌ Live order {order_id} "
+                      f"rejected by broker: {reason}")
         except Exception as e:
             print(f"{_now()} [exec:u{self.user_id}] webhook fill wait error: {e}")
         api = upstox_client.OrderApiV3(self._api_client())
@@ -1199,9 +1205,17 @@ class UserExecutionManager:
                                      getattr(resp.data, "status", ""))).lower()
                     if st in ("complete", "filled"):
                         return float(resp.data.average_price)
+                    if st in ("rejected", "cancelled", "error", "failed"):
+                        msg = str(getattr(resp.data, "status_message", "") or "")
+                        print(f"{_now()} [exec:u{self.user_id}] ❌ Live order "
+                              f"{order_id} {st}"
+                              + (f" — {msg}" if msg else ""))
+                        return None
             except Exception:
                 pass
             time.sleep(0.3)
+        print(f"{_now()} [exec:u{self.user_id}] ⚠️ Live order {order_id} not "
+              f"filled within {timeout}s — no fill confirmation")
         return None
 
     # ================================================================
@@ -1476,6 +1490,16 @@ class _MockEngine:
         if not self.paper_mode:
             # Live path (mirrors legacy engine_v6._place_order): send a
             # real Upstox order and return the broker order id.
+            # Never send the underlying index token as an options order —
+            # Upstox rejects it. If no option contract key is resolvable,
+            # bail out loudly so the caller surfaces the failure instead
+            # of placing a dead order against the index.
+            underlying = self.cfg.get("underlying_token", "")
+            if not ik or ik == underlying:
+                print(f"{_now()} [exec:u{self._mgr.user_id}] ⛔ No option "
+                      f"instrument_key for {self.symbol} live order — refusing "
+                      f"to send index token {ik or '(empty)'}")
+                return None
             return self._mgr._place_order_live(
                 side, qty, order_type=order_type,
                 trigger=trigger or 0, instrument_key=ik,
