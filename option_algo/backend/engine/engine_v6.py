@@ -489,6 +489,7 @@ class SymbolEngine:
         self.ITM_RESELECT_EXTRA_STEPS = 2
         self._regime           = MarketRegimeAnalyzer()
         self._last_regime_log: float = 0.0
+        self._last_flip_block_log: float = 0.0
 
         # Option Chain monitor (optional — started after first instrument selected)
         self._oc: Optional[object] = None   # OptionChainAnalyzer instance
@@ -868,6 +869,16 @@ class SymbolEngine:
         if new_dir == self.direction:
             return
 
+        # Never flip direction while this symbol has an open position.
+        # A flip would force a DIRECTION_FLIP_EXIT, so hold the current
+        # direction until the position closes.
+        if self.position:
+            if time.time() - self._last_flip_block_log > 60:
+                print(_now(), f"[{self.symbol}] Direction flip "
+                      f"{self.direction} → {new_dir} blocked — position open")
+                self._last_flip_block_log = time.time()
+            return
+
         if not self._dir_lock.acquire(blocking=False):
             return
         try:
@@ -878,8 +889,6 @@ class SymbolEngine:
             print(_now(), f"[{self.symbol}] Direction: {old_dir} → {new_dir}")
             if self.underlying_ltp is None:
                 return
-            if self.position:
-                self._emergency_exit()
             opt_type = "CE" if new_dir == "BULL" else "PE"
             try:
                 info = get_itm_instrument(opt_type, self.underlying_ltp, self.symbol,

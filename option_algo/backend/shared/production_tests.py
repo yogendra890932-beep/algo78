@@ -946,6 +946,26 @@ def test_idle_no_feed_and_auto_off():
         _fail("terminal has no idle status poll")
 
 
+def test_no_direction_flip_with_open_position():
+    print("\n=== Test: No direction flip while a position is open ===")
+
+    eng = _read_src("backend/engine/engine_v6.py")
+    if "blocked — position open" in eng and "Direction flip" in eng:
+        _ok("legacy engine blocks direction flip on an open position")
+    else:
+        _fail("legacy engine still flips with an open position")
+    if "self._emergency_exit()" not in eng:
+        _ok("legacy engine no longer force-exits on direction flip")
+    else:
+        _fail("legacy engine still force-exits on direction flip")
+
+    prem = _read_src("backend/shared/option_premium_service.py")
+    if "blocked — position open" in prem and "has_open_position(self.symbol)" in prem:
+        _ok("shared premium builder does not roll with an open position")
+    else:
+        _fail("shared premium builder still rolls with an open position")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -978,6 +998,7 @@ def run_all_tests():
     test_webhook_signature_optin()
     test_entry_failure_surfaced()
     test_idle_no_feed_and_auto_off()
+    test_no_direction_flip_with_open_position()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

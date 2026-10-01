@@ -27,6 +27,7 @@
 
 import json
 import threading
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -78,6 +79,7 @@ class SharedOptionPremiumBuilder:
         self._strike: Optional[float] = None
         self._expiry_str: str = ""
         self._strike_step: int = 0
+        self._last_flip_block_log: float = 0.0
 
         self._bars: list[dict] = []
         self._cur_min: Optional[str] = None
@@ -207,6 +209,21 @@ class SharedOptionPremiumBuilder:
 
         if self._opt_type == opt_type and self._instrument_key and not self._option_expired():
             return False
+
+        # Do NOT roll (flip direction) while ANY user holds an open
+        # position on this symbol. Rolling switches the option contract
+        # under the live trade, which forces a DIRECTION_FLIP_EXIT. Hold
+        # the current option until the position closes (unless it expired).
+        try:
+            from backend.shared.user_execution_manager import user_registry
+            if not self._option_expired() and user_registry.has_open_position(self.symbol):
+                if time.time() - self._last_flip_block_log > 60:
+                    print(f"{_now()} [premium:{self.symbol}] Roll "
+                          f"{self._opt_type}→{opt_type} blocked — position open")
+                    self._last_flip_block_log = time.time()
+                return False
+        except Exception as e:
+            print(f"{_now()} [premium:{self.symbol}] flip guard err: {e}")
 
         ltp = float(df["close"].iloc[-1])
         try:
