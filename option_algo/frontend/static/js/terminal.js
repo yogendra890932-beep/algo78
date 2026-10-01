@@ -63,6 +63,7 @@ const state = {
   events: [],
   ws: null,
   wsHealthy: false,
+  botRunning: false,    // live WS + market-data only while a bot runs
   chart: null,          // premium (option) chart engine instance
   underlyingChart: null,// underlying chart engine instance
   pnlThrottle: 0,
@@ -100,11 +101,39 @@ async function loadBootstrap() {
   renderPendingTrades(data.pending_trades || []);
   renderTradeStatus();
 
-  const first = Object.keys(data.symbols || {})[0] || "NIFTY";
-  await selectSymbol(first);
+  // Market data (WS + history) is loaded ONLY while a bot is running.
+  // With no bot there is no market feed, so we open no socket and fetch
+  // no candles; syncTerminalLive() also tears down an existing socket.
+  if (data.bot_running) {
+    const first = Object.keys(data.symbols || {})[0] || "NIFTY";
+    await selectSymbol(first);
+    loadTrades();
+  }
+  syncTerminalLive(!!data.bot_running);
+}
 
-  loadTrades();
-  connectWS();
+// Toggle the terminal's live feed in step with the bot status. When it
+// stops, close the socket without triggering the reconnect loop.
+function syncTerminalLive(running) {
+  const was = state.botRunning;
+  state.botRunning = !!running;
+  if (running) {
+    connectWS();
+  } else if (was && state.ws) {
+    try { state.ws.onclose = null; state.ws.close(); } catch (e) { }
+    state.ws = null;
+    state.wsHealthy = false;
+    const el = $("term-conn-state");
+    if (el) { el.textContent = "Feed: IDLE"; el.className = "term-pill term-pill-idle"; }
+  }
+}
+
+// Idle poll — the only request made while no bot runs.
+async function refreshBotStatus() {
+  const r = await apiFetch("/api/bot/status");
+  if (!r || !r.ok) return;
+  const d = await r.json();
+  if (!!d.running !== state.botRunning) loadBootstrap();
 }
 
 /* ─────────────── Watchlist & symbol selection ─────────────── */
@@ -239,6 +268,7 @@ function handleSnapshot(m) {
 
 /* ─────────────── WS ─────────────── */
 function connectWS() {
+  if (!state.botRunning) return;   // no bot → no feed
   const uid = getUserId();
   const token = getToken();
   if (!uid || !token) { redirectLogin(); return; }
@@ -265,7 +295,7 @@ function connectWS() {
     }
     $("term-conn-state").textContent = "Feed: RECONNECTING";
     $("term-conn-state").className = "term-pill term-pill-idle";
-    setTimeout(connectWS, 3000);
+    if (state.botRunning) setTimeout(connectWS, 3000);
   };
   ws.onerror = () => { try { ws.close(); } catch (e) { } };
 }
@@ -554,7 +584,8 @@ function handleEvent(m) {
     refreshPendingTrades();
   }
   if (evt === "BOT_STATUS") {
-    renderBotStatus(true, m);
+    syncTerminalLive(m.status === "running");
+    renderBotStatus(m.status === "running", m);
   }
   renderPnlThrottled();
 }
@@ -2426,6 +2457,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("resize", resizeCharts);
   updateCandleTimer();
   setInterval(updateCandleTimer, 1000);
+  setInterval(refreshBotStatus, 15000);   // idle: notice a start elsewhere
   loadBootstrap();
 });
 

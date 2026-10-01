@@ -900,10 +900,55 @@ def test_entry_failure_surfaced():
         _fail("terminal does not render ORDER_ALERT")
 
 
+def test_idle_no_feed_and_auto_off():
+    print("\n=== Test: No market data when idle + 15:45 IST auto-off ===")
+
+    sm = _read_src("backend/shared/symbol_manager.py")
+    if "def _is_real_user" in sm and "not _is_real_user(user_id)" in sm:
+        _ok("symbol manager only accepts real users (id > 0)")
+    else:
+        _fail("symbol manager does not guard against sentinel subscribers")
+    if "def recover_active_symbols" in sm and "Reset" in sm:
+        _ok("restart resets subscriptions (no feed until a bot starts)")
+    else:
+        _fail("restart recovery does not clear subscriptions")
+
+    w = _read_src("backend/shared/shared_worker.py")
+    if "add_subscriber(-1" not in w:
+        _ok("no sentinel (-1) subscriber keeps services alive")
+    else:
+        _fail("sentinel (-1) subscriber still present")
+    for code in ("def _maybe_auto_stop_all", "AUTO_STOP_MINUTE = 45",
+                 "is_nse_holiday", "self.stop_user(uid)"):
+        if code in w:
+            _ok(f"auto-off uses {code}")
+        else:
+            _fail(f"auto-off missing {code}")
+
+    dash = _read_src("frontend/templates/dashboard.html")
+    if "function syncLiveMode" in dash and "if (!botRunning) return;" in dash:
+        _ok("dashboard opens WS/polling only while a bot runs")
+    else:
+        _fail("dashboard does not gate live mode on bot status")
+    if "/api/bot/status" in dash:
+        _ok("dashboard idle-polls bot status")
+    else:
+        _fail("dashboard has no idle status poll")
+
+    term = _read_src("frontend/static/js/terminal.js")
+    if "function syncTerminalLive" in term and "if (!state.botRunning) return;" in term:
+        _ok("terminal opens WS only while a bot runs")
+    else:
+        _fail("terminal does not gate live feed on bot status")
+    if "/api/bot/status" in term:
+        _ok("terminal idle-polls bot status")
+    else:
+        _fail("terminal has no idle status poll")
+
+
 # ================================================================
 # MAIN
 # ================================================================
-
 def run_all_tests():
     global PASS, FAIL
     PASS = 0
@@ -932,6 +977,7 @@ def run_all_tests():
     test_rejection_reason_reporting()
     test_webhook_signature_optin()
     test_entry_failure_surfaced()
+    test_idle_no_feed_and_auto_off()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

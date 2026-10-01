@@ -104,6 +104,9 @@ class SharedWorkerOrchestrator:
         self._command_thread: Optional[threading.Thread] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._cleanup_threads: list[threading.Thread] = []
+        # IST date (YYYY-MM-DD) on which the 15:45 auto-off already ran,
+        # so all bots are stopped at most once per trading day.
+        self._auto_stopped_date: Optional[str] = None
 
     def set_main_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the asyncio event loop for dispatching async callbacks."""
@@ -237,7 +240,6 @@ class SharedWorkerOrchestrator:
                     if count <= 0:
                         self._stop_services_for(symbol)
                         self._services_initialized.discard(symbol)
-                        remove_subscriber(-1, symbol)
                         print(f"{_now()} [SharedWorker] Cleaned up shared services for {symbol}")
 
         thread = threading.Thread(
@@ -311,7 +313,10 @@ class SharedWorkerOrchestrator:
                 return
             self._services_initialized.add(symbol)
 
-        add_subscriber(-1, symbol)  # system subscriber
+        # NOTE: no "system subscriber" sentinel is registered. Only real
+        # users (id > 0) hold subscriptions, so when the last bot stops
+        # the ref-count reaches 0 and the broker WebSocket + quote
+        # fetching are torn down.
 
         def _init():
             try:
@@ -356,9 +361,6 @@ class SharedWorkerOrchestrator:
 
     def _cleanup_shared_services(self):
         """Stop all shared services (during full shutdown)."""
-        for symbol in list(self._services_initialized):
-            remove_subscriber(-1, symbol)
-
         services = [
             (SharedMarketDataService, SharedMarketDataService._instances_lock),
             (SharedCandleBuilder, SharedCandleBuilder._instances_lock),
@@ -661,6 +663,11 @@ class SharedWorkerOrchestrator:
             except Exception as e:
                 print(f"{_now()} [shared-orch] heartbeat error: {e}")
 
+            # Auto-stop every bot at 15:45 IST on trading days. After the
+            # last bot stops the ref-count hits 0, so shared market-data
+            # services (and the broker WebSocket) wind down on their own.
+            self._maybe_auto_stop_all()
+
             cycle += 1
             if cycle % 6 == 0:
                 try:
@@ -674,6 +681,57 @@ class SharedWorkerOrchestrator:
 
             self._stop_event.wait(self.HEARTBEAT_SEC)
 
+    # ── 15:45 IST auto-off ────────────────────────────────────────
+    AUTO_STOP_HOUR = 15
+    AUTO_STOP_MINUTE = 45
+
+    def _maybe_auto_stop_all(self):
+        """Stop every running bot after 15:45 IST on NSE trading days.
+
+        Runs at most once per IST day. Bots are stopped only — open
+        positions are intentionally NOT squared off (per product
+        decision). Once the last bot stops, the normal ref-count
+        cleanup tears down the shared market-data services, so the
+        worker stops opening the broker WebSocket / fetching quotes.
+        """
+        try:
+            from backend.shared.shared_cache import now_ist, is_nse_holiday
+            now = now_ist()
+            if now.weekday() >= 5:              # Sat / Sun
+                return
+            if is_nse_holiday(now.date()):
+                return
+            if (now.hour, now.minute) < (self.AUTO_STOP_HOUR,
+                                         self.AUTO_STOP_MINUTE):
+                return
+            today = now.date().isoformat()
+            if self._auto_stopped_date == today:
+                return
+            self._auto_stopped_date = today
+        except Exception as e:
+            print(f"{_now()} [shared-orch] auto-off check error: {e}")
+            return
+
+        running = list(self._user_registry.running_users())
+        if not running:
+            return
+
+        print(f"{_now()} [shared-orch] ⏰ 15:45 IST auto-off — stopping "
+              f"{len(running)} bot(s): {running}")
+        for uid in running:
+            try:
+                self.stop_user(uid)
+                set_bot_status_sync(uid, "stopped",
+                                    "Auto-stopped at 15:45 IST")
+                publish_event_sync(uid, {
+                    "event": "BOT_STATUS",
+                    "status": "stopped",
+                    "error": "Auto-stopped at 15:45 IST (market close)",
+                })
+            except Exception as e:
+                print(f"{_now()} [shared-orch] auto-off stop {uid} "
+                      f"failed: {e}")
+
     def _register_worker(self):
         hb_key = worker_heartbeat("orchestrator", self._worker_id)
         self._r.set(hb_key, _now(), ex=30)
@@ -685,13 +743,12 @@ class SharedWorkerOrchestrator:
         self._r.delete(hb_key)
 
     def _restore_running_users(self):
-        """Restore active symbol subscriptions from Redis after restart.
+        """Reset subscriptions on restart (no auto-restart of bots).
 
-        After a worker reboot, shared services must be re-initialized.
-        While we do not auto-restart user bots (that requires fresh
-        access tokens and explicit user action), we do restore the
-        active symbol set so that market data, candles, and indicators
-        resume immediately for any symbols that had subscribers.
+        A worker reboot drops every in-memory execution manager, so no
+        bot is really running. We clear all symbol subscriptions and the
+        active set; market data (broker WebSocket, quote fetching) will
+        only start again when a user presses Start.
         """
         try:
             from backend.shared.symbol_manager import recover_active_symbols

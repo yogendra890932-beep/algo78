@@ -1277,6 +1277,11 @@
                                             let allFeedLines = [];
                                             let activePositions = {};   // symbol → position data
                                             let botPaused = false;
+                                            // Live data (WS + polling) is only on while a
+                                            // bot is running. With no user (user 0) or all
+                                            // bots off we open no socket and fetch nothing.
+                                            let botRunning = false;
+                                            let _liveTimers = [];
 
                                             // ── Load config ──────────────────────────────────────────────────
                                             async function loadConfig() {
@@ -1395,6 +1400,44 @@
                                                 document.getElementById('btn-pause').style.display = '';
                                                 document.getElementById('btn-resume').style.display = 'none';
                                               }
+                                              syncLiveMode(!!running);
+                                            }
+
+                                            // Open the WebSocket + start polling ONLY while a
+                                            // bot runs. When it stops we close the socket and
+                                            // clear every market-data timer, then fall back to a
+                                            // slow bot-status poll so we notice a start.
+                                            function syncLiveMode(running) {
+                                              if (running === botRunning) {
+                                                if (running) connectWS();
+                                                return;
+                                              }
+                                              botRunning = running;
+                                              if (running) {
+                                                connectWS();
+                                                loadPositions(); loadSummary(); loadTodayTrades();
+                                                _liveTimers.push(setInterval(loadPositions, 2000));
+                                                _liveTimers.push(setInterval(loadSummary, 30000));
+                                                _liveTimers.push(setInterval(loadTodayTrades, 30000));
+                                              } else {
+                                                _liveTimers.forEach(clearInterval);
+                                                _liveTimers = [];
+                                                if (ws) {
+                                                  try { ws.onclose = null; ws.close(); } catch (e) { }
+                                                  ws = null;
+                                                }
+                                                const dot = document.getElementById('ws-dot');
+                                                if (dot) dot.className = 'ws-dot';
+                                              }
+                                            }
+
+                                            // Lightweight poll while idle — the ONLY request we
+                                            // make when no bot is running.
+                                            async function refreshBotStatus() {
+                                              const r = await apiFetch('/api/bot/status');
+                                              if (!r || !r.ok) return;
+                                              const d = await r.json();
+                                              updateBotStatus(!!d.running);
                                             }
 
                                             // ── Pending Trade Modal (Semi Auto mode) ─────────────────────────
@@ -1670,11 +1713,13 @@
 
                                             // ── WebSocket live feed ──────────────────────────────────────────
                                             function connectWS() {
+                                              // No bot running (or no user) → no socket at all.
+                                              if (!botRunning) return;
+                                              if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
                                               const uid = getUserId();   // decodes from JWT — no race with syncUserInfo()
                                               const token = getToken();
                                               if (!uid || !token) {
-                                                console.warn('connectWS: missing uid or token, retrying in 1s');
-                                                setTimeout(connectWS, 1000);
+                                                // Likely user 0 / not signed in — do not connect.
                                                 return;
                                               }
                                               const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1685,7 +1730,9 @@
                                               };
                                               ws.onclose = () => {
                                                 document.getElementById('ws-dot').className = 'ws-dot';
-                                                setTimeout(connectWS, 3000);
+                                                ws = null;
+                                                // Only reconnect while a bot is still running.
+                                                if (botRunning) setTimeout(connectWS, 3000);
                                               };
                                               ws.onmessage = e => {
                                                 try { handleEvent(JSON.parse(e.data)); } catch { }
@@ -2081,19 +2128,17 @@
                                               const dateEl = document.getElementById('today-date');
                                               if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-IN',
                                                 { day: '2-digit', month: 'short', year: 'numeric' });
-loadConfig();
-                                              loadSummary();
-                                              loadTodayTrades();
-                                              loadPositions();
-                                              connectWS();
-                                              vaInit();
-                                              initPush();
-                                              checkEmailVerified();
+  // loadConfig() reports bot status → syncLiveMode() opens the
+  // WebSocket and starts market-data polling only if a bot is running.
+  loadConfig();
+  vaInit();
+  initPush();
+  checkEmailVerified();
   checkSubscriptionStatus();
-  setInterval(loadPositions, 2000);
-  setInterval(loadSummary, 30000);
-  setInterval(loadTodayTrades, 30000);
+  // Idle: poll only the bot-status endpoint. While running,
+  // syncLiveMode installs the positions/summary/trades timers.
   setInterval(loadPaymentStatus, 30000);
+  setInterval(refreshBotStatus, 15000);
                                             });
                                           </script>
                                           {% endblock %}

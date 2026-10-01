@@ -25,14 +25,31 @@ def _r():
     return get_redis_sync()
 
 
+def _is_real_user(user_id) -> bool:
+    """Only real users (id > 0) may hold a subscription.
+
+    Sentinel/placeholder ids (0, -1, None) must never keep market data
+    or the broker WebSocket alive when no bot is actually running.
+    """
+    try:
+        return int(user_id) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def add_subscriber(user_id: int, symbol: str) -> int:
     """
     Register a user as a subscriber for a symbol.
     Returns the new subscriber count.
     If count goes from 0→1, the symbol should be activated.
     """
-    r = _r()
     sym = symbol.upper()
+    if not _is_real_user(user_id):
+        print(f"[symbol_manager] Ignoring non-user subscriber "
+              f"{user_id!r} for {sym}")
+        return get_subscriber_count(sym)
+
+    r = _r()
 
     # Track which symbols this user has
     r.sadd(user_symbols_key(user_id), sym)
@@ -54,8 +71,11 @@ def remove_subscriber(user_id: int, symbol: str) -> int:
     Returns the new subscriber count.
     If count hits 0, the symbol should be deactivated.
     """
-    r = _r()
     sym = symbol.upper()
+    if not _is_real_user(user_id):
+        return get_subscriber_count(sym)
+
+    r = _r()
 
     r.srem(user_symbols_key(user_id), sym)
 
@@ -101,32 +121,30 @@ def clear_user_subscriptions(user_id: int):
 
 def recover_active_symbols():
     """
-    Called at worker startup to restore active symbol state.
-    Scans user_symbols keys to rebuild subscriber counts.
-    """
-    print("[symbol_manager] Recovering active symbols...")
-    r = _r()
-    r.delete(active_symbols_key())  # Clear and rebuild
+    Called at worker startup to reset active symbol state.
 
-    # Scan all user:symbols keys
+    A worker restart drops every in-memory execution manager, so NO
+    bot is really running afterwards (users must press Start again).
+    We therefore purge all ``user:*:symbols`` keys and rebuild an empty
+    active set. Result: no market data feed (no broker WebSocket / no
+    quote fetching) until a real user starts a bot.
+    """
+    print("[symbol_manager] Resetting active symbols (worker restart)...")
+    r = _r()
+
+    # Purge per-user subscriptions and stale subscriber counts.
     cursor = 0
-    all_symbols = {}
     while True:
         cursor, keys = r.scan(cursor=cursor, match="user:*:symbols", count=100)
         for key in keys:
-            symbols = r.smembers(key)
-            for sym in symbols:
-                sym = sym.upper() if isinstance(sym, str) else sym.decode().upper()
-                all_symbols[sym] = all_symbols.get(sym, 0) + 1
+            r.delete(key)
         if cursor == 0:
             break
 
-    # Rebuild subscriber counts and active set
-    for sym, count in all_symbols.items():
-        r.set(symbol_subscriber_count(sym), count)
-        if count > 0:
-            r.sadd(active_symbols_key(), sym)
+    for sym in r.smembers(active_symbols_key()):
+        sym = sym.upper() if isinstance(sym, str) else sym.decode().upper()
+        r.delete(symbol_subscriber_count(sym))
 
-    active = get_active_symbols()
-    print(f"[symbol_manager] Recovered {len(active)} active symbols: {active}")
-    return active
+    r.delete(active_symbols_key())
+    print("[symbol_manager] Active symbols reset — no feed until a bot starts")
+    return set()
