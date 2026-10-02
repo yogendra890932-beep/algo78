@@ -2065,6 +2065,7 @@ function chipHtml(pos) {
     '<span class="term-chip-pnl" id="chip-pnl"></span>' +
     "</div>" +
     '<div class="term-chip-meta">' +
+    '<span>Lots <b id="chip-lots">--</b></span>' +
     '<span>Qty <b id="chip-qty">--</b></span>' +
     '<span>Entry <b id="chip-entry">--</b></span>' +
     '<span>LTP <b id="chip-ltp">--</b></span>' +
@@ -2079,9 +2080,35 @@ function chipHtml(pos) {
     '<div class="term-chip-actions">' +
     '<button class="term-btn term-btn-xs' + (pos.trail_enabled !== false ? "" : " term-btn-danger") + '" id="chip-trail">Trail: ' + (pos.trail_enabled !== false ? "ON" : "OFF") + '</button>' +
     '<button class="term-btn term-btn-xs" id="chip-reset">Reset SL / Target</button>' +
+    '<button class="term-btn term-btn-xs" id="chip-reduce">Reduce Lots</button>' +
     '<button class="term-btn term-btn-xs term-btn-danger" id="chip-square">Square Off</button>' +
     "</div>"
   );
+}
+
+function posLots(pos) {
+  const n = num(pos && pos.num_lots);
+  if (n && n > 0) return Math.round(n);
+  const ls = num(pos && pos.lot_size);
+  const q = num(pos && pos.qty);
+  if (ls && ls > 0 && q) return Math.max(1, Math.round(q / ls));
+  return q ? 1 : 0;
+}
+
+function reduceLots(pos) {
+  const held = posLots(pos);
+  if (held <= 1) {
+    toast("Only 1 lot held — use Square Off to exit", "err");
+    return;
+  }
+  const raw = prompt("Reduce how many lots? (1-" + (held - 1) + ")", "1");
+  if (raw == null) return;
+  const lots = parseInt(raw, 10);
+  if (!lots || lots < 1 || lots >= held) {
+    toast("Enter a number from 1 to " + (held - 1), "err");
+    return;
+  }
+  sendOrder("squareoff", lots, pos.symbol || state.selectedSymbol);
 }
 
 function toggleTrail(pos) {
@@ -2100,9 +2127,11 @@ function toggleTrail(pos) {
 function bindChipActions(el, pos) {
   const reset = el.querySelector("#chip-reset");
   const sq = el.querySelector("#chip-square");
+  const reduce = el.querySelector("#chip-reduce");
   const trail = el.querySelector("#chip-trail");
   if (reset) reset.addEventListener("click", confirmResetLevels);
   if (sq) sq.addEventListener("click", () => sendOrder("squareoff", null, pos.symbol || state.selectedSymbol));
+  if (reduce) reduce.addEventListener("click", () => reduceLots(pos));
   if (trail) trail.addEventListener("click", () => toggleTrail(pos));
 }
 
@@ -2114,6 +2143,7 @@ function updatePositionChipLive(pos, el) {
     if (n) n.textContent = f ? f(v) : (v == null ? "--" : String(v));
   };
   set("chip-qty", pos ? pos.qty : null, (v) => fmt(v, 0));
+  set("chip-lots", pos ? posLots(pos) : null, (v) => fmt(v, 0));
   set("chip-entry", pos ? pos.entry_price : null, fmt);
   set("chip-ltp", pos ? livePrice(pos) : null, fmt);
   set("chip-sl", pos ? pos.sl_trigger : null, fmt);

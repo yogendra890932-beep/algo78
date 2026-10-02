@@ -259,6 +259,7 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
             "paper_mode": eng.paper_mode, "symbol": signal.symbol,
             "regime": getattr(eng, "_regime", None).regime
                       if getattr(eng, "_regime", None) else "",
+            "lot_size": lot_size, "num_lots": num_lots,
         }
         eng.sl_order_id = sl_id
         eng.trailing_sl = stop_loss

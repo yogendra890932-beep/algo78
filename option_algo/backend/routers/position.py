@@ -41,6 +41,7 @@ class TargetRequest(BaseModel):
 
 class SquareOffRequest(BaseModel):
     symbol: Optional[str] = None   # None = squareoff all
+    lots: Optional[int] = None     # None/>=held = full close; else partial reduce
 
 
 @router.get("/")
@@ -80,10 +81,20 @@ async def modify_target(body: TargetRequest, user: User = Depends(get_current_us
 @router.post("/squareoff")
 async def squareoff(body: SquareOffRequest, user: User = Depends(get_current_user)):
     """
-    Immediately close open position(s) — dispatched to worker.
+    Close open position(s) — dispatched to worker.
     Worker cancels SL then market-sells, in order.
+    If `lots` is given and is fewer than the held lots, only that many
+    lots are sold (partial reduce); the remainder stays open.
     """
-    result = await send_command("squareoff", user.id, {"symbol": body.symbol})
+    payload = {"symbol": body.symbol}
+    if body.lots is not None:
+        try:
+            payload["lots"] = int(body.lots)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "lots must be an integer")
+        if payload["lots"] <= 0:
+            raise HTTPException(400, "lots must be greater than 0")
+    result = await send_command("squareoff", user.id, payload)
     if result.get("queued"):
         return {"ok": True, "queued": True}
     return result

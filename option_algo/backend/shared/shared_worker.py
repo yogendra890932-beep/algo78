@@ -605,6 +605,7 @@ class SharedWorkerOrchestrator:
 
     def _handle_squareoff(self, user_id: int, payload: dict) -> dict:
         symbol = payload.get("symbol")
+        lots = payload.get("lots")
         engines = self.get_engines_for_user(user_id)
         if not engines:
             return {"ok": False, "error": "Bot not running"}
@@ -616,7 +617,7 @@ class SharedWorkerOrchestrator:
             if not pos:
                 continue
             try:
-                eng.squareoff()
+                eng.squareoff(lots)
                 closed.append(eng.symbol)
             except Exception as e:
                 errors.append(f"{eng.symbol}: {e}")

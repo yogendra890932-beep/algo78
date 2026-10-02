@@ -219,6 +219,16 @@ async def terminal_order(
         key = "new_sl" if action == "modify_sl" else "new_target"
         payload[key] = value
 
+    if action == "squareoff" and body.value is not None:
+        # value = number of lots to reduce (partial). Omitted → full close.
+        try:
+            lots = int(body.value)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "squareoff lots must be an integer")
+        if lots <= 0:
+            raise HTTPException(400, "squareoff lots must be greater than 0")
+        payload["lots"] = lots
+
     result = await send_command(action, user.id, payload)
     if result.get("queued"):
         return {"ok": True, "queued": True, "action": action}

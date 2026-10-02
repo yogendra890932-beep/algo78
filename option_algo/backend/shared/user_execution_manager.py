@@ -447,6 +447,8 @@ class UserExecutionManager:
                 "near_target": round(target * (1 - self.config.get("target_near_pct", 0.003)), 2)
                                 if target else 0,
                 "trail_enabled": self._trail_enabled.get(symbol, True),
+                "lot_size": int(signal.get("lot_size") or 0) or None,
+                "num_lots": int(signal.get("num_lots") or 0) or None,
             }
             # Trail from the initial stop-loss, like legacy _place_trade.
             self._trailing_sl[symbol] = stop_loss
@@ -989,6 +991,149 @@ class UserExecutionManager:
             }
         except Exception:
             pass
+
+    def _position_lots(self, pos: dict) -> int:
+        """Number of lots currently held for a position."""
+        if not pos:
+            return 0
+        n = int(pos.get("num_lots") or 0)
+        if n > 0:
+            return n
+        lot_size = int(pos.get("lot_size") or 0)
+        if not lot_size:
+            try:
+                lot_size = get_lot_size(
+                    pos.get("symbol", ""),
+                    self.config.get("custom_lot_sizes") or {})
+            except Exception:
+                lot_size = 0
+        qty = int(pos.get("qty", 0) or 0)
+        if lot_size > 0 and qty > 0:
+            return max(1, qty // lot_size)
+        return 1 if qty > 0 else 0
+
+    def _reduce_position(self, symbol: str, exit_price: float,
+                         reduce_lots: int) -> bool:
+        """Sell `reduce_lots` lots of an open position and keep the rest.
+
+        The remaining lots keep the same SL/target levels; the resting
+        SL order is resized to the remaining quantity. P&L is booked only
+        for the reduced quantity (status PARTIAL_EXIT).
+        """
+        with self._positions_lock:
+            cur = self._positions.get(symbol)
+            if not cur:
+                return False
+            pos = dict(cur)
+
+        lot_size = int(pos.get("lot_size") or 0)
+        if not lot_size:
+            try:
+                lot_size = get_lot_size(
+                    symbol, self.config.get("custom_lot_sizes") or {})
+            except Exception:
+                lot_size = 0
+        if lot_size <= 0:
+            return False
+
+        total_qty = int(pos.get("qty", 0) or 0)
+        reduce_qty = int(reduce_lots) * lot_size
+        if reduce_qty <= 0 or total_qty <= 0:
+            return False
+        if reduce_qty >= total_qty:
+            # Nothing left after selling — treat as a full square-off.
+            self._close_position(symbol, exit_price, "MANUAL_SQUAREOFF")
+            return True
+
+        remaining = total_qty - reduce_qty
+        is_live = not pos.get("paper_mode", self.paper_mode)
+        paper = None
+        if not is_live:
+            from backend.services.paper_trading import get_paper_book
+            paper = get_paper_book(self.user_id)
+
+        # 1) Sell the reduced quantity at market.
+        if is_live:
+            oid = self._place_order_live(
+                "SELL", reduce_qty,
+                instrument_key=pos.get("instrument_key") or None)
+            if not oid:
+                if self.on_trade:
+                    self.on_trade({
+                        "event": "ORDER_ALERT", "user_id": self.user_id,
+                        "symbol": symbol,
+                        "reason": f"Reduce SELL order rejected for "
+                                  f"{reduce_qty} qty — position unchanged",
+                    })
+                return False
+        else:
+            paper.place_market_order(
+                "SELL", reduce_qty, exit_price,
+                pos.get("instrument_key", ""), f"paper:{self.user_id}")
+
+        # 2) Resize the resting SL to the remaining qty (same trigger).
+        sl_id = pos.get("sl_order_id")
+        if sl_id:
+            try:
+                if is_live:
+                    self._modify_sl_live(sl_id, pos.get("sl_trigger", 0),
+                                         remaining)
+                else:
+                    paper.cancel_order(sl_id)
+                    resl = paper.place_sl_order(
+                        "SELL", remaining, pos.get("sl_trigger", 0),
+                        pos.get("instrument_key", ""), f"paper:{self.user_id}")
+                    sl_id = (resl or {}).get("order_id") or None
+            except Exception as e:
+                print(f"{_now()} [exec:u{self.user_id}] Reduce SL resize "
+                      f"failed: {e}")
+
+        # 3) Book P&L for the reduced quantity only.
+        entry = pos.get("entry_price", 0)
+        try:
+            pnl = round((float(exit_price) - float(entry)) * reduce_qty, 2) \
+                if entry else 0
+        except (TypeError, ValueError):
+            pnl = 0
+        self._record_pnl(pnl)
+
+        # 4) Shrink the in-memory position to the remainder.
+        with self._positions_lock:
+            p = self._positions.get(symbol)
+            if p:
+                p["qty"] = remaining
+                p["num_lots"] = max(1, remaining // lot_size)
+                if sl_id:
+                    p["sl_order_id"] = sl_id
+
+        if self.on_trade:
+            self.on_trade({
+                "event": "EXIT",
+                "user_id": self.user_id,
+                "mode": "live" if is_live else "paper",
+                "symbol": symbol,
+                "trading_symbol": pos.get("trading_symbol", symbol),
+                "entry_price": entry,
+                "exit_price": exit_price,
+                "sl_trigger": pos.get("sl_trigger", 0),
+                "target": pos.get("target", 0),
+                "qty": reduce_qty,
+                "remaining_qty": remaining,
+                "pnl": pnl,
+                "status": "PARTIAL_EXIT",
+                "strategy": pos.get("strategy", ""),
+                "opt_type": pos.get("opt_type", ""),
+                "strike": pos.get("strike"),
+                "expiry": pos.get("expiry", ""),
+                "instrument_key": pos.get("instrument_key", ""),
+                "entry_ts": pos.get("entry_ts", datetime.utcnow()),
+            })
+
+        print(f"{_now()} [exec:u{self.user_id}] PARTIAL EXIT {symbol} "
+              f"{reduce_qty} qty @ {exit_price} pnl={pnl} "
+              f"remaining={remaining}")
+        self._push_position_snapshot(symbol)
+        return True
 
     def _close_position(self, symbol: str, exit_price: float, status: str):
         """Close a position: cancel SL, compute P&L, notify, publish snapshot."""
@@ -1633,9 +1778,19 @@ class _MockEngine:
     def _squareoff_from_telegram(self):
         self.squareoff()
 
-    def squareoff(self):
-        ltp = self._mgr._last_ltp.get(self.symbol) or (
-            self.position or {}).get("entry_price", 0)
+    def squareoff(self, lots=None):
+        """Close the position — or reduce by `lots` if fewer than held."""
+        pos = self.position
+        if not pos:
+            return
+        ltp = self._mgr._last_ltp.get(self.symbol) or pos.get("entry_price", 0)
+        try:
+            lots = int(lots) if lots is not None else 0
+        except (TypeError, ValueError):
+            lots = 0
+        if lots > 0 and lots < self._mgr._position_lots(pos):
+            self._mgr._reduce_position(self.symbol, ltp, lots)
+            return
         self._mgr._close_position(self.symbol, ltp, "MANUAL_SQUAREOFF")
 
 

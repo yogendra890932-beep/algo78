@@ -966,6 +966,58 @@ def test_no_direction_flip_with_open_position():
         _fail("shared premium builder still rolls with an open position")
 
 
+def test_partial_lot_reduce():
+    print("\n=== Test: Partial lot reduction ===")
+
+    pos = _read_src("backend/routers/position.py")
+    if "lots: Optional[int]" in pos and 'payload["lots"]' in pos:
+        _ok("squareoff API accepts an optional lots count")
+    else:
+        _fail("squareoff API has no lots support")
+
+    term = _read_src("backend/routers/terminal.py")
+    if 'action == "squareoff" and body.value is not None' in term and 'payload["lots"]' in term:
+        _ok("terminal order maps value to squareoff lots")
+    else:
+        _fail("terminal order does not map lots")
+
+    w = _read_src("backend/shared/shared_worker.py")
+    if "eng.squareoff(lots)" in w:
+        _ok("shared worker forwards lots to the engine")
+    else:
+        _fail("shared worker does not forward lots")
+
+    mgr = _read_src("backend/shared/user_execution_manager.py")
+    for code in ("def _reduce_position", "def _position_lots",
+                 "def squareoff(self, lots=None)", "PARTIAL_EXIT"):
+        if code in mgr:
+            _ok(f"manager supports {code}")
+        else:
+            _fail(f"manager missing {code}")
+    if "self._modify_sl_live(sl_id" in mgr and "remaining" in mgr:
+        _ok("resting SL is resized to the remaining qty")
+    else:
+        _fail("resting SL is not resized")
+
+    layer = _read_src("backend/services/execution_layer.py")
+    if '"lot_size": lot_size, "num_lots": num_lots' in layer:
+        _ok("live positions record lot_size / num_lots")
+    else:
+        _fail("live positions do not record lot info")
+
+    dash = _read_src("frontend/templates/dashboard.html")
+    if "btn-reduce" in dash and "body: JSON.stringify({ symbol: sym, lots })" in dash:
+        _ok("dashboard has a per-position Reduce control")
+    else:
+        _fail("dashboard has no per-position Reduce control")
+
+    tjs = _read_src("frontend/static/js/terminal.js")
+    if "chip-reduce" in tjs and "function reduceLots" in tjs:
+        _ok("terminal chip has a Reduce Lots control")
+    else:
+        _fail("terminal chip has no Reduce control")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -999,6 +1051,7 @@ def run_all_tests():
     test_entry_failure_surfaced()
     test_idle_no_feed_and_auto_off()
     test_no_direction_flip_with_open_position()
+    test_partial_lot_reduce()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

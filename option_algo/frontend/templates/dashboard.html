@@ -798,6 +798,23 @@
                                               opacity: .88
                                             }
 
+                                            .btn-reduce {
+                                              width: 100%;
+                                              margin-top: 10px;
+                                              padding: 9px;
+                                              background: rgba(245, 158, 11, .15);
+                                              color: #f59e0b;
+                                              border: 1px solid #f59e0b;
+                                              border-radius: 8px;
+                                              font-size: 13px;
+                                              font-weight: 700;
+                                              cursor: pointer;
+                                            }
+
+                                            .btn-reduce:hover {
+                                              opacity: .85
+                                            }
+
                                             .badge-live {
                                               padding: 3px 10px;
                                               border-radius: 20px;
@@ -1606,6 +1623,7 @@
                                                 const pnlCls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
                                                 const pnlStr = pnl != null ? `${pnl >= 0 ? '+' : ''}₹${pnl}` : '—';
                                                 const mode = p.mode === 'paper' ? '📄' : '💰';
+                                                const lots = pos.num_lots || (pos.lot_size && pos.qty ? Math.max(1, Math.round(pos.qty / pos.lot_size)) : 1);
 
                                                 // Update control panel
                                                 document.getElementById('cur-sl').textContent = '₹' + pos.sl_trigger;
@@ -1625,11 +1643,41 @@
         <tr><td>LTP</td><td>₹${p.opt_ltp || '—'}</td></tr>
         <tr><td>SL</td><td style="color:var(--red)">₹${pos.sl_trigger}</td></tr>
         <tr><td>Target</td><td style="color:var(--green)">₹${pos.target}</td></tr>
-        <tr><td>Qty</td><td>${pos.qty}</td></tr>
+        <tr><td>Lots</td><td>${lots} <span class="muted">(${pos.qty} qty)</span></td></tr>
         <tr><td>Strategy</td><td>${pos.strategy}</td></tr>
       </table>
+      <button class="btn-reduce" data-sym="${p.symbol}" data-lots="${lots}">Reduce Lots</button>
     </div>`;
                                               }).join('');
+
+                                              // Partial reduction: sell part of the lots, keep the rest.
+                                              wrap.querySelectorAll('.btn-reduce').forEach(btn => {
+                                                btn.addEventListener('click', async () => {
+                                                  const sym = btn.dataset.sym;
+                                                  const held = parseInt(btn.dataset.lots, 10) || 1;
+                                                  if (held <= 1) {
+                                                    showCtrlMsg('Only 1 lot held — use Square Off Now', 'error');
+                                                    return;
+                                                  }
+                                                  const raw = prompt(`Reduce how many lots? (1-${held - 1})`, '1');
+                                                  if (raw == null) return;
+                                                  const lots = parseInt(raw, 10);
+                                                  if (!lots || lots < 1 || lots >= held) {
+                                                    showCtrlMsg(`Enter a number from 1 to ${held - 1}`, 'error');
+                                                    return;
+                                                  }
+                                                  const r = await apiFetch('/api/position/squareoff',
+                                                    { method: 'POST', body: JSON.stringify({ symbol: sym, lots }) });
+                                                  const d = await r?.json() || {};
+                                                  if (r?.ok) {
+                                                    showCtrlMsg(`✅ Reduced ${lots} lot(s) of ${sym}`, 'success');
+                                                    addFeed(`🔄 Reduced ${lots} lot(s) of ${sym} — remainder still open`, 'exit-loss');
+                                                    loadPositions();
+                                                  } else {
+                                                    showCtrlMsg('❌ ' + (d.detail || (d.errors && d.errors[0]) || 'Reduce failed'), 'error');
+                                                  }
+                                                });
+                                              });
                                             }
 
                                             // ── Load positions from API ──────────────────────────────────────
