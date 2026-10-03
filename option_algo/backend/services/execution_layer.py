@@ -96,6 +96,7 @@ class ExecutionStatus(Enum):
     EXPIRED = "EXPIRED"
     FAILED = "FAILED"
     BLOCKED = "BLOCKED"  # No consent for AUTO mode
+    SKIPPED = "SKIPPED"  # Another pending trade is already awaiting approval
 
 
 @dataclass
@@ -447,10 +448,11 @@ class SemiAutoExecutor:
     """
     Creates a PendingTrade record that requires user approval before
     execution. No live trade without explicit approval.
-    Supports configurable timeout (default 25 seconds).
+    Supports configurable timeout (default 60 seconds).
+    Only ONE pending trade is allowed per user at a time.
     """
 
-    PENDING_TIMEOUT_SEC = 25
+    PENDING_TIMEOUT_SEC = 60
 
     def __init__(self, user_id: int, signal: TradeSignal):
         self.user_id = user_id
@@ -467,22 +469,43 @@ class SemiAutoExecutor:
         try:
             expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=self.PENDING_TIMEOUT_SEC)
 
-            pending_trade = PendingTrade(
-                user_id=self.user_id,
-                signal_id=self.signal.signal_id,
-                symbol=self.signal.symbol,
-                opt_type=self.signal.opt_type,
-                strategy=self.signal.strategy_name or self.signal.strategy or "",
-                entry_price=self.signal.entry_price,
-                stop_loss=self.signal.stop_loss,
-                quantity=self.signal.quantity,
-                confidence=self.signal.confidence,
-                status=PendingTradeStatus.WAITING,
-                expires_at=expires_at,
-                signal_payload=json.dumps(asdict(self.signal), default=str),
-            )
-
             async with AsyncSessionLocal() as db:
+                # One pending trade at a time: if the user already has a
+                # WAITING, unexpired trade, skip this signal so only one
+                # strategy / one approval button is shown.
+                from sqlalchemy import select as _select
+                existing = (await db.execute(
+                    _select(PendingTrade).where(
+                        PendingTrade.user_id == self.user_id,
+                        PendingTrade.status == PendingTradeStatus.WAITING,
+                        PendingTrade.expires_at
+                        > datetime.now(timezone.utc).replace(tzinfo=None),
+                    ).order_by(PendingTrade.id.desc())
+                )).scalars().first()
+                if existing:
+                    return ExecutionResult(
+                        status=ExecutionStatus.SKIPPED,
+                        message=f"Pending trade #{existing.id} already awaiting approval",
+                        signal_id=self.signal.signal_id,
+                        pending_trade_id=existing.id,
+                        details={"duplicate": True},
+                    )
+
+                pending_trade = PendingTrade(
+                    user_id=self.user_id,
+                    signal_id=self.signal.signal_id,
+                    symbol=self.signal.symbol,
+                    opt_type=self.signal.opt_type,
+                    strategy=self.signal.strategy_name or self.signal.strategy or "",
+                    entry_price=self.signal.entry_price,
+                    stop_loss=self.signal.stop_loss,
+                    quantity=self.signal.quantity,
+                    confidence=self.signal.confidence,
+                    status=PendingTradeStatus.WAITING,
+                    expires_at=expires_at,
+                    signal_payload=json.dumps(asdict(self.signal), default=str),
+                )
+
                 db.add(pending_trade)
                 await db.commit()
                 await db.refresh(pending_trade)
@@ -976,8 +999,30 @@ class PendingTradeManager:
         from backend.services.audit_log import log_event
         
         with get_sync_session() as db:
-            expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=30)
-            
+            # One pending trade at a time: if the user already has a
+            # WAITING, unexpired trade, skip this signal so only one
+            # strategy / one approval button is shown.
+            from backend.db.models import PendingTrade, PendingTradeStatus
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            existing = db.execute(
+                _select(PendingTrade).where(
+                    PendingTrade.user_id == user_id,
+                    PendingTrade.status == PendingTradeStatus.WAITING,
+                    PendingTrade.expires_at > now,
+                ).order_by(PendingTrade.id.desc())
+            ).scalars().first()
+            if existing:
+                return ExecutionResult(
+                    status=ExecutionStatus.SKIPPED,
+                    message=f"Pending trade #{existing.id} already awaiting approval",
+                    signal_id=signal.signal_id,
+                    pending_trade_id=existing.id,
+                    details={"duplicate": True},
+                )
+
+            expires_at = now + timedelta(
+                seconds=SemiAutoExecutor.PENDING_TIMEOUT_SEC)
+
             payload = {
                 "strategy_name": signal.strategy_name,
                 "symbol": signal.symbol,
@@ -994,7 +1039,6 @@ class PendingTradeManager:
                 "regime": getattr(signal, "regime", None),
             }
             
-            from backend.db.models import PendingTrade, PendingTradeStatus
             trade = PendingTrade(
                 user_id=user_id,
                 signal_id=signal.signal_id,

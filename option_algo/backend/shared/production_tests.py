@@ -1018,6 +1018,47 @@ def test_partial_lot_reduce():
         _fail("terminal chip has no Reduce control")
 
 
+def test_single_pending_and_60s_approval():
+    print("\n=== Test: One pending trade at a time + 60s approval ===")
+
+    el = _read_src("backend/services/execution_layer.py")
+    if "PENDING_TIMEOUT_SEC = 60" in el:
+        _ok("semi-auto approval timeout is 60 seconds")
+    else:
+        _fail("semi-auto approval timeout is not 60 seconds")
+    if "SKIPPED = " in el:
+        _ok("a SKIPPED status exists for duplicate signals")
+    else:
+        _fail("no SKIPPED status for duplicate signals")
+    # Both the async and sync creators must dedupe on a WAITING trade.
+    if el.count("PendingTrade.status == PendingTradeStatus.WAITING") >= 2:
+        _ok("both pending creators reject a second WAITING trade")
+    else:
+        _fail("pending creators do not both dedupe")
+    if "expires_at > now" in el or "expires_at\n" in el:
+        _ok("dedupe only counts unexpired pending trades")
+    else:
+        _fail("dedupe does not check expiry")
+
+    mgr = _read_src("backend/shared/user_execution_manager.py")
+    if 'result.status.value == "SKIPPED"' in mgr:
+        _ok("manager drops duplicate signals without a second popup")
+    else:
+        _fail("manager does not handle duplicate pending signals")
+
+    dash = _read_src("frontend/templates/dashboard.html")
+    if "MODAL_TIMEOUT_SEC = 60" in dash:
+        _ok("dashboard approval countdown is 60 seconds")
+    else:
+        _fail("dashboard approval countdown is not 60 seconds")
+
+    tjs = _read_src("frontend/static/js/terminal.js")
+    if "state.pendingTrades.slice(0, 1)" in tjs:
+        _ok("terminal shows only one pending trade / approval button")
+    else:
+        _fail("terminal can show multiple pending trades")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1052,6 +1093,7 @@ def run_all_tests():
     test_idle_no_feed_and_auto_off()
     test_no_direction_flip_with_open_position()
     test_partial_lot_reduce()
+    test_single_pending_and_60s_approval()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

@@ -783,18 +783,22 @@ function pendingOptionLabel(p) {
 
 function renderPendingTrades(pending) {
   state.pendingTrades = pending || [];
+  // Only ONE pending trade / approval button is shown at a time — even
+  // if several strategies fired together, the first is approved on its
+  // own before the next is considered.
+  const list = state.pendingTrades.slice(0, 1);
   if (state.pendingExpireTimer) { clearTimeout(state.pendingExpireTimer); state.pendingExpireTimer = null; }
   const el = $("pending-list");
   const count = $("pending-count");
-  count.textContent = state.pendingTrades.length;
-  if (!state.pendingTrades.length) {
+  count.textContent = list.length;
+  if (!list.length) {
     if (_pendingCountdownTimer) { clearInterval(_pendingCountdownTimer); _pendingCountdownTimer = null; }
     el.innerHTML = '<div class="term-empty">No pending trades</div>';
     if (state.chart) state.chart.renderPendingMarkers();
     return;
   }
   el.innerHTML = "";
-  state.pendingTrades.forEach((p) => {
+  list.forEach((p) => {
     const card = document.createElement("div");
     card.className = "term-pending-card";
     card.dataset.tradeId = p.id;
@@ -821,7 +825,7 @@ function renderPendingTrades(pending) {
   bindPendingActions(el);
   if (state.chart) state.chart.renderPendingMarkers();
 
-  const first = state.pendingTrades[0];
+  const first = list[0];
   if (first && first.expires_at) {
     const until = new Date(first.expires_at).getTime() - Date.now();
     if (until > 0) {

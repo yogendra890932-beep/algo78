@@ -509,6 +509,14 @@ class UserExecutionManager:
             result = PendingTradeManager.create_pending_trade_sync(
                 self.user_id, trade_signal)
 
+            if result.status.value == "SKIPPED":
+                # One pending trade at a time — another strategy already
+                # raised a pending trade awaiting approval. Do not emit a
+                # second popup / approval button.
+                print(f"{_now()} [exec:u{self.user_id}] SEMI_AUTO skipped "
+                      f"{signal.get('strategy')} — {result.message}")
+                return
+
             if self.on_trade and result.status.value == "PENDING_APPROVAL":
                 print(f"{_now()} [exec:u{self.user_id}] SEMI_AUTO pending "
                       f"trade#{result.pending_trade_id} {signal.get('symbol')} "
