@@ -511,12 +511,28 @@
 /* Tablets / phones — stacked, left panel stays on top */
 @media (max-width: 880px) {
   .term-body { height: auto; min-height: 100vh; overflow: visible; }
+  /* Flatten the three rail columns into one flex stack so individual
+     cards can be re-ordered (chart first, then the trading cards). */
   .term-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
-    grid-template-areas: "left" "center" "right";
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
-  .term-left, .term-right { overflow-y: visible; }
+  .term-left, .term-center, .term-right { display: contents; }
+
+  /* Mobile order after the charts:
+     Pending Trades -> Live Position -> Live PnL -> Trade Log -> Order Info */
+  #watchlist-card       { order: 1; }
+  #selected-symbol-card { order: 2; }
+  .term-chart-toolbar   { order: 3; }
+  .term-chart-wrap      { order: 4; }
+  #chart-legend         { order: 5; }
+  #pending-card         { order: 6; }
+  #live-position-card   { order: 7; }
+  #pnl-card             { order: 8; }
+  .term-bottom          { order: 9; }
+  #order-info-card      { order: 10; }
+
   .term-chart-wrap { flex-direction: column; height: auto; min-height: 0; }
   .term-chart-col { flex: 0 0 auto; height: 42vh; min-height: 240px; }
   .term-bottom { flex: 1 1 auto; min-height: 200px; max-height: none; margin: 0; }
