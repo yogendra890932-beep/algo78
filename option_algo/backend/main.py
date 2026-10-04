@@ -26,6 +26,7 @@ from backend.routers.admin_billing_router import router as admin_billing_router
 from backend.routers.campaign_router import router as campaign_router
 from backend.routers.manual_payment_router import router as manual_payment_router
 from backend.routers.terminal import router as terminal_router
+from backend.routers.seo import router as seo_router
 
 settings = get_settings()
 
@@ -118,6 +119,21 @@ async def no_cache_terminal_assets(request: Request, call_next):
         response.headers["Expires"] = "0"
     return response
 
+# Authenticated / internal pages must never be indexed by search engines.
+_NOINDEX_PREFIXES = (
+    "/dashboard", "/terminal", "/trades", "/settings", "/admin",
+    "/billing", "/oc-dashboard", "/claim-reward", "/reset-password",
+    "/api/", "/uploads/",
+)
+
+@app.middleware("http")
+async def seo_noindex_app_pages(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith(_NOINDEX_PREFIXES):
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
+
 # Static files and templates
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -139,6 +155,7 @@ app.include_router(admin_billing_router)
 app.include_router(campaign_router)
 app.include_router(manual_payment_router)
 app.include_router(terminal_router)
+app.include_router(seo_router)
 
 
 @app.get("/health")
@@ -179,7 +196,10 @@ async def health():
 # ── Page routes ──────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def landing(request: Request):
-    return templates.TemplateResponse("landing.html", {"request": request})
+    return templates.TemplateResponse(
+        "landing.html",
+        {"request": request, "site_url": settings.APP_BASE_URL.rstrip("/")},
+    )
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):

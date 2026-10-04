@@ -1059,9 +1059,74 @@ def test_single_pending_and_60s_approval():
         _fail("terminal can show multiple pending trades")
 
 
+def test_seo_and_indexing():
+    print("\n=== Test: SEO assets, crawl directives and structured data ===")
+
+    seo = _read_src("backend/routers/seo.py")
+    if "/robots.txt" in seo and 'f"Disallow: {path}"' in seo and '"Sitemap:' in seo:
+        _ok("robots.txt route serves crawl directives")
+    else:
+        _fail("robots.txt route missing or malformed")
+    if "sitemaps.org/schemas/sitemap" in seo and "urlset" in seo:
+        _ok("sitemap.xml route emits a valid urlset")
+    else:
+        _fail("sitemap.xml route missing or malformed")
+    if "/login" not in seo.split("_PUBLIC_PAGES")[1].split("]")[0]:
+        _ok("noindex login page excluded from the sitemap")
+    else:
+        _fail("sitemap still lists the noindex login page")
+
+    main_src = _read_src("backend/main.py")
+    if "from backend.routers.seo import router as seo_router" in main_src and "app.include_router(seo_router)" in main_src:
+        _ok("SEO router is registered on the app")
+    else:
+        _fail("SEO router not registered")
+    if "X-Robots-Tag" in main_src and "noindex, nofollow" in main_src:
+        _ok("app pages carry X-Robots-Tag: noindex")
+    else:
+        _fail("app pages lack noindex headers")
+
+    landing = _read_src("frontend/templates/landing.html")
+    for needle, label in [
+        ('rel="canonical"', "canonical URL"),
+        ('property="og:image"', "Open Graph image"),
+        ('name="twitter:card"', "Twitter card"),
+        ('application/ld+json', "JSON-LD structured data"),
+        ('"@type": "SoftwareApplication"', "SoftwareApplication schema"),
+        ("/static/og-image.png", "OG image asset reference"),
+    ]:
+        if needle in landing:
+            _ok(f"landing has {label}")
+        else:
+            _fail(f"landing missing {label}")
+
+    base = _read_src("frontend/templates/base.html")
+    if 'content="noindex, nofollow"' in base and "/static/favicon.svg" in base:
+        _ok("app shell is noindex with proper favicon")
+    else:
+        _fail("app shell missing noindex or favicon")
+
+    for rel in [
+        "frontend/static/favicon.svg",
+        "frontend/static/favicon.ico",
+        "frontend/static/favicon-32.png",
+        "frontend/static/apple-touch-icon.png",
+        "frontend/static/og-image.png",
+        "frontend/static/site.webmanifest",
+        "frontend/static/icons/icon-192.png",
+        "frontend/static/icons/icon-512.png",
+    ]:
+        if os.path.exists(os.path.join(BASE, rel)):
+            _ok(f"asset present: {rel}")
+        else:
+            _fail(f"asset missing: {rel}")
+
+
 # ================================================================
 # MAIN
 # ================================================================
+
+
 def run_all_tests():
     global PASS, FAIL
     PASS = 0
@@ -1094,6 +1159,7 @@ def run_all_tests():
     test_no_direction_flip_with_open_position()
     test_partial_lot_reduce()
     test_single_pending_and_60s_approval()
+    test_seo_and_indexing()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL
