@@ -214,12 +214,6 @@
 
 .term-empty { color: var(--term-muted); font-size: 12px; padding: 4px 0; }
 
-/* ── Status cards ─────────────────────────────────────────────── */
-.term-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.term-stat { background: var(--term-panel-2); border: 1px solid var(--term-border); border-radius: 7px; padding: 7px 9px; }
-.term-stat-label { font-size: 10px; color: var(--term-muted); text-transform: uppercase; letter-spacing: 0.4px; }
-.term-stat-value { font-weight: 700; font-size: 13px; margin-top: 2px; font-variant-numeric: tabular-nums; }
-
 /* ── Chart toolbar ────────────────────────────────────────────── */
 .term-chart-toolbar {
   display: flex; align-items: center; gap: 14px;

@@ -706,21 +706,9 @@ function renderActiveOption(premiumState) {
 }
 
 function renderBotStatus(running, status) {
-  const el = $("trade-status");
   status = status || {};
-  const paused = (status.paused === true || String(status.status || "").toLowerCase() === "paused") ? true : false;
-  const runningTxt = running ? (paused ? "Paused" : "Running") : "Stopped";
-  const runCls = running ? (paused ? "term-pill-idle" : "term-pill-live") : "term-pill-closed";
   $("term-market-state").textContent = "Market: " + (running ? "OPEN" : "--");
   $("term-market-state").className = "term-pill " + (running ? "term-pill-open" : "term-pill-idle");
-  const posCount = state.positions.length;
-  el.innerHTML =
-    '<div class="term-stat-grid">' +
-    '<div class="term-stat"><div class="term-stat-label">Bot</div><div class="term-stat-value ' + (running ? "up" : "down") + '">' + runningTxt + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">Open positions</div><div class="term-stat-value">' + posCount + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">Paper mode</div><div class="term-stat-value">' + esc((state.bootstrap && state.bootstrap.config && state.bootstrap.config.paper_mode) ? "Yes" : (state.bootstrap && state.bootstrap.config ? "No" : "--")) + "</div></div>" +
-    '<div class="term-stat"><div class="term-stat-label">Qty</div><div class="term-stat-value">' + fmt((state.bootstrap && state.bootstrap.config && state.bootstrap.config.order_qty), 0) + "</div></div>" +
-    "</div>";
 }
 
 function renderTradeStatus() {
