@@ -537,9 +537,25 @@
   .term-chart-col { flex: 0 0 auto; height: 42vh; min-height: 240px; }
   .term-bottom { flex: 1 1 auto; min-height: 200px; max-height: none; margin: 0; }
   .term-tab-body { max-height: 360px; }
-  .term-topbar { flex-wrap: wrap; }
-  .term-market { order: 3; flex-basis: 100%; justify-content: flex-start; }
-  .term-top-actions { margin-left: auto; }
+
+  /* Site header (navbar) — wrap, keep nav on one scrollable row */
+  .navbar { height: auto; flex-wrap: wrap; padding: 8px 12px; gap: 6px; }
+  .nav-brand { flex: 1 1 100%; text-align: center; font-size: 15px; }
+  .nav-links {
+    flex: 1 1 100%; flex-wrap: nowrap; justify-content: flex-start;
+    overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+    gap: 2px; padding-bottom: 2px; scrollbar-width: none;
+  }
+  .nav-links::-webkit-scrollbar { display: none; }
+  .nav-links a { flex: 0 0 auto; white-space: nowrap; padding: 6px 10px; font-size: 12px; }
+  .btn-logout { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; margin-left: 4px; }
+
+  /* Terminal header — brand first row, market pills full width below */
+  .term-topbar { flex-wrap: wrap; padding: 8px 12px; gap: 8px 10px; }
+  .term-brand { flex: 1 1 auto; min-width: 0; }
+  .term-brand-title { font-size: 13px; overflow-wrap: anywhere; }
+  .term-market { order: 3; flex-basis: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .term-top-actions { margin-left: auto; flex: 0 0 auto; }
   .term-watchlist { max-height: none; }
   .term-positions { max-height: none; }
   .term-order-info { max-height: none; }
@@ -553,7 +569,10 @@
   .term-grid { gap: 8px; padding: 8px; }
   .term-chart-wrap { height: auto; min-height: 0; }
   .term-chart-col { height: 38vh; min-height: 220px; }
-  .term-topbar { padding: 8px 10px; }
+  .term-topbar { padding: 8px 10px; gap: 6px 8px; }
+  .nav-brand { font-size: 14px; }
+  .nav-links a { padding: 5px 8px; font-size: 11px; }
+  .btn-logout { padding: 5px 8px; font-size: 11px; }
   .term-brand-mark { width: 28px; height: 28px; font-size: 15px; }
   .term-brand-title { font-size: 12px; }
   .term-tabs { padding: 6px 8px 0; }
