@@ -107,11 +107,33 @@ def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultip
 
 def _send_smtp(msg: MIMEMultipart, to_email: str):
     """Blocking SMTP send — call via asyncio.to_thread."""
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
-        smtp.ehlo()
-        smtp.starttls()
-        smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        smtp.sendmail(_envelope_from(), [to_email], msg.as_string())
+    if settings.SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(
+            settings.SMTP_HOST,
+            settings.SMTP_PORT,
+            timeout=30,
+        ) as smtp:
+            smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            smtp.sendmail(
+                _envelope_from(),
+                [to_email],
+                msg.as_string(),
+            )
+    else:
+        with smtplib.SMTP(
+            settings.SMTP_HOST,
+            settings.SMTP_PORT,
+            timeout=30,
+        ) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+            smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            smtp.sendmail(
+                _envelope_from(),
+                [to_email],
+                msg.as_string(),
+            )
 
 
 async def send_verification_email(to_email: str, full_name: str, token: str) -> bool:

@@ -1140,10 +1140,14 @@ def test_email_sender_branding():
         _ok("From header + envelope-sender helpers exist")
     else:
         _fail("email From helpers missing")
-    if "smtp.sendmail(_envelope_from()" in es:
+    if "smtp.sendmail(" in es and "_envelope_from()," in es:
         _ok("envelope sender uses the bare address (not the display name)")
     else:
         _fail("envelope sender not using _envelope_from()")
+    if "SMTP_SSL" in es and "starttls()" in es:
+        _ok("SMTP supports both implicit SSL (465) and STARTTLS (587)")
+    else:
+        _fail("SMTP does not handle port 465 SSL transport")
     if es.count("settings.SMTP_FROM or settings.SMTP_USER") == 1:
         _ok("all mail builds From through the shared helper")
     else:
