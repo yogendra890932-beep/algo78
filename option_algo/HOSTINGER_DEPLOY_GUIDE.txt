@@ -261,9 +261,10 @@ WEBHOOK_SECRET=another-random-secret-string-here
 # Email (Gmail App Password — see note below)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your@gmail.com
+SMTP_USER=support@optiscalper.com
 SMTP_PASSWORD=your-16-char-app-password
-SMTP_FROM=Optiscalper <your@gmail.com>
+SMTP_FROM=support@optiscalper.com
+SMTP_FROM_NAME=Optiscalper
 
 # Google Sign-In (optional — leave blank to disable)
 GOOGLE_CLIENT_ID=

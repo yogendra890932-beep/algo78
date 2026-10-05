@@ -1,21 +1,22 @@
 # backend/services/email_service.py
 # ================================================================
-# Email service — sends verification emails via SMTP.
-# Works with Gmail (App Password), Mailgun, SendGrid, etc.
+# Email service — sends user-facing mail via SMTP.
+# Works with Gmail (App Password), Hostinger, Mailgun, SendGrid, etc.
 #
 # Configuration (.env):
 #   SMTP_HOST=smtp.gmail.com
 #   SMTP_PORT=587
-#   SMTP_USER=you@gmail.com
-#   SMTP_PASSWORD=your-app-password   ← Gmail App Password, NOT your main password
-#   SMTP_FROM=Optiscalper <you@gmail.com>  ← optional, defaults to SMTP_USER
-#   APP_BASE_URL=https://yourdomain.com
+#   SMTP_USER=support@optiscalper.com
+#   SMTP_PASSWORD=your-app-password     ← app password, NOT the mailbox password
+#   SMTP_FROM=support@optiscalper.com   ← defaults to SMTP_USER if blank;
+#                                          may include "Name <addr>"
+#   SMTP_FROM_NAME=Optiscalper          ← display name when SMTP_FROM is bare
+#   APP_BASE_URL=https://optiscalper.com
 #
-# Gmail setup:
-#   1. Enable 2-Step Verification on your Google account
-#   2. Go to myaccount.google.com/apppasswords
-#   3. Create an "App Password" for Optiscalper
-#   4. Use that 16-char password as SMTP_PASSWORD
+# All mail is sent as "Optiscalper <support@optiscalper.com>" unless
+# SMTP_FROM overrides it. The From address must be authorised by the
+# provider (authenticate as that mailbox, or verify the domain / add a
+# "Send mail as" alias), otherwise it is rejected or rewritten.
 # ================================================================
 
 import asyncio
@@ -24,11 +25,30 @@ import secrets
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import parseaddr
 from typing import Optional
 
 from backend.config import get_settings
 
 settings = get_settings()
+
+
+def _from_header() -> str:
+    """
+    RFC 5322 From header. Uses SMTP_FROM as-is when it already carries a
+    display name ("Optiscalper <x@y>"), otherwise prepends SMTP_FROM_NAME.
+    Falls back to SMTP_USER, then the branded support address.
+    """
+    raw = (settings.SMTP_FROM or settings.SMTP_USER or "support@optiscalper.com").strip()
+    if "<" in raw and ">" in raw:
+        return raw
+    name = (settings.SMTP_FROM_NAME or "").strip()
+    return f"{name} <{raw}>" if name else raw
+
+
+def _envelope_from() -> str:
+    """Bare MAIL FROM address — display names are invalid in the SMTP envelope."""
+    return parseaddr(_from_header())[1] or settings.SMTP_USER
 
 
 def generate_verify_token() -> str:
@@ -38,7 +58,7 @@ def generate_verify_token() -> str:
 
 def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultipart:
     verify_url = f"{settings.APP_BASE_URL}/api/auth/verify-email?token={token}"
-    from_addr  = settings.SMTP_FROM or settings.SMTP_USER
+    from_addr  = _from_header()
     subject    = "Verify your Optiscalper email address"
 
     html = f"""
@@ -87,12 +107,11 @@ def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultip
 
 def _send_smtp(msg: MIMEMultipart, to_email: str):
     """Blocking SMTP send — call via asyncio.to_thread."""
-    from_addr = settings.SMTP_FROM or settings.SMTP_USER
     with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
         smtp.ehlo()
         smtp.starttls()
         smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        smtp.sendmail(from_addr, [to_email], msg.as_string())
+        smtp.sendmail(_envelope_from(), [to_email], msg.as_string())
 
 
 async def send_verification_email(to_email: str, full_name: str, token: str) -> bool:
@@ -119,7 +138,7 @@ async def send_verification_email(to_email: str, full_name: str, token: str) -> 
 
 
 def _build_welcome_email(to_email: str, full_name: str, method: str) -> MIMEMultipart:
-    from_addr = settings.SMTP_FROM or settings.SMTP_USER
+    from_addr = _from_header()
     html = f"""
 <!DOCTYPE html>
 <html>
@@ -164,7 +183,7 @@ async def send_welcome_email(to_email: str, full_name: str, method: str = ""):
 
 def _build_reset_email(to_email: str, full_name: str, token: str) -> MIMEMultipart:
     reset_url = f"{settings.APP_BASE_URL}/reset-password?token={token}"
-    from_addr = settings.SMTP_FROM or settings.SMTP_USER
+    from_addr = _from_header()
     subject   = "Reset your Optiscalper password"
 
     html = f"""
@@ -224,7 +243,7 @@ async def send_html_email(to_email: str, subject: str, html: str, text: str = ""
         print(f"\n[email] SMTP not configured — '{subject}' for {to_email} not sent:\n{text or html}\n")
         return True
     try:
-        from_addr = settings.SMTP_FROM or settings.SMTP_USER
+        from_addr = _from_header()
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"]    = from_addr

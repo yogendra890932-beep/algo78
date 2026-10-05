@@ -89,7 +89,10 @@ class Settings:
     SMTP_PORT:     int                = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER:     str                = os.getenv("SMTP_USER", "")
     SMTP_PASSWORD: str                = os.getenv("SMTP_PASSWORD", "")
-    SMTP_FROM:     str                = os.getenv("SMTP_FROM", "")   # defaults to SMTP_USER if blank
+    # Sender shown to users. May be a bare address or "Name <addr>";
+    # falls back to SMTP_USER when blank.
+    SMTP_FROM:      str               = os.getenv("SMTP_FROM", "support@optiscalper.com")
+    SMTP_FROM_NAME: str               = os.getenv("SMTP_FROM_NAME", "Optiscalper")
 
     @property
     def email_enabled(self) -> bool:

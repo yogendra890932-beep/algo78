@@ -1122,6 +1122,40 @@ def test_seo_and_indexing():
             _fail(f"asset missing: {rel}")
 
 
+def test_email_sender_branding():
+    print("\n=== Test: User mail is sent From support@optiscalper.com ===")
+
+    cfg = _read_src("backend/config.py")
+    if 'os.getenv("SMTP_FROM", "support@optiscalper.com")' in cfg:
+        _ok("SMTP_FROM defaults to support@optiscalper.com")
+    else:
+        _fail("SMTP_FROM default is not the branded support address")
+    if "SMTP_FROM_NAME" in cfg:
+        _ok("SMTP_FROM_NAME display-name setting exists")
+    else:
+        _fail("SMTP_FROM_NAME missing")
+
+    es = _read_src("backend/services/email_service.py")
+    if "def _from_header" in es and "def _envelope_from" in es:
+        _ok("From header + envelope-sender helpers exist")
+    else:
+        _fail("email From helpers missing")
+    if "smtp.sendmail(_envelope_from()" in es:
+        _ok("envelope sender uses the bare address (not the display name)")
+    else:
+        _fail("envelope sender not using _envelope_from()")
+    if es.count("settings.SMTP_FROM or settings.SMTP_USER") == 1:
+        _ok("all mail builds From through the shared helper")
+    else:
+        _fail("a mail path bypasses the From helper")
+
+    env = _read_src(".env.example")
+    if "SMTP_FROM=support@optiscalper.com" in env:
+        _ok(".env.example sets the branded sender")
+    else:
+        _fail(".env.example does not set SMTP_FROM=support@optiscalper.com")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1160,6 +1194,7 @@ def run_all_tests():
     test_partial_lot_reduce()
     test_single_pending_and_60s_approval()
     test_seo_and_indexing()
+    test_email_sender_branding()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

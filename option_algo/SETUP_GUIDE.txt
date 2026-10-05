@@ -601,10 +601,16 @@ EMAIL VERIFICATION SETUP (recommended for production)
   4. Set in .env:
        SMTP_HOST=smtp.gmail.com
        SMTP_PORT=587
-       SMTP_USER=you@gmail.com
+       SMTP_USER=support@optiscalper.com
        SMTP_PASSWORD=xxxx-xxxx-xxxx-xxxx   ← 16-char App Password
-       SMTP_FROM=Optiscalper <you@gmail.com>
+       SMTP_FROM=support@optiscalper.com
+       SMTP_FROM_NAME=Optiscalper
        APP_BASE_URL=https://yourdomain.com  ← used in email links
+
+  Mail is sent as "Optiscalper <support@optiscalper.com>". The From
+  address must be authorised by the provider (authenticate as that
+  mailbox, or verify the domain / add a "Send mail as" alias) or it
+  will be rejected or rewritten.
 
   Dev / no email:
   If SMTP_USER/PASSWORD are blank → verification URLs are printed
