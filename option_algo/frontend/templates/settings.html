@@ -262,7 +262,7 @@
         <input id="c-qty" type="number" class="inp" placeholder="1" min="1" />
         <span class="muted" style="font-size:11.5px;display:block;margin-top:3px">
           Each lot = the exchange-defined lot size for that symbol.<br>
-          1 lot → NIFTY 75 qty · BANKNIFTY 15 qty · FINNIFTY 40 qty · SENSEX 10 qty
+          1 lot → NIFTY 65 qty · BANKNIFTY 30 qty · FINNIFTY 60 qty · SENSEX 10 qty
         </span>
         <div id="qty-plan-msg" style="font-size:11.5px;margin-top:3px"></div>
       </label>
@@ -292,9 +292,9 @@
       <p class="muted" style="font-size:12px;margin:8px 0 6px">
         Override built-in lot sizes for any symbol. Only admins can set this.
         Changes apply to ALL users on this deployment.<br>
-        Format: <code style="font-size:11px">{"NIFTY":75,"BANKNIFTY":30,"FINNIFTY":40}</code>
+        Format: <code style="font-size:11px">{"NIFTY":65,"BANKNIFTY":30,"FINNIFTY":60}</code>
       </p>
-      <textarea id="c-custom-lots" class="inp" rows="2" placeholder='{"NIFTY":75,"BANKNIFTY":15}'></textarea>
+      <textarea id="c-custom-lots" class="inp" rows="2" placeholder='{"NIFTY":65,"BANKNIFTY":30}'></textarea>
       <div id="lots-validate-msg" style="font-size:12px;margin-top:4px"></div>
     </details>
 
@@ -306,22 +306,22 @@
   <div class="card">
     <h2>Lot Size Reference</h2>
     <p class="muted" style="font-size:12.5px;margin-bottom:12px">
-      Built-in defaults (per SEBI circular). Set "Number of Lots" above and the engine
+      Built-in defaults (NSE F&O, Oct 2026). Set "Number of Lots" above and the engine
       multiplies by the correct lot size automatically. Update "Custom Lot Sizes" above
-      when SEBI revises these.
+      when the exchange revises these.
     </p>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
-      <div class="lot-row"><span class="lot-sym">NIFTY</span><span class="lot-val">75</span></div>
-      <div class="lot-row"><span class="lot-sym">BANKNIFTY</span><span class="lot-val">15</span></div>
-      <div class="lot-row"><span class="lot-sym">FINNIFTY</span><span class="lot-val">40</span></div>
-      <div class="lot-row"><span class="lot-sym">MIDCPNIFTY</span><span class="lot-val">75</span></div>
+      <div class="lot-row"><span class="lot-sym">NIFTY</span><span class="lot-val">65</span></div>
+      <div class="lot-row"><span class="lot-sym">BANKNIFTY</span><span class="lot-val">30</span></div>
+      <div class="lot-row"><span class="lot-sym">FINNIFTY</span><span class="lot-val">60</span></div>
+      <div class="lot-row"><span class="lot-sym">MIDCPNIFTY</span><span class="lot-val">120</span></div>
       <div class="lot-row"><span class="lot-sym">NIFTYNXT50</span><span class="lot-val">25</span></div>
       <div class="lot-row"><span class="lot-sym">SENSEX</span><span class="lot-val">10</span></div>
       <div class="lot-row"><span class="lot-sym">BANKEX</span><span class="lot-val">15</span></div>
     </div>
     <p class="muted" style="font-size:11.5px;margin-top:10px">
-      ⚠️ Exchange lot sizes change quarterly — always verify at
-      <a href="https://nseindia.com" target="_blank" rel="noopener" style="color:var(--blue)">nseindia.com</a>
+      ⚠️ Exchange lot sizes change periodically — always verify at
+      <a href="https://dhan.co/nse-fno-lot-size/" target="_blank" rel="noopener" style="color:var(--blue)">dhan.co</a>
       before going live.
     </p>
   </div>

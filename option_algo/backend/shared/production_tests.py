@@ -1180,6 +1180,52 @@ def test_watchlist_lot_size():
         _fail("lot badge style missing")
 
 
+def test_lot_size_table_current():
+    print("\n=== Test: Lot size table matches current NSE F&O contract sizes ===")
+
+    src = _read_src("backend/shared/shared_cache.py")
+    table = None
+    for node in ast.walk(ast.parse(src)):
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for tgt in targets:
+            if isinstance(tgt, ast.Name) and tgt.id == "DEFAULT_LOT_SIZES":
+                table = ast.literal_eval(node.value)
+
+    if not isinstance(table, dict):
+        _fail("DEFAULT_LOT_SIZES table not found in shared_cache.py")
+        return
+
+    expected = {
+        "NIFTY": 65, "BANKNIFTY": 30, "FINNIFTY": 60,
+        "MIDCPNIFTY": 120, "NIFTYNXT50": 25,
+        "RELIANCE": 500, "TCS": 225, "INFY": 400, "HDFCBANK": 650,
+        "ICICIBANK": 700, "SBIN": 750, "AXISBANK": 625, "BAJFINANCE": 750,
+        "WIPRO": 3000, "TATASTEEL": 2750, "ADANIPORTS": 475,
+        "MARUTI": 50, "SUNPHARMA": 350, "KOTAKBANK": 2000,
+        "SENSEX": 10, "BANKEX": 15,
+    }
+    wrong = {k: (table.get(k), v) for k, v in expected.items() if table.get(k) != v}
+    if not wrong:
+        _ok("index + stock lot sizes match the current NSE F&O values")
+    else:
+        _fail(f"stale lot sizes (got, expected): {wrong}")
+
+    if len(table) >= 218:
+        _ok(f"full NSE F&O universe loaded ({len(table)} symbols)")
+    else:
+        _fail(f"lot-size table too small ({len(table)} symbols, expected >= 218)")
+
+    eng = _read_src("backend/engine/engine_v6.py")
+    if "from backend.shared.shared_cache import DEFAULT_LOT_SIZES as NSE_LOT_SIZES" in eng:
+        _ok("engine_v6 reuses the shared table (no duplicated literals)")
+    else:
+        _fail("engine_v6 does not alias the shared lot-size table")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1220,6 +1266,7 @@ def run_all_tests():
     test_seo_and_indexing()
     test_email_sender_branding()
     test_watchlist_lot_size()
+    test_lot_size_table_current()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

@@ -144,7 +144,7 @@ def build_config_dict(cfg: BotConfig) -> dict:
         "extra_tokens": getattr(cfg, "extra_tokens", None) or "",
         # Per-symbol lot-size overrides (JSON string → dict).
         # Overrides the built-in NSE_LOT_SIZES table in engine_v6.py.
-        # Example: '{"NIFTY":75,"BANKNIFTY":30}'
+        # Example: '{"NIFTY":65,"BANKNIFTY":30}'
         "custom_lot_sizes": _parse_lot_sizes(getattr(cfg, "custom_lot_sizes", None)),
         # Per-symbol independent lot configuration for additional symbols.
         # Each entry: {"symbol":"BANKNIFTY","enabled":true,"trade_mode":"SEMI_AUTO","lots":2}

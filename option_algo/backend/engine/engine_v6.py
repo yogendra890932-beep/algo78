@@ -75,35 +75,12 @@ from backend.services.execution_layer import (
 # A user setting order_qty=1 always means "1 lot", regardless of symbol.
 #
 # To override (e.g. after an exchange revision), set custom_lot_sizes
-# in the bot config: {"NIFTY": 75, "BANKNIFTY": 30}
+# in the bot config: {"NIFTY": 65, "BANKNIFTY": 30}
 
-NSE_LOT_SIZES: dict[str, int] = {
-    # Nifty indices
-    "NIFTY":        75,
-    "BANKNIFTY":    15,
-    "FINNIFTY":     40,
-    "MIDCPNIFTY":   75,
-    "NIFTYNXT50":   25,
-    # BSE indices
-    "SENSEX":       10,
-    "BANKEX":       15,
-    # Individual stock futures/options (common ones — extend as needed)
-    "RELIANCE":     250,
-    "TCS":          150,
-    "INFY":         300,
-    "HDFCBANK":     550,
-    "ICICIBANK":    700,
-    "SBIN":         1500,
-    "AXISBANK":     625,
-    "BAJFINANCE":   125,
-    "WIPRO":        1500,
-    "TATASTEEL":    5500,
-    "TATAMOTORS":   2850,
-    "ADANIPORTS":   1250,
-    "MARUTI":       100,
-    "SUNPHARMA":    350,
-    "KOTAKBANK":    400,
-}
+# Single source of truth for lot sizes lives in shared_cache.DEFAULT_LOT_SIZES
+# (built-in NSE F&O lot sizes + BSE indices). Aliased here so existing
+# references to NSE_LOT_SIZES keep working without a duplicated table.
+from backend.shared.shared_cache import DEFAULT_LOT_SIZES as NSE_LOT_SIZES
 
 # Fallback if symbol not in table — warn and use 1 so order
 # quantity = exactly what user typed (raw qty, not lots).

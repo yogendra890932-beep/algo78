@@ -171,7 +171,7 @@ class BotConfig(Base):
     # e.g. "NIFTY,BANKNIFTY"  — each gets its own bot thread
     extra_symbols: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     extra_tokens: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    # JSON string of per-symbol lot-size overrides, e.g. {"NIFTY":75,"BANKNIFTY":30}
+    # JSON string of per-symbol lot-size overrides, e.g. {"NIFTY":65,"BANKNIFTY":30}
     # Used when exchanges revise lot sizes or for symbols not in NSE_LOT_SIZES.
     custom_lot_sizes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
