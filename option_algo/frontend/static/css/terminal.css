@@ -196,6 +196,14 @@
 .term-wl-item:hover { border-color: var(--term-border-2); }
 .term-wl-item.active { border-color: var(--term-accent); background: rgba(59, 130, 246, 0.10); }
 .term-wl-sym { font-weight: 700; font-size: 12px; flex: 1; }
+.term-wl-lot {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
+  color: var(--term-accent-2); white-space: nowrap;
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 5px; padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
 .term-wl-price { font-variant-numeric: tabular-nums; font-size: 12px; }
 .term-wl-chg { font-size: 11px; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
 .up   { color: var(--term-green); }

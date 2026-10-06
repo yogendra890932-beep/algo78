@@ -1160,6 +1160,26 @@ def test_email_sender_branding():
         _fail(".env.example does not set SMTP_FROM=support@optiscalper.com")
 
 
+def test_watchlist_lot_size():
+    print("\n=== Test: Terminal watchlist shows each symbol's lot size ===")
+
+    js = _read_src("frontend/static/js/terminal.js")
+    if "term-wl-lot" in js and '(lot ? "Lot " + lot : "Lot --")' in js:
+        _ok("watchlist rows render the exchange lot size")
+    else:
+        _fail("watchlist does not render lot size")
+    if "s.lot_size)" in js and "info.lot_size" in js:
+        _ok("lot size is read from available_symbols with a symbol_info fallback")
+    else:
+        _fail("lot size source not wired")
+
+    css = _read_src("frontend/static/css/terminal.css")
+    if ".term-wl-lot" in css:
+        _ok("lot badge is styled")
+    else:
+        _fail("lot badge style missing")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1199,6 +1219,7 @@ def run_all_tests():
     test_single_pending_and_60s_approval()
     test_seo_and_indexing()
     test_email_sender_branding()
+    test_watchlist_lot_size()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

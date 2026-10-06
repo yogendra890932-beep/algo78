@@ -145,8 +145,8 @@ function renderWatchlist(symbols, available) {
   count.textContent = syms.length;
   syms.forEach((s) => {
     const key = typeof s === "string" ? s : (s.symbol || "");
-    const lot = typeof s === "string" ? null : s.lot_size;
     const info = (symbols || {})[key];
+    const lot = (typeof s === "string" ? null : s.lot_size) || (info && info.lot_size) || null;
     const row = document.createElement("div");
     row.className = "term-wl-item";
     row.dataset.symbol = key;
@@ -155,6 +155,7 @@ function renderWatchlist(symbols, available) {
     const active = info && info.active_option ? info.active_option : "";
     row.innerHTML =
       '<span class="term-wl-sym">' + key + "</span>" +
+      '<span class="term-wl-lot" title="Exchange lot size">' + (lot ? "Lot " + lot : "Lot --") + "</span>" +
       '<span class="term-wl-price">' + fmt(price) + "</span>" +
       '<span class="term-wl-chg ' + clsChg(chg) + '">' + (chg == null ? "--" : sign(chg) + chg.toFixed(2) + "%") + "</span>" +
       (active ? '<span class="term-wl-active-opt">' + active + "</span>" : "");
