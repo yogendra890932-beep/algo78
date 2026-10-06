@@ -1206,7 +1206,7 @@ def test_lot_size_table_current():
         "ICICIBANK": 700, "SBIN": 750, "AXISBANK": 625, "BAJFINANCE": 750,
         "WIPRO": 3000, "TATASTEEL": 2750, "ADANIPORTS": 475,
         "MARUTI": 50, "SUNPHARMA": 350, "KOTAKBANK": 2000,
-        "SENSEX": 10, "BANKEX": 15,
+        "SENSEX": 20, "BANKEX": 30,
     }
     wrong = {k: (table.get(k), v) for k, v in expected.items() if table.get(k) != v}
     if not wrong:
@@ -1218,6 +1218,11 @@ def test_lot_size_table_current():
         _ok(f"full NSE F&O universe loaded ({len(table)} symbols)")
     else:
         _fail(f"lot-size table too small ({len(table)} symbols, expected >= 218)")
+
+    if "sys:cache:lot_size:v" in src and "LOT_SIZE_CACHE_VERSION" in src:
+        _ok("lot-size cache key is versioned (busts stale values on changes)")
+    else:
+        _fail("lot-size cache key is not versioned")
 
     eng = _read_src("backend/engine/engine_v6.py")
     if "from backend.shared.shared_cache import DEFAULT_LOT_SIZES as NSE_LOT_SIZES" in eng:

@@ -58,6 +58,9 @@ def _r():
 # ================================================================
 
 LOT_SIZE_CACHE_TTL = 3600  # 1 hour
+# Bump this whenever DEFAULT_LOT_SIZES changes so running processes stop
+# reading stale values from the previous table (cache keys are versioned).
+LOT_SIZE_CACHE_VERSION = 2
 
 # Built-in NSE F&O lot sizes. Source: https://dhan.co/nse-fno-lot-size/
 # fetched 2026-10-06. engine_v6 imports this table as NSE_LOT_SIZES so
@@ -70,9 +73,9 @@ DEFAULT_LOT_SIZES: dict[str, int] = {
     "MIDCPNIFTY": 120,
     "NIFTYNXT50": 25,
     "GOLDSTAR": 1100,
-    # BSE indices (not listed on the NSE page; verify when BSE revises)
-    "SENSEX": 10,
-    "BANKEX": 15,
+    # BSE indices
+    "SENSEX": 20,
+    "BANKEX": 30,
     # NSE F&O stocks
     "360ONE": 500, "ABB": 125, "ABCAPITAL": 3100,
     "ADANIENSOL": 675, "ADANIENT": 309, "ADANIGREEN": 600,
@@ -159,7 +162,7 @@ def get_lot_size(symbol: str, custom: Optional[dict] = None) -> int:
             return int(hit)
 
     # Check Redis cache
-    cache_key = f"sys:cache:lot_size:{clean}"
+    cache_key = f"sys:cache:lot_size:v{LOT_SIZE_CACHE_VERSION}:{clean}"
     r = _r()
     cached = r.get(cache_key)
     if cached:
