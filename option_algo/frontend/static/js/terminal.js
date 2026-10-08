@@ -643,6 +643,16 @@ async function loadTrades() {
   renderRealized(trades || []);
 }
 
+function exitReasonLabel(status) {
+  return ({
+    "TARGET": "Target",
+    "SL": "SL Hit",
+    "MANUAL": "Manual SquareOff",
+    "DIRECTION_FLIP_EXIT": "Direction Flip",
+    "PARTIAL_EXIT": "Partial Exit",
+  })[status] || status || "";
+}
+
 function renderTradeLog(trades) {
   const body = $("trade-log-body");
   if (!trades.length) {
@@ -662,7 +672,7 @@ function renderTradeLog(trades) {
       "<td>" + fmt(t.entry_price) + "</td>" +
       "<td>" + fmt(t.exit_price) + "</td>" +
       '<td class="' + clsChg(pnl) + '"><b>' + (pnl == null ? "--" : fmtINR(pnl)) + "</b></td>" +
-      "<td>" + esc(t.status || "") + "</td>";
+      "<td>" + esc(exitReasonLabel(t.status)) + "</td>";
     body.appendChild(tr);
   });
 }

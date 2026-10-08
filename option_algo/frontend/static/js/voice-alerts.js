@@ -138,6 +138,7 @@ const VoiceAlerts = (() => {
       case 'SL_HIT':              return 'Stop loss hit';
       case 'MANUAL_SQUAREOFF':    return 'Manual square off';
       case 'DIRECTION_FLIP_EXIT': return 'Direction change exit';
+      case 'PARTIAL_EXIT':        return 'Partial exit';
       default:                    return 'Exit';
     }
   }

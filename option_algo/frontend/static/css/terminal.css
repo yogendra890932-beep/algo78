@@ -136,7 +136,7 @@
   display: flex; flex-direction: column; gap: 10px;
   min-height: 0; min-width: 0;
   overflow-y: auto; overflow-x: hidden;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 .term-center {
   grid-area: center;

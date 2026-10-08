@@ -35,7 +35,7 @@
     <div class="stat-pill"><span class="pill-label">Symbol</span><b id="d-symbol">—</b></div>
     <div class="stat-pill"><span class="pill-label">Mode</span><b id="d-mode">—</b></div>
     <div class="stat-pill"><span class="pill-label">Strategy</span><b id="d-strategy">—</b></div>
-    <div class="stat-pill"><span class="pill-label">Qty</span><b id="d-qty">—</b></div>
+    <div class="stat-pill"><span class="pill-label">Lots</span><b id="d-qty">—</b></div>
     <div id="extra-symbol-pills" style="display:contents"></div>
   </div><!-- end top-stats -->
 
@@ -1746,6 +1746,7 @@
                                                   'SL': '<span class="badge badge-sl">SL Hit</span>',
                                                   'MANUAL': '<span class="badge badge-manual">Manual SquareOff</span>',
                                                   'DIRECTION_FLIP_EXIT': '<span class="badge badge-manual">Direction Flip</span>',
+                                                  'PARTIAL_EXIT': '<span class="badge badge-manual">Partial Exit</span>',
                                                 }[t.status] || t.status;
                                                 return `<tr>
       <td class="muted">${timeStr}</td>
@@ -1798,10 +1799,11 @@
                                                 case 'EXIT': {
                                                   const win = d.pnl >= 0;
                                                   const isTarget = ['TARGET', 'TARGET_HIT', 'NEAR_TARGET'].includes(d.status);
-                                                  const isManual = d.status === 'MANUAL_SQUAREOFF' || d.status === 'MANUAL';
+                                                  const isManual = ['MANUAL_SQUAREOFF', 'MANUAL', 'PARTIAL_EXIT'].includes(d.status);
                                                   const icon = isTarget ? '🎯' : isManual ? '⚡' : '🛑';
                                                   const sign = d.pnl >= 0 ? '+' : '';
-                                                  addFeed(`${icon} [${sym}] EXIT ${d.status} @ ₹${d.exit_price} | P&L ₹${sign}${d.pnl}`, win ? 'exit-win' : 'exit-loss');
+                                                  const reason = d.status === 'PARTIAL_EXIT' ? 'Partial Exit' : d.status;
+                                                  addFeed(`${icon} [${sym}] EXIT ${reason} @ ₹${d.exit_price} | P&L ₹${sign}${d.pnl}`, win ? 'exit-win' : 'exit-loss');
                                                   loadPositions();
                                                   // Small delay before querying DB — the EXIT WS event is published
                                                   // at the same time as the DB write starts; without a delay the API

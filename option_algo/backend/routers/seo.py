@@ -45,6 +45,7 @@ _PUBLIC_PAGES = [
     ("/", 1.0, "daily"),
     ("/terms", 0.3, "yearly"),
     ("/privacy", 0.3, "yearly"),
+    ("/refund", 0.3, "yearly"),
 ]
 
 

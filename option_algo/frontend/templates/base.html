@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Pages that don't require authentication — never redirect from these,
   // never call syncUserInfo() (which would trigger a 401 → logout() →
   // redirect back to /login → infinite loop if token is expired/missing).
-  const publicPaths = ['/', '/login', '/reset-password', '/terms', '/privacy'];
+  const publicPaths = ['/', '/login', '/reset-password', '/terms', '/privacy', '/refund'];
   if (publicPaths.includes(path)) {
     setActiveNav();
     return;

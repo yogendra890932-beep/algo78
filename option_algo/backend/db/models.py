@@ -35,6 +35,7 @@ class TradeStatus(str, enum.Enum):
     SL = "SL"
     DIRECTION_FLIP = "DIRECTION_FLIP_EXIT"
     MANUAL = "MANUAL"
+    PARTIAL_EXIT = "PARTIAL_EXIT"
 
 
 class ExecutionMode(str, enum.Enum):

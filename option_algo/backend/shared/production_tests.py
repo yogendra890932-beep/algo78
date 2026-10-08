@@ -1017,6 +1017,25 @@ def test_partial_lot_reduce():
     else:
         _fail("terminal chip has no Reduce control")
 
+    models = _read_src("backend/db/models.py")
+    if "PARTIAL_EXIT = " in models:
+        _ok("TradeStatus enum includes PARTIAL_EXIT")
+    else:
+        _fail("TradeStatus enum missing PARTIAL_EXIT")
+    worker = _read_src("worker.py")
+    if '"PARTIAL_EXIT":' in worker:
+        _ok("worker persists PARTIAL_EXIT instead of falling back to SL")
+    else:
+        _fail("worker does not persist PARTIAL_EXIT")
+    if "PARTIAL_EXIT" in tjs and "Partial Exit" in tjs:
+        _ok("terminal renders PARTIAL_EXIT as 'Partial Exit'")
+    else:
+        _fail("terminal lacks a Partial Exit label")
+    if "PARTIAL_EXIT" in dash and "Partial Exit" in dash:
+        _ok("dashboard renders PARTIAL_EXIT as 'Partial Exit'")
+    else:
+        _fail("dashboard lacks a Partial Exit label")
+
 
 def test_single_pending_and_60s_approval():
     print("\n=== Test: One pending trade at a time + 60s approval ===")
@@ -1105,6 +1124,52 @@ def test_seo_and_indexing():
         _ok("app shell is noindex with proper favicon")
     else:
         _fail("app shell missing noindex or favicon")
+
+    # ── Refund & Cancellation policy ──
+    refund_path = os.path.join(BASE, "frontend/templates/refund.html")
+    if os.path.exists(refund_path):
+        _ok("refund policy template exists")
+    else:
+        _fail("refund policy template missing")
+    refund = _read_src("frontend/templates/refund.html")
+    if 'rel="canonical"' in refund and 'content="index, follow"' in refund:
+        _ok("refund policy is indexable with a canonical URL")
+    else:
+        _fail("refund policy SEO meta missing")
+    public = seo.split("_PUBLIC_PAGES")[1].split("]")[0]
+    if "/refund" in public:
+        _ok("refund page is in the sitemap")
+    else:
+        _fail("refund page missing from the sitemap")
+    if '@app.get("/refund"' in main_src and 'TemplateResponse("refund.html"' in main_src:
+        _ok("refund page has a route")
+    else:
+        _fail("refund page route missing")
+    if "'/refund'" in base:
+        _ok("refund page treated as public in the app shell")
+    else:
+        _fail("refund not in base public paths")
+    if 'href="/refund"' in landing:
+        _ok("refund policy linked from the landing footer")
+    else:
+        _fail("refund policy not linked from the footer")
+
+
+def test_dashboard_lots_and_terminal_layout():
+    print("\n=== Test: Dashboard 'Lots' label + terminal laptop layout ===")
+
+    dash = _read_src("frontend/templates/dashboard.html")
+    if '<span class="pill-label">Lots</span><b id="d-qty">' in dash:
+        _ok("dashboard order-size pill is labelled 'Lots'")
+    else:
+        _fail("dashboard still labels the order-size pill 'Qty'")
+
+    css = _read_src("frontend/static/css/terminal.css")
+    left_block = css.split(".term-left {")[1].split("}")[0]
+    if "justify-content: flex-start" in left_block:
+        _ok("selected-symbol card stacks under the watchlist (laptop mode)")
+    else:
+        _fail("selected-symbol card is detached from the watchlist")
 
     for rel in [
         "frontend/static/favicon.svg",
@@ -1272,6 +1337,7 @@ def run_all_tests():
     test_email_sender_branding()
     test_watchlist_lot_size()
     test_lot_size_table_current()
+    test_dashboard_lots_and_terminal_layout()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL
