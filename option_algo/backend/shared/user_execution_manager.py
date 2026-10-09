@@ -1061,6 +1061,7 @@ class UserExecutionManager:
             paper = get_paper_book(self.user_id)
 
         # 1) Sell the reduced quantity at market.
+        exit_order_id = None
         if is_live:
             oid = self._place_order_live(
                 "SELL", reduce_qty,
@@ -1074,6 +1075,11 @@ class UserExecutionManager:
                                   f"{reduce_qty} qty — position unchanged",
                     })
                 return False
+            exit_order_id = oid
+            # Book the broker's ACTUAL fill for the reduced quantity.
+            fill = self._get_fill_price_live(oid, timeout=5)
+            if fill:
+                exit_price = fill
         else:
             paper.place_market_order(
                 "SELL", reduce_qty, exit_price,
@@ -1127,6 +1133,7 @@ class UserExecutionManager:
                 "target": pos.get("target", 0),
                 "qty": reduce_qty,
                 "remaining_qty": remaining,
+                "exit_order_id": exit_order_id,
                 "pnl": pnl,
                 "status": "PARTIAL_EXIT",
                 "strategy": pos.get("strategy", ""),
@@ -1169,13 +1176,25 @@ class UserExecutionManager:
         # Live non-SL exits must close the broker position with a market
         # SELL (mirrors legacy _book_profit / _emergency_exit). On SL_HIT
         # the exchange SL-M order already closed it, so no exit order.
+        exit_order_id = None
         if is_live and status != "SL_HIT":
             try:
                 qty = pos.get("qty", 0)
-                self._place_order_live(
+                exit_order_id = self._place_order_live(
                     "SELL", qty,
                     instrument_key=pos.get("instrument_key") or None,
                 )
+                # Read the broker's ACTUAL exit fill (webhook + Upstox
+                # order-details poll) instead of the signal-time LTP, so
+                # the booked P&L and trade log reflect what really filled.
+                if exit_order_id:
+                    fill = self._get_fill_price_live(exit_order_id, timeout=5)
+                    if fill:
+                        exit_price = fill
+                    else:
+                        print(f"{_now()} [exec:u{self.user_id}] exit fill "
+                              f"unconfirmed for order {exit_order_id} — "
+                              f"falling back to LTP {exit_price}")
             except Exception as e:
                 print(f"{_now()} [exec:u{self.user_id}] Live exit SELL failed: {e}")
 
@@ -1208,6 +1227,7 @@ class UserExecutionManager:
                 "strike": pos.get("strike"),
                 "expiry": pos.get("expiry", ""),
                 "instrument_key": pos.get("instrument_key", ""),
+                "exit_order_id": exit_order_id,
                 "entry_ts": pos.get("entry_ts", datetime.utcnow()),
             })
 

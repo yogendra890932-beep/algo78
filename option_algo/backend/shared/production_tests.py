@@ -1296,6 +1296,47 @@ def test_lot_size_table_current():
         _fail("engine_v6 does not alias the shared lot-size table")
 
 
+def test_live_exit_uses_broker_fill():
+    print("\n=== Test: Live exits book the broker's actual fill price ===")
+
+    mgr = _read_src("backend/shared/user_execution_manager.py")
+
+    if "def _get_fill_price_live" in mgr:
+        _ok("manager has a broker fill-price helper")
+    else:
+        _fail("manager lacks _get_fill_price_live")
+
+    if "exit_order_id = self._place_order_live(" in mgr:
+        _ok("full close captures the live exit order id")
+    else:
+        _fail("full close ignores the live exit order id")
+
+    if "fill = self._get_fill_price_live(exit_order_id, timeout=5)" in mgr:
+        _ok("full close reads the real exit fill from Upstox")
+    else:
+        _fail("full close does not read the exit fill from Upstox")
+
+    if "fill = self._get_fill_price_live(oid, timeout=5)" in mgr:
+        _ok("partial reduce reads the real fill from Upstox")
+    else:
+        _fail("partial reduce does not read the fill from Upstox")
+
+    if mgr.count("exit_price = fill") >= 2:
+        _ok("broker fill overrides the LTP-based exit price")
+    else:
+        _fail("broker fill does not override the exit price")
+
+    if '"exit_order_id": exit_order_id,' in mgr:
+        _ok("EXIT events carry the exit order id")
+    else:
+        _fail("EXIT events omit the exit order id")
+
+    if "exit_p = self._get_fill_price_live(sl_id, timeout=5)" in mgr:
+        _ok("SL_HIT still books the broker fill (unchanged)")
+    else:
+        _fail("SL_HIT fill lookup regressed")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1337,6 +1378,7 @@ def run_all_tests():
     test_email_sender_branding()
     test_watchlist_lot_size()
     test_lot_size_table_current()
+    test_live_exit_uses_broker_fill()
     test_dashboard_lots_and_terminal_layout()
 
     print("\n" + "=" * 60)
