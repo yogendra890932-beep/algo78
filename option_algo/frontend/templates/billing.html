@@ -19,6 +19,7 @@
 .billing-topbar{position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px;
   padding:14px 26px; background:var(--card); border-bottom:1px solid var(--border)}
 .billing-topbar .brand{font-weight:800; font-size:17px; display:flex; align-items:center; gap:8px}
+.billing-topbar .brand .nav-logo{height:26px; width:26px; border-radius:7px; display:block}
 .billing-topbar .brand i{color:var(--accent)}
 .billing-topbar .spacer{flex:1}
 .theme-switch-b{position:relative; width:46px; height:26px; border-radius:20px; background:var(--border); cursor:pointer; border:none}
@@ -126,7 +127,7 @@
 {% block content %}
 <div class="billing-shell" id="billingShell" data-theme="dark">
   <div class="billing-topbar">
-    <a href="/dashboard" class="brand text-decoration-none" style="color:inherit"><i class="fa-solid fa-chart-line"></i> <span>Optiscalper</span></a>
+    <a href="/dashboard" class="brand text-decoration-none" style="color:inherit"><img class="nav-logo" src="/static/logo.png" alt="Optiscalper"/> <span>Optiscalper</span></a>
     <div class="spacer"></div>
     <a href="/dashboard" class="btn btn-sm btn-outline-secondary" style="color:var(--text);border-color:var(--border)"><i class="fa-solid fa-arrow-left me-1"></i><span>Dashboard</span></a>
     <button class="theme-switch-b" onclick="toggleBillingTheme()" title="Toggle theme"><span class="knob"><i class="fa-solid fa-moon"></i></span></button>

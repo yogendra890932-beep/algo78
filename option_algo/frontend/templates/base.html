@@ -10,13 +10,13 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png"/>
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
 <link rel="manifest" href="/static/site.webmanifest"/>
-<link rel="stylesheet" href="/static/css/style.css"/>
+<link rel="stylesheet" href="/static/css/style.css?v=20261009-1"/>
 {% block extra_head %}{% endblock %}
 </head>
 <body>
 {% if show_nav != false %}
 <nav class="navbar">
-  <div class="nav-brand">📈 Optiscalper</div>
+  <div class="nav-brand"><img class="nav-logo" src="/static/logo.png" alt="Optiscalper"/>Optiscalper</div>
   <div class="nav-links">
     <a href="/dashboard"  id="nav-dashboard">Dashboard</a>
     <a href="/trades"     id="nav-trades">Trades</a>

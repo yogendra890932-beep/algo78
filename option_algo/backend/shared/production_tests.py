@@ -1177,6 +1177,7 @@ def test_dashboard_lots_and_terminal_layout():
         "frontend/static/favicon-32.png",
         "frontend/static/apple-touch-icon.png",
         "frontend/static/og-image.png",
+        "frontend/static/logo.png",
         "frontend/static/site.webmanifest",
         "frontend/static/icons/icon-192.png",
         "frontend/static/icons/icon-512.png",
@@ -1337,6 +1338,40 @@ def test_live_exit_uses_broker_fill():
         _fail("SL_HIT fill lookup regressed")
 
 
+def test_brand_logo_wired():
+    print("\n=== Test: Brand logo image wired across the UI ===")
+
+    if os.path.exists(os.path.join(BASE, "frontend/static/logo.png")):
+        _ok("logo.png asset is present")
+    else:
+        _fail("logo.png asset is missing")
+
+    asset = "/static/logo.png"
+    checks = {
+        "base shell": ("frontend/templates/base.html", 'class="nav-logo"'),
+        "terminal": ("frontend/templates/terminal.html", "term-brand-logo"),
+        "login page": ("frontend/templates/index.html", 'class="auth-logo"><img'),
+        "landing page": ("frontend/templates/landing.html", 'class="nav-brand"><img'),
+        "terms page": ("frontend/templates/terms.html", 'class="nav-brand"><img'),
+        "privacy page": ("frontend/templates/privacy.html", 'class="nav-brand"><img'),
+        "refund page": ("frontend/templates/refund.html", 'class="nav-brand"><img'),
+        "billing page": ("frontend/templates/billing.html", 'class="nav-logo"'),
+        "admin billing": ("frontend/templates/admin_billing.html", "brand-logo"),
+    }
+    for name, (rel, needle) in checks.items():
+        src = _read_src(rel)
+        if needle in src and asset in src:
+            _ok(f"{name} uses the brand logo image")
+        else:
+            _fail(f"{name} still lacks the brand logo image")
+
+    es = _read_src("backend/services/email_service.py")
+    if "_brand_header" in es and "/static/logo.png" in es:
+        _ok("email templates use the branded logo header")
+    else:
+        _fail("email templates lack the logo header")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1380,6 +1415,7 @@ def run_all_tests():
     test_lot_size_table_current()
     test_live_exit_uses_broker_fill()
     test_dashboard_lots_and_terminal_layout()
+    test_brand_logo_wired()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

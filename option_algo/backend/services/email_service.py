@@ -51,6 +51,20 @@ def _envelope_from() -> str:
     return parseaddr(_from_header())[1] or settings.SMTP_USER
 
 
+def _brand_header() -> str:
+    """Branded email header: logo image + wordmark. Falls back to the alt
+    text when a mail client blocks remote images."""
+    base = (settings.APP_BASE_URL or "").rstrip("/")
+    return (
+        '<div style="margin-bottom:12px">'
+        f'<img src="{base}/static/logo.png" alt="Optiscalper" width="34" '
+        'height="34" style="vertical-align:middle;border-radius:9px">'
+        '<span style="font-size:24px;font-weight:800;color:#e2e8f0;'
+        'margin-left:10px;vertical-align:middle">Optiscalper</span>'
+        '</div>'
+    )
+
+
 def generate_verify_token() -> str:
     """URL-safe 48-char token — enough entropy for a one-time verification link."""
     return secrets.token_urlsafe(36)
@@ -67,7 +81,7 @@ def _build_verify_email(to_email: str, full_name: str, token: str) -> MIMEMultip
 <body style="font-family:Arial,sans-serif;background:#0f1923;color:#e2e8f0;padding:32px">
   <div style="max-width:520px;margin:0 auto;background:#1a2636;border-radius:12px;
               padding:32px;border:1px solid #2a3a4a">
-    <div style="font-size:28px;margin-bottom:8px">📈 Optiscalper</div>
+    {_brand_header()}
     <h2 style="color:#10b981;margin-top:0">Verify your email</h2>
     <p>Hi {full_name or 'there'},</p>
     <p>Click the button below to verify your email address and activate your account.
@@ -167,7 +181,7 @@ def _build_welcome_email(to_email: str, full_name: str, method: str) -> MIMEMult
 <body style="font-family:Arial,sans-serif;background:#0f1923;color:#e2e8f0;padding:32px">
   <div style="max-width:520px;margin:0 auto;background:#1a2636;border-radius:12px;
               padding:32px;border:1px solid #2a3a4a">
-    <div style="font-size:28px;margin-bottom:8px">📈 Optiscalper</div>
+    {_brand_header()}
     <h2 style="color:#10b981;margin-top:0">Welcome aboard!</h2>
     <p>Hi {full_name or 'there'},</p>
     <p>Your Optiscalper account has been created{' via ' + method if method else ''}. 
@@ -214,7 +228,7 @@ def _build_reset_email(to_email: str, full_name: str, token: str) -> MIMEMultipa
 <body style="font-family:Arial,sans-serif;background:#0f1923;color:#e2e8f0;padding:32px">
   <div style="max-width:520px;margin:0 auto;background:#1a2636;border-radius:12px;
               padding:32px;border:1px solid #2a3a4a">
-    <div style="font-size:28px;margin-bottom:8px">📈 Optiscalper</div>
+    {_brand_header()}
     <h2 style="color:#ef4444;margin-top:0">Password Reset</h2>
     <p>Hi {full_name or 'there'},</p>
     <p>Someone requested a password reset for your Optiscalper account.

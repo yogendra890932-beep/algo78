@@ -51,6 +51,9 @@
   color: #fff; font-weight: 800; font-size: 18px;
   display: flex; align-items: center; justify-content: center;
 }
+.term-brand-logo {
+  width: 34px; height: 34px; border-radius: 9px; display: block;
+}
 .term-brand-title { font-weight: 700; font-size: 14px; letter-spacing: 0.3px; }
 .term-brand-sub   { font-size: 11px; color: var(--term-muted); }
 .term-market      { flex: 1; display: flex; gap: 8px; justify-content: center; }
@@ -67,10 +70,15 @@
   flex: 0 0 auto;
 }
 .nav-brand {
+  display: inline-flex; align-items: center; gap: 8px;
   font-size: 17px; font-weight: 700; letter-spacing: -0.3px;
   background: linear-gradient(135deg, var(--term-green), var(--term-accent));
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+.nav-logo {
+  height: 26px; width: 26px; border-radius: 7px; display: block;
+  -webkit-text-fill-color: initial;
 }
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-links a {
@@ -582,6 +590,7 @@
   .nav-links a { padding: 5px 8px; font-size: 11px; }
   .btn-logout { padding: 5px 8px; font-size: 11px; }
   .term-brand-mark { width: 28px; height: 28px; font-size: 15px; }
+  .term-brand-logo { width: 28px; height: 28px; }
   .term-brand-title { font-size: 12px; }
   .term-tabs { padding: 6px 8px 0; }
   .term-tab { padding: 6px 10px; font-size: 11px; }

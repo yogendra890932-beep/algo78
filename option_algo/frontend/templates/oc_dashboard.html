@@ -15,7 +15,8 @@ body{background:var(--dark);color:var(--text);font-family:'Segoe UI',sans-serif;
 .navbar{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:20px;}
 .navbar a{color:var(--muted);text-decoration:none;font-size:13px;}
 .navbar a.active{color:var(--blue);}
-.navbar .brand{color:var(--text);font-weight:600;font-size:15px;margin-right:auto;}
+.navbar .brand{color:var(--text);font-weight:600;font-size:15px;margin-right:auto;display:flex;align-items:center;gap:7px;}
+.navbar .brand .nav-logo{height:24px;width:24px;border-radius:6px;display:block;}
 .page{padding:16px;max-width:1600px;margin:0 auto;}
 .grid-top{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px;}
 .grid-mid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
@@ -137,7 +138,7 @@ table.oc-tbl tr.atm-row td.strike-col{color:var(--blue);}
 <body>
 
 <nav class="navbar">
-  <span class="brand">⚡ Optiscalper</span>
+  <span class="brand"><img class="nav-logo" src="/static/logo.png" alt="Optiscalper"/> Optiscalper</span>
   <a href="/dashboard">Dashboard</a>
   <a href="/trades">Trades</a>
   <a href="/oc-dashboard" class="active">Option Chain</a>

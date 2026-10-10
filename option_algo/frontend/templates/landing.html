@@ -104,6 +104,8 @@ body::before{
   display:flex;align-items:center;gap:9px;
   font-family:var(--mono);font-weight:700;font-size:16px;letter-spacing:-0.02em;
 }
+.nav-logo{height:26px;width:26px;border-radius:7px;display:block;}
+.footer-brand .nav-logo{height:20px;width:20px;border-radius:6px;}
 .nav-dot{width:8px;height:8px;border-radius:50%;background:var(--green);
   box-shadow:0 0 8px var(--green);animation:pulse-dot 2s ease-in-out infinite;}
 @keyframes pulse-dot{0%,100%{opacity:1;}50%{opacity:0.4;}}
@@ -530,7 +532,7 @@ body::before{
 <!-- ============ NAV ============ -->
 <nav class="nav">
   <div class="wrap nav-inner">
-    <div class="nav-brand"><span class="nav-dot"></span>OPTISCALPER</div>
+    <div class="nav-brand"><img class="nav-logo" src="/static/logo.png" alt="Optiscalper"/>OPTISCALPER</div>
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
@@ -748,7 +750,7 @@ body::before{
 <footer class="footer">
   <div class="wrap">
     <div class="footer-inner">
-      <div class="footer-brand"><span class="nav-dot" style="display:inline-block"></span> OPTISCALPER</div>
+      <div class="footer-brand"><img class="nav-logo" src="/static/logo.png" alt="Optiscalper"/> OPTISCALPER</div>
       <div class="footer-links">
         <a href="/login">Log in</a>
         <a href="#features">Features</a>
