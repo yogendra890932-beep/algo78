@@ -30,6 +30,25 @@ async def load_user_and_config(user_id: int):
         return user, cfg
 
 
+async def get_user_access_token(user_id: int) -> Optional[str]:
+    """Return the decrypted Upstox access token currently stored for a user.
+
+    Used by the worker's periodic token-sync safety net to detect a token
+    refreshed on the web side and hot-swap it into the running engines /
+    shared services WITHOUT restarting the worker. Returns None when the
+    user has no token or it cannot be decrypted.
+    """
+    async with AsyncSessionLocal() as db:
+        ures = await db.execute(select(User).where(User.id == user_id))
+        user = ures.scalar_one_or_none()
+        if not user or not user.upstox_token_enc:
+            return None
+        try:
+            return decrypt_token(user.upstox_token_enc)
+        except Exception:
+            return None
+
+
 def _parse_lot_sizes(raw: Optional[str]) -> dict:
     """
     Parses the custom_lot_sizes JSON string into a dict.

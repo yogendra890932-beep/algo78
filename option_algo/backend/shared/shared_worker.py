@@ -47,7 +47,9 @@ import traceback
 from datetime import datetime
 from typing import Optional
 
-from backend.shared.market_data_service import SharedMarketDataService
+from backend.shared.market_data_service import (
+    SharedMarketDataService, update_global_streamer_token,
+)
 from backend.shared.candle_builder import SharedCandleBuilder
 from backend.shared.indicator_engine import SharedIndicatorEngine
 from backend.shared.market_structure_engine import (
@@ -348,6 +350,99 @@ class SharedWorkerOrchestrator:
                                   name=f"init-svc-{symbol}")
         thread.start()
 
+    def _refresh_shared_services_token(self, access_token: str) -> int:
+        """Hot-swap the broker token in all ACTIVE shared services.
+
+        Called after a user refreshes their daily Upstox token so the
+        running worker keeps streaming / fetching quotes without a process
+        restart. Only touches services that are currently instantiated;
+        returns the number of services updated.
+        """
+        if not access_token:
+            return 0
+        updated = 0
+
+        try:
+            if update_global_streamer_token(access_token):
+                updated += 1
+        except Exception as e:
+            print(f"{_now()} [shared-orch] global streamer token refresh failed: {e}")
+
+        for sym in SharedMarketDataService.active_symbols():
+            try:
+                if SharedMarketDataService.update_access_token_for(sym, access_token):
+                    updated += 1
+                if SharedCandleBuilder.update_access_token_for(sym, access_token):
+                    updated += 1
+                if SharedOptionPremiumBuilder.update_access_token_for(sym, access_token):
+                    updated += 1
+                updated += SharedOptionChainService.update_access_token_for_symbol(
+                    sym, access_token)
+            except Exception as e:
+                print(f"{_now()} [shared-orch] token refresh failed for {sym}: {e}")
+
+        if updated:
+            print(f"{_now()} [shared-orch] Hot-swapped access token on "
+                  f"{updated} shared service(s)")
+        return updated
+
+    # ================================================================
+    # TOKEN SYNC (no-restart daily token refresh)
+    # ================================================================
+
+    TOKEN_SYNC_EVERY_SEC = 30
+
+    def _sync_running_user_tokens(self):
+        """Safety net — align running engines/shared services with the DB token.
+
+        The web side pushes an `update_token` command on refresh, but that
+        requires the web process to reach Redis at that moment. This periodic
+        poll compares each running user's in-memory token with the token
+        currently stored in the DB and hot-swaps any difference, so a daily
+        refresh never requires a worker restart.
+        """
+        if not self._main_loop or not self._main_loop.is_running():
+            return
+        running = list(self._user_registry.running_users())
+        if not running:
+            return
+
+        from backend.services.bot_config_builder import get_user_access_token
+
+        for uid in running:
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    get_user_access_token(uid), self._main_loop)
+                db_token = fut.result(timeout=10)
+            except Exception as e:
+                print(f"{_now()} [shared-orch] token sync read failed for {uid}: {e}")
+                continue
+
+            if not db_token:
+                continue
+
+            mgr = self._user_registry._managers.get(uid)
+            if not mgr:
+                continue
+
+            if getattr(mgr, "access_token", None) != db_token:
+                if mgr.update_token(db_token):
+                    self._refresh_shared_services_token(db_token)
+                    print(f"{_now()} [shared-orch] Synced refreshed token for "
+                          f"user {uid} (no restart)")
+
+            # If the manager was paused because its token had expired and a
+            # fresh token is now present, resume automatically. A manual
+            # pause (reason != "token_expired") is left untouched.
+            if (getattr(mgr, "is_paused", False)
+                    and getattr(mgr, "pause_reason", None) == "token_expired"):
+                try:
+                    mgr.resume()
+                    print(f"{_now()} [shared-orch] Resumed user {uid} after "
+                          f"token refresh")
+                except Exception as e:
+                    print(f"{_now()} [shared-orch] resume failed for {uid}: {e}")
+
     def _start_option_chain(self, symbol: str, underlying_key: str,
                              expiry: str, access_token: str):
         """Start option chain analysis for a symbol/expiry pair."""
@@ -630,7 +725,7 @@ class SharedWorkerOrchestrator:
         if not mgr:
             return {"ok": False, "error": "Bot not running"}
         if paused:
-            mgr.pause()
+            mgr.pause(reason="manual")
         else:
             mgr.resume()
         key = "paused" if paused else "resumed"
@@ -644,8 +739,19 @@ class SharedWorkerOrchestrator:
         if not mgr:
             return {"ok": False, "error": "Bot not running"}
         if mgr.update_token(new_token):
-            mgr.resume()
-            return {"ok": True, "status": "running", "action": "token_updated_and_resumed"}
+            # Propagate to the shared market-data pipeline so the running
+            # worker keeps its broker feed alive without a restart.
+            refreshed = self._refresh_shared_services_token(new_token)
+            # Only auto-resume a token-expiry pause; leave a manual pause
+            # (reason != "token_expired") as the user set it.
+            if getattr(mgr, "pause_reason", None) == "token_expired":
+                mgr.resume()
+            return {
+                "ok": True,
+                "status": "running",
+                "action": "token_updated_and_resumed",
+                "shared_services_refreshed": refreshed,
+            }
         else:
             return {"ok": False, "error": "Invalid access token"}
 
@@ -656,6 +762,7 @@ class SharedWorkerOrchestrator:
     def _heartbeat_loop(self):
         """Periodically refresh worker heartbeat and running user statuses."""
         cycle = 0
+        last_token_sync = 0.0
         while not self._stop_event.is_set():
             try:
                 self._register_worker()
@@ -663,6 +770,17 @@ class SharedWorkerOrchestrator:
                     set_bot_status_sync(uid, "running")
             except Exception as e:
                 print(f"{_now()} [shared-orch] heartbeat error: {e}")
+
+            # No-restart daily token refresh: pick up a token changed on the
+            # web side (OAuth callback / manual paste) even if the push
+            # command was missed. Throttled — DB read at most every N sec.
+            now = time.time()
+            if now - last_token_sync >= self.TOKEN_SYNC_EVERY_SEC:
+                last_token_sync = now
+                try:
+                    self._sync_running_user_tokens()
+                except Exception as e:
+                    print(f"{_now()} [shared-orch] token sync error: {e}")
 
             # Auto-stop every bot at 15:45 IST on trading days. After the
             # last bot stops the ref-count hits 0, so shared market-data

@@ -597,6 +597,22 @@ class SharedOptionPremiumBuilder:
                 builder.start()
             return cls._instances[sym]
 
+    def update_access_token(self, access_token: str) -> bool:
+        """Hot-swap this builder's broker token (no restart)."""
+        if not access_token:
+            return False
+        self.access_token = access_token
+        return True
+
+    @classmethod
+    def update_access_token_for(cls, symbol: str, access_token: str) -> bool:
+        sym = symbol.upper()
+        with cls._instances_lock:
+            builder = cls._instances.get(sym)
+        if builder is None:
+            return False
+        return builder.update_access_token(access_token)
+
     @classmethod
     def stop_symbol(cls, symbol: str):
         sym = symbol.upper()

@@ -80,6 +80,26 @@ class _GlobalStreamer:
                     pass
         print(f"{_now()} [global_md] Stopped")
     
+    def update_access_token(self, access_token: str) -> bool:
+        """Hot-swap the broker token and force a reconnect with the new one.
+
+        Called when a user refreshes their daily Upstox token so a running
+        worker picks it up WITHOUT a process restart. The current socket is
+        disconnected, which makes `_connect_and_stream` return and the
+        `_run` loop reconnect using the updated `self.access_token`.
+        """
+        if not access_token or access_token == self.access_token:
+            return False
+        self.access_token = access_token
+        with self._streamer_lock:
+            if self._streamer:
+                try:
+                    self._streamer.disconnect()
+                except Exception:
+                    pass
+        print(f"{_now()} [global_md] Access token updated — reconnecting")
+        return True
+
     def subscribe_token(self, token: str, callback: Callable):
         """Subscribe to a token's ticks and register callback."""
         with self._tokens_lock:
@@ -194,6 +214,18 @@ def _get_global_streamer(access_token: str) -> _GlobalStreamer:
         return _global_streamer
 
 
+def update_global_streamer_token(access_token: str) -> bool:
+    """Hot-swap the singleton streamer's token if it is already running.
+
+    Returns True when a live streamer's token was changed (and it will
+    reconnect). No-op (False) when no streamer exists yet — the next
+    `get_or_create` will pick up the token from the start config.
+    """
+    if _global_streamer is None:
+        return False
+    return _global_streamer.update_access_token(access_token)
+
+
 class SharedMarketDataService:
     """
     Per-symbol shared market data feed. All symbols share ONE
@@ -291,6 +323,24 @@ class SharedMarketDataService:
                 cls._instances[symbol.upper()] = svc
                 svc.start()
             return cls._instances[symbol.upper()]
+
+    def update_access_token(self, access_token: str) -> bool:
+        """Update this service's token and propagate to the global streamer."""
+        if not access_token:
+            return False
+        self.access_token = access_token
+        if self._streamer:
+            self._streamer.update_access_token(access_token)
+        return True
+
+    @classmethod
+    def update_access_token_for(cls, symbol: str, access_token: str) -> bool:
+        """Hot-swap the token for an active symbol's service (if any)."""
+        with cls._instances_lock:
+            svc = cls._instances.get(symbol.upper())
+        if svc is None:
+            return False
+        return svc.update_access_token(access_token)
 
     @classmethod
     def stop_all(cls):

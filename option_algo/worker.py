@@ -550,6 +550,16 @@ def _handle_pause_resume(user_id: int, paused: bool) -> dict:
     return {"ok": True, key: [e.symbol for e in engines]}
 
 
+def _handle_update_token(user_id: int, payload: dict) -> dict:
+    """Hot-swap a running bot's Upstox token (no restart)."""
+    token = (payload or {}).get("access_token", "")
+    if not token:
+        return {"ok": False, "error": "Access token required"}
+    if bot_manager.update_token(user_id, token):
+        return {"ok": True, "status": "running", "action": "token_updated"}
+    return {"ok": False, "error": "Bot not running or update failed"}
+
+
 _command_loop_main_loop = None
 
 
@@ -650,6 +660,8 @@ def _command_loop(main_loop: asyncio.AbstractEventLoop, stop_event: threading.Ev
                 result = _handle_pause_resume(user_id, True)
             elif action == "resume":
                 result = _handle_pause_resume(user_id, False)
+            elif action == "update_token":
+                result = _handle_update_token(user_id, payload)
             elif action == "approve_pending_trade":
                 result = _handle_approve_pending_trade(user_id, payload, main_loop)
             elif action == "reject_pending_trade":

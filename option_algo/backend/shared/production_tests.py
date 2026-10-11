@@ -1372,6 +1372,93 @@ def test_brand_logo_wired():
         _fail("email templates lack the logo header")
 
 
+def test_token_hot_refresh_no_restart():
+    print("\n=== Test: Daily token refresh without a worker restart ===")
+
+    md = _read_src("backend/shared/market_data_service.py")
+    if "def update_access_token(self, access_token" in md:
+        _ok("global streamer can hot-swap its access token")
+    else:
+        _fail("global streamer lacks update_access_token")
+    if "def update_global_streamer_token(" in md:
+        _ok("module helper updates the singleton streamer")
+    else:
+        _fail("update_global_streamer_token helper missing")
+    if "def update_access_token_for(cls, symbol" in md:
+        _ok("SharedMarketDataService exposes per-symbol token update")
+    else:
+        _fail("SharedMarketDataService lacks update_access_token_for")
+
+    for rel, cls in (
+        ("backend/shared/candle_builder.py", "SharedCandleBuilder"),
+        ("backend/shared/option_premium_service.py", "SharedOptionPremiumBuilder"),
+        ("backend/shared/option_chain_service.py", "SharedOptionChainService"),
+    ):
+        src = _read_src(rel)
+        if "def update_access_token(self, access_token" in src:
+            _ok(f"{cls} can hot-swap its token")
+        else:
+            _fail(f"{cls} lacks update_access_token")
+
+    bcb = _read_src("backend/services/bot_config_builder.py")
+    if "async def get_user_access_token(" in bcb:
+        _ok("DB token reader helper exists (periodic sync)")
+    else:
+        _fail("get_user_access_token helper missing")
+
+    sw = _read_src("backend/shared/shared_worker.py")
+    if "def _refresh_shared_services_token(" in sw:
+        _ok("orchestrator refreshes shared services + streamer")
+    else:
+        _fail("_refresh_shared_services_token missing")
+    if "def _sync_running_user_tokens(" in sw:
+        _ok("periodic DB token sync exists (safety net)")
+    else:
+        _fail("_sync_running_user_tokens missing")
+    if "_sync_running_user_tokens()" in sw and "TOKEN_SYNC_EVERY_SEC" in sw:
+        _ok("heartbeat invokes the throttled token sync")
+    else:
+        _fail("heartbeat does not invoke the periodic token sync")
+    if _has_function_with_code(
+            sw, "_handle_update_token", "_refresh_shared_services_token"):
+        _ok("update_token command also refreshes shared services")
+    else:
+        _fail("update_token command does not refresh shared services")
+
+    ar = _read_src("backend/routers/all_routers.py")
+    if ar.count('push_command("update_token"') >= 2:
+        _ok("both web token writers push update_token to the worker")
+    else:
+        _fail("web token writers do not notify the worker")
+
+    bm = _read_src("backend/services/bot_manager.py")
+    if "def update_token(self, user_id" in bm:
+        _ok("legacy BotManager supports token hot-swap")
+    else:
+        _fail("legacy BotManager lacks update_token")
+
+    wk = _read_src("worker.py")
+    if 'action == "update_token"' in wk:
+        _ok("legacy worker dispatches update_token")
+    else:
+        _fail("legacy worker missing update_token dispatch")
+
+    uem = _read_src("backend/shared/user_execution_manager.py")
+    if "_pause_reason" in uem and "def pause_reason(" in uem:
+        _ok("manager tracks the pause reason (manual vs token_expired)")
+    else:
+        _fail("manager does not track the pause reason")
+    if _has_function_with_code(
+            sw, "_sync_running_user_tokens", '== "token_expired"'):
+        _ok("auto-resume only fires for a token-expiry pause")
+    else:
+        _fail("auto-resume may clobber a manual pause")
+    if _has_function_with_code(sw, "_handle_pause_resume", 'pause(reason="manual")'):
+        _ok("manual pause is tagged so it survives token refresh")
+    else:
+        _fail("manual pause is not tagged")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1416,6 +1503,7 @@ def run_all_tests():
     test_live_exit_uses_broker_fill()
     test_dashboard_lots_and_terminal_layout()
     test_brand_logo_wired()
+    test_token_hot_refresh_no_restart()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

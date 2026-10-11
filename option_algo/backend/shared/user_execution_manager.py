@@ -83,6 +83,7 @@ class UserExecutionManager:
 
         self._stop_event = threading.Event()
         self._paused = threading.Event()
+        self._pause_reason: Optional[str] = None
         self._thread: Optional[threading.Thread] = None
         self._monitor_thread: Optional[threading.Thread] = None
         self._tick_thread: Optional[threading.Thread] = None
@@ -215,6 +216,7 @@ class UserExecutionManager:
         if self._paused.is_set():
             return
         self._paused.set()
+        self._pause_reason = reason
         set_bot_status_sync(self.user_id, "token_expired", reason)
         publish_event_sync(self.user_id, {
             "event": "token_expired",
@@ -229,7 +231,8 @@ class UserExecutionManager:
             print(f"{_now()} [exec:u{self.user_id}] Token rejected: invalid format")
             return False
         self.access_token = new_token
-        set_bot_status_sync(self.user_id, "running")
+        if not self._paused.is_set():
+            set_bot_status_sync(self.user_id, "running")
         publish_event_sync(self.user_id, {
             "event": "token_updated",
             "user_id": self.user_id,
@@ -242,6 +245,7 @@ class UserExecutionManager:
         if not self._paused.is_set():
             return
         self._paused.clear()
+        self._pause_reason = None
         set_bot_status_sync(self.user_id, "running")
         publish_event_sync(self.user_id, {
             "event": "execution_resumed",
@@ -252,6 +256,10 @@ class UserExecutionManager:
     @property
     def is_paused(self) -> bool:
         return self._paused.is_set()
+
+    @property
+    def pause_reason(self) -> Optional[str]:
+        return self._pause_reason
 
     def _loop(self):
         """Subscribe to signal channels for user's symbols."""

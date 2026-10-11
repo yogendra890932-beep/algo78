@@ -234,6 +234,25 @@ class SharedOptionChainService:
             if svc:
                 svc.stop()
 
+    def update_access_token(self, access_token: str) -> bool:
+        """Hot-swap this service's broker token (no restart)."""
+        if not access_token:
+            return False
+        self.access_token = access_token
+        return True
+
+    @classmethod
+    def update_access_token_for_symbol(cls, symbol: str, access_token: str) -> int:
+        """Hot-swap the token on all option-chain instances for a symbol."""
+        prefix = f"{symbol.upper()}:"
+        with cls._instances_lock:
+            svcs = [s for k, s in cls._instances.items() if k.startswith(prefix)]
+        n = 0
+        for svc in svcs:
+            if svc.update_access_token(access_token):
+                n += 1
+        return n
+
     @classmethod
     def stop_all(cls):
         with cls._instances_lock:

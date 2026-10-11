@@ -179,6 +179,17 @@ async def set_upstox_token(
     user.upstox_token_expires_at = next_token_expiry()
     db.add(user)
     await db.commit()
+
+    # Notify a running worker so it hot-swaps the token into the live
+    # engines + shared market-data services without a restart. Fire-and-
+    # forget: the worker also polls the DB as a safety net, so a Redis
+    # hiccup here is non-fatal.
+    try:
+        from backend.services.command_queue import push_command
+
+        await push_command("update_token", user.id, {"access_token": token})
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -317,6 +328,16 @@ async def upstox_callback(
     user.upstox_token_expires_at = next_token_expiry()
     db.add(user)
     await db.commit()
+
+    # Hot-swap the token into a running worker (no restart) — see the
+    # manual /upstox-token route above. The worker also has a periodic
+    # DB sync as a fallback.
+    try:
+        from backend.services.command_queue import push_command
+
+        await push_command("update_token", user.id, {"access_token": access_token})
+    except Exception:
+        pass
 
     return _redirect("connected")
 

@@ -84,9 +84,22 @@ class BotThread(threading.Thread):
         self.on_trade         = on_trade
         self._stop_event      = threading.Event()
         self.error_msg: Optional[str] = None
+        self.engine           = None
 
     def request_stop(self):
         self._stop_event.set()
+
+    def update_token(self, new_token: str) -> bool:
+        """Hot-swap the token on the live engine (no restart)."""
+        if not new_token:
+            return False
+        self.access_token = new_token
+        if self.engine is not None:
+            try:
+                self.engine.access_token = new_token
+            except Exception:
+                pass
+        return True
 
     def run(self):
         try:
@@ -98,6 +111,7 @@ class BotThread(threading.Thread):
                 stop_event   = self._stop_event,
                 on_trade     = self._sync_on_trade,
             )
+            self.engine = engine
             engine.run_sync()
         except Exception as e:
             self.error_msg = traceback.format_exc()
@@ -213,6 +227,18 @@ class BotManager:
             t = self._bots.get(user_id)
             if t:
                 t.request_stop()
+
+    def update_token(self, user_id: int, access_token: str) -> bool:
+        """Hot-swap a running bot's broker token (no restart), both modes."""
+        if self._shared_mode:
+            res = self._orchestrator._handle_update_token(
+                user_id, {"access_token": access_token})
+            return bool(res.get("ok"))
+        with self._lock:
+            t = self._bots.get(user_id)
+        if not t:
+            return False
+        return t.update_token(access_token)
 
     def stop_all(self, join_timeout: float = 10.0):
         if self._shared_mode:
