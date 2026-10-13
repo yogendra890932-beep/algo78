@@ -54,6 +54,10 @@ NEW_COLUMNS = [
     # and the one-time trial guard flag
     ("users", "mobile_number", "VARCHAR(15)"),
     ("users", "trial_used", "BOOLEAN DEFAULT 0"),
+    # Global admin-only ITM depth (1 = 1 strike ITM). Integer column with no
+    # inline default so the Postgres "DEFAULT 1"->"DEFAULT TRUE" rewrite in
+    # migrate() doesn't corrupt it; NULL coalesces to 1 in the readers.
+    ("platform_settings", "itm_depth", "INTEGER"),
 ]
 
 
@@ -150,6 +154,21 @@ async def migrate():
                 )
         except Exception as e:
             print(f"  (execution_mode backfill skipped: {e})")
+
+        try:
+            result = await conn.execute(
+                text(
+                    "UPDATE platform_settings SET itm_depth = 1 "
+                    "WHERE itm_depth IS NULL"
+                )
+            )
+            count = result.rowcount
+            if count:
+                print(
+                    f"  ✓ Backfill: set itm_depth=1 for {count} platform settings row(s)"
+                )
+        except Exception as e:
+            print(f"  (itm_depth backfill skipped: {e})")
     from backend.engine.history_loader import NSE_HOLIDAYS
     from backend.engine.instruments import KNOWN_INDEX_KEYS, KNOWN_STEPS
 
@@ -273,9 +292,9 @@ async def seed_default_plans():
             )
         ).scalar_one_or_none()
         if not platform_row:
-            db.add(PlatformSettings(id=1, auto_trading_enabled=False))
+            db.add(PlatformSettings(id=1, auto_trading_enabled=False, itm_depth=1))
             await db.commit()
-            print("  ✅ Seeded platform settings (AUTO trading disabled)")
+            print("  ✅ Seeded platform settings (AUTO trading disabled, ITM depth 1)")
         else:
             print("  ℹ️  Platform settings already configured")
 

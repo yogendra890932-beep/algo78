@@ -26,6 +26,7 @@ from backend.db.models import PlatformSettings
 # processes within a few seconds without a DB hit per signal.
 _SYNC_TTL_SEC = 5.0
 _cache: dict = {"value": None, "ts": 0.0}
+_itm_cache: dict = {"value": None, "ts": 0.0}
 _lock = threading.Lock()
 
 
@@ -36,7 +37,7 @@ async def get_platform_settings(db):
     )
     row = res.scalar_one_or_none()
     if row is None:
-        row = PlatformSettings(id=1, auto_trading_enabled=False)
+        row = PlatformSettings(id=1, auto_trading_enabled=False, itm_depth=1)
         db.add(row)
         await db.commit()
         await db.refresh(row)
@@ -51,6 +52,47 @@ async def is_auto_enabled_async(db) -> bool:
     except Exception as e:
         print(f"[platform_settings] read failed (treating AUTO as disabled): {e}")
         return False
+
+
+async def get_itm_depth_async(db) -> int:
+    """Async reader for the admin API. Fail-safe: 1 on any error."""
+    try:
+        row = await get_platform_settings(db)
+        return int(row.itm_depth or 1)
+    except Exception as e:
+        print(f"[platform_settings] itm_depth read failed (using 1): {e}")
+        return 1
+
+
+def get_itm_depth_sync() -> int:
+    """Sync reader for worker/engine threads, with a short TTL cache.
+
+    Fail-safe: any DB error returns 1 (the standard 1-strike-ITM depth).
+    The shared market-data feed is global, so this single value drives
+    option selection for every user.
+    """
+    now = time.time()
+    with _lock:
+        cached = _itm_cache["value"]
+        if cached is not None and (now - _itm_cache["ts"]) < _SYNC_TTL_SEC:
+            return cached
+
+    value = 1
+    try:
+        from backend.db.database import get_sync_session
+        with get_sync_session() as db:
+            row = db.execute(
+                select(PlatformSettings).where(PlatformSettings.id == 1)
+            ).scalar_one_or_none()
+            value = int(row.itm_depth or 1) if row else 1
+    except Exception as e:
+        print(f"[platform_settings] sync itm_depth read failed (using 1): {e}")
+        value = 1
+
+    with _lock:
+        _itm_cache["value"] = value
+        _itm_cache["ts"] = now
+    return value
 
 
 def is_auto_enabled_sync() -> bool:
@@ -89,3 +131,5 @@ def refresh():
     with _lock:
         _cache["value"] = None
         _cache["ts"] = 0.0
+        _itm_cache["value"] = None
+        _itm_cache["ts"] = 0.0

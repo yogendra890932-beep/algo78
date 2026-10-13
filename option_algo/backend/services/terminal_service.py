@@ -36,7 +36,16 @@ from backend.shared.redis_infra import (
 from backend.engine.instruments import KNOWN_STEPS
 from backend.shared.shared_cache import get_lot_size
 
-ITM_DEPTH = 1  # mirrors SharedOptionPremiumBuilder.ITM_DEPTH
+ITM_DEPTH = 1  # fallback; the live value is the global platform setting
+
+
+def _itm_depth() -> int:
+    """Admin-configured global ITM depth (1 = 1 strike ITM)."""
+    try:
+        from backend.services.platform_settings import get_itm_depth_sync
+        return max(1, int(get_itm_depth_sync()))
+    except Exception:
+        return ITM_DEPTH
 
 
 def _f(v, default=None):
@@ -207,12 +216,13 @@ async def compute_itm(symbol: str, underlying_ltp: Optional[float]) -> Optional[
         except Exception:
             step = 50
     atm = round(underlying_ltp / step) * step
+    depth = _itm_depth()
     return {
         "strike_step": step,
         "underlying": round(underlying_ltp, 2),
         "atm": atm,
-        "itm_ce": atm - ITM_DEPTH * step,
-        "itm_pe": atm + ITM_DEPTH * step,
+        "itm_ce": atm - depth * step,
+        "itm_pe": atm + depth * step,
     }
 
 
@@ -366,7 +376,7 @@ async def build_bootstrap(user, db) -> dict:
             "sl_pct": cfg.sl_pct,
             "target_rr": cfg.target_rr,
             "trail_mode": cfg.trail_mode,
-            "itm_depth": cfg.itm_depth,
+            "itm_depth": _itm_depth(),
             "max_trades_per_day": cfg.max_trades_per_day,
             "max_loss_per_day": cfg.max_loss_per_day,
             "trade_start_time": cfg.trade_start_time,
@@ -403,5 +413,5 @@ async def build_bootstrap(user, db) -> dict:
         "available_symbols": await get_available_symbols(),
         "positions": await get_user_positions(user.id),
         "pending_trades": await get_pending_trades(user.id),
-        "itm_depth": ITM_DEPTH,
+        "itm_depth": _itm_depth(),
     }

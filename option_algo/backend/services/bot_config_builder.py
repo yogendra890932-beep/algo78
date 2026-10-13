@@ -137,11 +137,11 @@ def build_config_dict(cfg: BotConfig) -> dict:
         ),
         "itm_depth": cfg.itm_depth or 1,
         "strategy": cfg.strategy or "both",
-        "order_qty": cfg.order_qty or 25,
+        "order_qty": cfg.order_qty or 1,
         "product": getattr(cfg, "product", "I") or "I",
         "trail_mode": cfg.trail_mode or "atr",
-        "target_rr": cfg.target_rr or 2.5,
-        "sl_pct": cfg.sl_pct or 0.003,
+        "target_rr": cfg.target_rr or 1.5,
+        "sl_pct": cfg.sl_pct or 0.05,
         "target_near_pct": 0.003,
         "max_trades_per_day": cfg.max_trades_per_day or 5,
         "max_loss_per_day": cfg.max_loss_per_day or 5000.0,
@@ -309,6 +309,15 @@ async def resolve_start_inputs(
         return None, None, f"Failed to decrypt Upstox token: {e}"
 
     config = build_config_dict(cfg)
+    # ITM depth is a GLOBAL, admin-only platform setting (the shared feed is
+    # shared across all users), so it overrides any per-user value here.
+    try:
+        from backend.services.platform_settings import get_itm_depth_async
+        async with AsyncSessionLocal() as ps_db:
+            config["itm_depth"] = await get_itm_depth_async(ps_db)
+    except Exception as e:
+        print(f"[bot_config_builder] itm_depth read failed (using 1): {e}")
+        config["itm_depth"] = 1
     # Expose admin status to the engine so the runtime AUTO safety net
     # can exempt admins (they may always run FULLY AUTO for testing).
     config["is_admin"] = user.role == UserRole.admin

@@ -1459,6 +1459,96 @@ def test_token_hot_refresh_no_restart():
         _fail("manual pause is not tagged")
 
 
+def test_default_trading_params():
+    print("\n=== Test: Default trading params (Lots 1, SL 0.05, R:R 1.5) ===")
+
+    models = _read_src("backend/db/models.py")
+    if "order_qty: Mapped[int] = mapped_column(Integer, default=1)" in models:
+        _ok("BotConfig default lots = 1")
+    else:
+        _fail("BotConfig default lots is not 1")
+    if "sl_pct: Mapped[float] = mapped_column(Float, default=0.05)" in models:
+        _ok("BotConfig default SL% = 0.05")
+    else:
+        _fail("BotConfig default SL% is not 0.05")
+    if "target_rr: Mapped[float] = mapped_column(Float, default=1.5)" in models:
+        _ok("BotConfig default Target R:R = 1.5")
+    else:
+        _fail("BotConfig default Target R:R is not 1.5")
+
+    bcb = _read_src("backend/services/bot_config_builder.py")
+    if '"order_qty": cfg.order_qty or 1,' in bcb:
+        _ok("config builder lots fallback = 1")
+    else:
+        _fail("config builder lots fallback is not 1")
+    if '"sl_pct": cfg.sl_pct or 0.05,' in bcb:
+        _ok("config builder SL% fallback = 0.05")
+    else:
+        _fail("config builder SL% fallback is not 0.05")
+    if '"target_rr": cfg.target_rr or 1.5,' in bcb:
+        _ok("config builder Target R:R fallback = 1.5")
+    else:
+        _fail("config builder Target R:R fallback is not 1.5")
+
+
+def test_itm_depth_global_admin():
+    print("\n=== Test: ITM Depth is a global admin-only setting ===")
+
+    models = _read_src("backend/db/models.py")
+    if "class PlatformSettings" in models:
+        _ok("PlatformSettings model present")
+    ps_block = models.split("class PlatformSettings")[-1]
+    if "itm_depth: Mapped[int]" in ps_block:
+        _ok("PlatformSettings stores itm_depth")
+    else:
+        _fail("PlatformSettings is missing itm_depth")
+
+    ps = _read_src("backend/services/platform_settings.py")
+    if "async def get_itm_depth_async(" in ps and "def get_itm_depth_sync(" in ps:
+        _ok("platform_settings exposes async + sync itm_depth getters")
+    else:
+        _fail("platform_settings lacks itm_depth getters")
+
+    ops = _read_src("backend/shared/option_premium_service.py")
+    if "def _itm_depth()" in ops and "get_itm_depth_sync" in ops:
+        _ok("shared option feed reads the global itm_depth")
+    else:
+        _fail("shared option feed ignores the global itm_depth")
+    if "_itm_depth(), self._strike_step" in ops:
+        _ok("option selection uses the global depth (not a constant)")
+    else:
+        _fail("option selection still uses a constant depth")
+
+    ts = _read_src("backend/services/terminal_service.py")
+    if "def _itm_depth()" in ts and "get_itm_depth_sync" in ts:
+        _ok("terminal service reads the global itm_depth")
+    else:
+        _fail("terminal service ignores the global itm_depth")
+
+    ar = _read_src("backend/routers/all_routers.py")
+    if "get_itm_depth_async" in ar and "itm_depth" in ar:
+        _ok("API exposes the global itm_depth")
+    else:
+        _fail("API does not expose the global itm_depth")
+    bot_in = ar.split("class BotConfigIn")[1].split("class ")[0]
+    if "itm_depth" not in bot_in:
+        _ok("users cannot submit itm_depth (dropped from BotConfigIn)")
+    else:
+        _fail("BotConfigIn still lets users set itm_depth")
+
+    admin = _read_src("frontend/templates/admin.html")
+    if "ps-itm-depth" in admin and "itm_depth" in admin:
+        _ok("admin panel has an ITM Depth control")
+    else:
+        _fail("admin panel lacks the ITM Depth control")
+
+    settings = _read_src("frontend/templates/settings.html")
+    if "c-itm" not in settings:
+        _ok("user settings page no longer shows ITM Depth")
+    else:
+        _fail("user settings page still shows ITM Depth")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1504,6 +1594,8 @@ def run_all_tests():
     test_dashboard_lots_and_terminal_layout()
     test_brand_logo_wired()
     test_token_hot_refresh_no_restart()
+    test_default_trading_params()
+    test_itm_depth_global_admin()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

@@ -266,9 +266,6 @@
         </span>
         <div id="qty-plan-msg" style="font-size:11.5px;margin-top:3px"></div>
       </label>
-      <label>ITM Depth (1 = 1 strike ITM)
-        <input id="c-itm" type="number" class="inp" min="1" max="5" />
-      </label>
       <label>Trail Mode
         <select id="c-trail" class="inp">
           <option value="atr">ATR (recommended)</option>
@@ -279,7 +276,7 @@
       <label>Target R:R
         <input id="c-rr" type="number" step="0.1" class="inp" />
       </label>
-      <label>SL % (0.003 = 0.3%)
+      <label>SL % (0.05 = 5%)
         <input id="c-sl" type="number" step="0.001" class="inp" />
       </label>
     </div>
@@ -799,7 +796,6 @@
     const isAdmin = localStorage.getItem('role') === 'admin';
     const lotsSection = document.getElementById('custom-lots-section');
     if (lotsSection) lotsSection.style.display = isAdmin ? '' : 'none';
-    document.getElementById('c-itm').value = c.itm_depth;
     document.getElementById('c-trail').value = c.trail_mode || 'atr';
     document.getElementById('c-rr').value = c.target_rr;
     document.getElementById('c-sl').value = c.sl_pct;
@@ -1355,7 +1351,6 @@
             throw new Error('Fix custom lot sizes JSON before saving');
           }
         })(),
-        itm_depth: parseInt(document.getElementById('c-itm').value),
         trail_mode: document.getElementById('c-trail').value,
         target_rr: parseFloat(document.getElementById('c-rr').value),
         sl_pct: parseFloat(document.getElementById('c-sl').value),

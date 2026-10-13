@@ -134,11 +134,11 @@ class BotConfig(Base):
     underlying_token: Mapped[str] = mapped_column(String(50), default="NSE_INDEX|13")
     itm_depth: Mapped[int] = mapped_column(Integer, default=1)
     strategy: Mapped[str] = mapped_column(String(20), default="both")
-    order_qty: Mapped[int] = mapped_column(Integer, default=25)
+    order_qty: Mapped[int] = mapped_column(Integer, default=1)
     product: Mapped[str] = mapped_column(String(5), default="I")
     trail_mode: Mapped[str] = mapped_column(String(10), default="atr")
-    target_rr: Mapped[float] = mapped_column(Float, default=2.5)
-    sl_pct: Mapped[float] = mapped_column(Float, default=0.003)
+    target_rr: Mapped[float] = mapped_column(Float, default=1.5)
+    sl_pct: Mapped[float] = mapped_column(Float, default=0.05)
 
     max_trades_per_day: Mapped[int] = mapped_column(Integer, default=5)
     max_loss_per_day: Mapped[float] = mapped_column(Float, default=5000.0)
@@ -825,6 +825,10 @@ class PlatformSettings(Base):
     # users. While false, AUTO cannot be selected, saved, or run; bot
     # start downgrades any stored AUTO config to SEMI_AUTO.
     auto_trading_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Global ITM depth for option selection (1 = 1 strike ITM). Admin-only:
+    # the shared market-data feed is global, so this single value drives
+    # option selection for every user.
+    itm_depth: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

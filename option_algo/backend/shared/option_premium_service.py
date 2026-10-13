@@ -47,8 +47,22 @@ from backend.shared.candle_builder import SharedCandleBuilder
 
 MAX_1M_BARS = 750
 WARM_MIN_BARS = 25
+# Fallback used only if the global platform setting cannot be read.
 ITM_DEPTH = 1
 ITM_RESELECT_EXTRA_STEPS = 2
+
+
+def _itm_depth() -> int:
+    """Admin-configured GLOBAL ITM depth (1 = 1 strike ITM).
+
+    The shared option-premium feed is global, so a single platform-wide
+    value (set in the admin panel) drives option selection for every user.
+    """
+    try:
+        from backend.services.platform_settings import get_itm_depth_sync
+        return max(1, int(get_itm_depth_sync()))
+    except Exception:
+        return ITM_DEPTH
 
 
 def _now() -> str:
@@ -229,7 +243,7 @@ class SharedOptionPremiumBuilder:
         try:
             from backend.engine.instruments import get_itm_instrument
             info = get_itm_instrument(
-                opt_type, ltp, self.symbol, ITM_DEPTH, self._strike_step)
+                opt_type, ltp, self.symbol, _itm_depth(), self._strike_step)
         except Exception as e:
             print(f"{_now()} [premium:{self.symbol}] ITM select err: {e}")
             return False
@@ -266,19 +280,20 @@ class SharedOptionPremiumBuilder:
 
         step = self._strike_step
         atm = round(underlying_ltp / step) * step
+        depth = _itm_depth()
         if self._opt_type == "CE":
-            extra_steps = ((atm - ITM_DEPTH * step) - self._strike) / step
+            extra_steps = ((atm - depth * step) - self._strike) / step
         else:
-            extra_steps = (self._strike - (atm + ITM_DEPTH * step)) / step
+            extra_steps = (self._strike - (atm + depth * step)) / step
         if extra_steps < ITM_RESELECT_EXTRA_STEPS:
             return False
 
         print(f"{_now()} [premium:{self.symbol}] Strike {self._strike} "
-              f"{extra_steps:.0f} steps deep — reselecting 1 ITM")
+              f"{extra_steps:.0f} steps deep — reselecting {depth} ITM")
         try:
             from backend.engine.instruments import get_itm_instrument
             info = get_itm_instrument(self._opt_type, underlying_ltp,
-                                      self.symbol, ITM_DEPTH, step)
+                                      self.symbol, depth, step)
         except Exception as e:
             print(f"{_now()} [premium:{self.symbol}] reselect err: {e}")
             return False

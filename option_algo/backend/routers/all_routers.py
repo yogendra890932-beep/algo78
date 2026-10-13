@@ -65,7 +65,6 @@ class ProfileUpdateIn(BaseModel):
 class BotConfigIn(BaseModel):
     underlying_symbol: Optional[str] = None
     underlying_token: Optional[str] = None
-    itm_depth: Optional[int] = None
     strategy: Optional[str] = None
     order_qty: Optional[int] = None
     trail_mode: Optional[str] = None
@@ -357,7 +356,6 @@ async def get_config(
         for k in [
             "underlying_symbol",
             "underlying_token",
-            "itm_depth",
             "strategy",
             "order_qty",
             "trail_mode",
@@ -395,8 +393,12 @@ async def get_config(
     result["extra_symbol_config"] = getattr(cfg, "extra_symbol_config", None)
     # Global AUTO gate — surfaced so the Settings page can disable the
     # Fully Automatic option for non-admins when it is off.
-    from backend.services.platform_settings import is_auto_enabled_async
+    from backend.services.platform_settings import (
+        is_auto_enabled_async, get_itm_depth_async,
+    )
     result["auto_trading_enabled"] = await is_auto_enabled_async(db)
+    # ITM depth is a global, admin-only platform setting (see admin panel).
+    result["itm_depth"] = await get_itm_depth_async(db)
     return result
 
 
@@ -1125,6 +1127,9 @@ async def admin_stats(
 
 class PlatformSettingsIn(BaseModel):
     auto_trading_enabled: bool
+    # Admin-only global ITM depth (1 = 1 strike ITM). Optional so the
+    # existing AUTO-only save keeps working.
+    itm_depth: Optional[int] = None
 
 
 @admin_router.get("/platform-settings")
@@ -1136,6 +1141,7 @@ async def get_platform_settings_api(
     row = await get_platform_settings(db)
     return {
         "auto_trading_enabled": bool(row.auto_trading_enabled),
+        "itm_depth": int(row.itm_depth or 1),
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
@@ -1152,6 +1158,13 @@ async def update_platform_settings_api(
     row = await ps.get_platform_settings(db)
     before = bool(row.auto_trading_enabled)
     row.auto_trading_enabled = bool(body.auto_trading_enabled)
+
+    itm_before = int(row.itm_depth or 1)
+    itm_after = itm_before
+    if body.itm_depth is not None:
+        itm_after = max(1, min(5, int(body.itm_depth)))
+        row.itm_depth = itm_after
+
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -1164,10 +1177,20 @@ async def update_platform_settings_api(
             f"AUTO trading {'ENABLED' if row.auto_trading_enabled else 'DISABLED'} by admin",
             metadata={"before": before, "after": bool(row.auto_trading_enabled)},
         )
+        if itm_after != itm_before:
+            await log_event(
+                db, admin.id, "itm_depth_setting_changed",
+                f"Global ITM depth set to {itm_after} by admin",
+                metadata={"before": itm_before, "after": itm_after},
+            )
         await db.commit()
     except Exception as e:
         print(f"[platform_settings] audit log failed: {e}")
-    return {"ok": True, "auto_trading_enabled": bool(row.auto_trading_enabled)}
+    return {
+        "ok": True,
+        "auto_trading_enabled": bool(row.auto_trading_enabled),
+        "itm_depth": itm_after,
+    }
 
 
 # ================================================================

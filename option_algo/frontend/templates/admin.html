@@ -159,14 +159,19 @@
     <button onclick="loadPlatformSettings()" class="abtn">↻ Refresh</button>
   </div>
   <p class="muted" style="font-size:12.5px;margin:-4px 0 12px">
-    Global switches that apply to every user. FULLY AUTOMATIC trading is off by default and can be enabled here later.
+    Global switches that apply to every user. FULLY AUTOMATIC trading is off by default and can be enabled here later. ITM Depth controls option selection for all users.
   </p>
-  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
     <label style="display:flex;align-items:center;gap:8px;font-weight:600">
       <input type="checkbox" id="ps-auto-enabled" style="width:16px;height:16px">
       Allow Fully Automatic (AUTO) trading
     </label>
     <span id="ps-auto-state" class="muted" style="font-size:12px">—</span>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600">
+      ITM Depth (1 = 1 strike ITM)
+      <input type="number" id="ps-itm-depth" min="1" max="5" value="1"
+        style="width:72px;padding:4px 6px">
+    </label>
     <button onclick="savePlatformSettings()" class="abtn success" id="ps-save">Save</button>
   </div>
   <div id="ps-msg" style="margin-top:8px;font-size:12.5px"></div>
@@ -783,11 +788,13 @@ function setPsMsg(txt, kind) {
 async function loadPlatformSettings() {
   const cb = document.getElementById('ps-auto-enabled');
   const state = document.getElementById('ps-auto-state');
+  const itm = document.getElementById('ps-itm-depth');
   try {
     const r = await apiFetch('/api/admin/platform-settings');
     if (!r || !r.ok) throw new Error('load failed');
     const d = await r.json();
     cb.checked = !!d.auto_trading_enabled;
+    if (itm) itm.value = d.itm_depth || 1;
     if (state) state.textContent = d.auto_trading_enabled
       ? 'AUTO currently ENABLED' : 'AUTO currently DISABLED';
   } catch (e) {
@@ -797,8 +804,10 @@ async function loadPlatformSettings() {
 
 async function savePlatformSettings() {
   const cb = document.getElementById('ps-auto-enabled');
+  const itm = document.getElementById('ps-itm-depth');
   const btn = document.getElementById('ps-save');
   const enabled = !!cb.checked;
+  const depth = Math.max(1, Math.min(5, parseInt(itm && itm.value, 10) || 1));
   if (!enabled && !confirm(
     'Disable FULLY AUTOMATIC trading for all users?\n\n' +
     'Running AUTO bots will switch to approval-gated Semi Auto on their next entry, ' +
@@ -807,11 +816,12 @@ async function savePlatformSettings() {
   if (btn) btn.disabled = true;
   try {
     const r = await apiFetch('/api/admin/platform-settings', {
-      method: 'PUT', body: JSON.stringify({ auto_trading_enabled: enabled })
+      method: 'PUT',
+      body: JSON.stringify({ auto_trading_enabled: enabled, itm_depth: depth })
     });
     if (r && r.ok) {
-      setPsMsg(enabled ? '✅ Fully Automatic trading ENABLED'
-        : '✅ Fully Automatic trading DISABLED', 'success');
+      setPsMsg((enabled ? '✅ Fully Automatic trading ENABLED'
+        : '✅ Fully Automatic trading DISABLED') + ' · ITM Depth = ' + depth, 'success');
       loadPlatformSettings();
     } else {
       let detail = 'Failed to save';
