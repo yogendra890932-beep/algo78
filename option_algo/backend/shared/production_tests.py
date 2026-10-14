@@ -1448,13 +1448,17 @@ def test_token_hot_refresh_no_restart():
         _ok("manager tracks the pause reason (manual vs token_expired)")
     else:
         _fail("manager does not track the pause reason")
-    if _has_function_with_code(
-            sw, "_sync_running_user_tokens", '== "token_expired"'):
-        _ok("auto-resume only fires for a token-expiry pause")
+    # Bots must start/resume ONLY on an explicit user action.
+    if not _has_function_with_code(sw, "_sync_running_user_tokens", "resume("):
+        _ok("periodic token sync never auto-resumes a bot")
     else:
-        _fail("auto-resume may clobber a manual pause")
+        _fail("periodic token sync auto-resumes a bot")
+    if not _has_function_with_code(sw, "_handle_update_token", "resume("):
+        _ok("update_token never auto-resumes a bot")
+    else:
+        _fail("update_token auto-resumes a bot")
     if _has_function_with_code(sw, "_handle_pause_resume", 'pause(reason="manual")'):
-        _ok("manual pause is tagged so it survives token refresh")
+        _ok("manual pause is tagged")
     else:
         _fail("manual pause is not tagged")
 

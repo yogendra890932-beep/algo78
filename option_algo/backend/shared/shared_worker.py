@@ -431,17 +431,9 @@ class SharedWorkerOrchestrator:
                     print(f"{_now()} [shared-orch] Synced refreshed token for "
                           f"user {uid} (no restart)")
 
-            # If the manager was paused because its token had expired and a
-            # fresh token is now present, resume automatically. A manual
-            # pause (reason != "token_expired") is left untouched.
-            if (getattr(mgr, "is_paused", False)
-                    and getattr(mgr, "pause_reason", None) == "token_expired"):
-                try:
-                    mgr.resume()
-                    print(f"{_now()} [shared-orch] Resumed user {uid} after "
-                          f"token refresh")
-                except Exception as e:
-                    print(f"{_now()} [shared-orch] resume failed for {uid}: {e}")
+            # A refreshed token is hot-swapped into the running engine, but a
+            # paused bot is NEVER auto-resumed: bots start/resume only on an
+            # explicit user action.
 
     def _start_option_chain(self, symbol: str, underlying_key: str,
                              expiry: str, access_token: str):
@@ -742,14 +734,12 @@ class SharedWorkerOrchestrator:
             # Propagate to the shared market-data pipeline so the running
             # worker keeps its broker feed alive without a restart.
             refreshed = self._refresh_shared_services_token(new_token)
-            # Only auto-resume a token-expiry pause; leave a manual pause
-            # (reason != "token_expired") as the user set it.
-            if getattr(mgr, "pause_reason", None) == "token_expired":
-                mgr.resume()
+            # Never auto-resume a paused bot: bots start/resume only on an
+            # explicit user action.
             return {
                 "ok": True,
                 "status": "running",
-                "action": "token_updated_and_resumed",
+                "action": "token_updated",
                 "shared_services_refreshed": refreshed,
             }
         else:
