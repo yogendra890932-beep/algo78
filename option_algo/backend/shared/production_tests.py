@@ -1549,6 +1549,26 @@ def test_itm_depth_global_admin():
         _fail("user settings page still shows ITM Depth")
 
 
+def test_underlying_zero_volume_guard():
+    print("\n=== Test: Underlying engine guards against zero average volume ===")
+
+    src = _read_src("backend/engine/underlying_market_structure.py")
+
+    # The old unsafe expression divided by the raw average prior volume.
+    unsafe = 'vol_ratio = self.candles[-1]["volume"] / (sum(prev_vols) / len(prev_vols))'
+    if unsafe not in src:
+        _ok("no unguarded division by average prior volume")
+    else:
+        _fail("underlying engine still divides by a possibly-zero average volume")
+
+    # The fix computes the average first and only divides when it is > 0.
+    guarded = "avg_prev_vol = sum(prev_vols) / len(prev_vols)"
+    if src.count(guarded) == 2 and src.count("if avg_prev_vol > 0:") == 2:
+        _ok("both BOS volume ratios guard against a zero average")
+    else:
+        _fail("BOS volume ratios are not both guarded")
+
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -1596,6 +1616,7 @@ def run_all_tests():
     test_token_hot_refresh_no_restart()
     test_default_trading_params()
     test_itm_depth_global_admin()
+    test_underlying_zero_volume_guard()
 
     print("\n" + "=" * 60)
     total = PASS + FAIL

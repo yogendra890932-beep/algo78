@@ -994,7 +994,9 @@ class UnderlyingMarketStructureEngine:
                     slice_start = max(0, buffer_offset - 10)
                     prev_vols = [c["volume"] for c in self.candles[slice_start:buffer_offset]]
                     if prev_vols:
-                        vol_ratio = self.candles[-1]["volume"] / (sum(prev_vols) / len(prev_vols))
+                        avg_prev_vol = sum(prev_vols) / len(prev_vols)
+                        if avg_prev_vol > 0:
+                            vol_ratio = self.candles[-1]["volume"] / avg_prev_vol
 
                 rng = self.candles[-1]["high"] - self.candles[-1]["low"]
                 body = abs(self.candles[-1]["close"] - self.candles[-1]["open"])
@@ -1049,7 +1051,9 @@ class UnderlyingMarketStructureEngine:
                     slice_start = max(0, buffer_offset - 10)
                     prev_vols = [c["volume"] for c in self.candles[slice_start:buffer_offset]]
                     if prev_vols:
-                        vol_ratio = self.candles[-1]["volume"] / (sum(prev_vols) / len(prev_vols))
+                        avg_prev_vol = sum(prev_vols) / len(prev_vols)
+                        if avg_prev_vol > 0:
+                            vol_ratio = self.candles[-1]["volume"] / avg_prev_vol
 
                 rng = self.candles[-1]["high"] - self.candles[-1]["low"]
                 body = abs(self.candles[-1]["close"] - self.candles[-1]["open"])
