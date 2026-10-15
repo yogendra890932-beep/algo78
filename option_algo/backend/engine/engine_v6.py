@@ -499,6 +499,7 @@ class SymbolEngine:
         self._premium_analyzed_min: Optional[str] = None   # Minute-string already analyzed this minute
         self._last_underlying_min: Optional[str] = None     # Last minute we ran underlying analysis
         self._last_5m_boundary: Optional[str] = None        # Last 5m candle boundary detected
+        self._last_phase_log: Optional[str] = None          # Last minute we logged a phase block
 
     # ================================================================
     # ANALYSIS ENGINE INITIALIZATION
@@ -1344,6 +1345,21 @@ class SymbolEngine:
         # both existing strategies and the new unified strategy.
         self._run_premium_analysis()
 
+        # ── Step 1b: STRONG_TREND gate ────────────────────────────
+        # Emit signals only when the underlying 5m structure phase is a
+        # STRONG_TREND. Applies to every strategy below.
+        from backend.engine.underlying_market_structure import (
+            MarketPhase as UnderPhase,
+        )
+        us_gate = self.underlying_structure
+        if us_gate is None or us_gate.market_phase != UnderPhase.STRONG_TREND:
+            if self._last_phase_log != self._ul_cur_min:
+                self._last_phase_log = self._ul_cur_min
+                phase_txt = us_gate.market_phase.value if us_gate else "None"
+                print(_now(), f"[{self.symbol}] Signals blocked — underlying "
+                      f"5m phase={phase_txt} (need STRONG_TREND)")
+            return
+
         # ── Step 2: Existing strategy evaluation ──────────────────
         # Keep the existing 6 strategies intact — they have been
         # working and are complementary to the new unified strategy.
@@ -2178,10 +2194,10 @@ class SymbolEngine:
                   f"{us.confidence:.0f} < {under_conf_threshold}")
             return
 
-        # 5d. Market Phase must be trending (not ranging/transition)
-        if us.market_phase not in (UnderPhase.STRONG_TREND, UnderPhase.WEAK_TREND):
+        # 5d. Market phase must be a STRONG_TREND (signals only in strong trends)
+        if us.market_phase != UnderPhase.STRONG_TREND:
             print(_now(), f"[{self.symbol}][{label}] ❌ Market phase "
-                  f"{us.market_phase.value} not trending")
+                  f"{us.market_phase.value} != STRONG_TREND")
             return
 
         # 5e. No opposing confirmed reversal pattern

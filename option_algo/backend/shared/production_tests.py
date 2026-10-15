@@ -1188,6 +1188,34 @@ def test_dashboard_lots_and_terminal_layout():
             _fail(f"asset missing: {rel}")
 
 
+def test_strong_trend_only_signals():
+    print("\n=== Test: signals only when underlying 5m phase = STRONG_TREND ===")
+
+    se = _read_src("backend/shared/strategy_engine.py")
+    if _has_function_with_code(se, "_evaluate_all", 'get_underlying_structure'):
+        _ok("shared engine reads the underlying 5m structure before signaling")
+    else:
+        _fail("shared engine does not gate on the underlying structure")
+    if _has_function_with_code(se, "_evaluate_all", 'under_phase != "STRONG_TREND"'):
+        _ok("shared engine blocks signals unless phase is STRONG_TREND")
+    else:
+        _fail("shared engine does not require STRONG_TREND")
+
+    ev6 = _read_src("backend/engine/engine_v6.py")
+    if "us.market_phase != UnderPhase.STRONG_TREND" in ev6:
+        _ok("legacy engine requires STRONG_TREND (unified strategy)")
+    else:
+        _fail("legacy unified strategy does not require STRONG_TREND")
+    if "(UnderPhase.STRONG_TREND, UnderPhase.WEAK_TREND)" not in ev6:
+        _ok("legacy engine no longer accepts WEAK_TREND")
+    else:
+        _fail("legacy engine still accepts WEAK_TREND")
+    if _has_function_with_code(ev6, "_on_bar_close", "UnderPhase.STRONG_TREND"):
+        _ok("legacy engine gates all strategies in _on_bar_close")
+    else:
+        _fail("legacy engine does not gate the 6 strategies")
+
+
 def test_terminal_chart_zoom_and_view_lock():
     print("\n=== Test: Terminal charts are larger + keep view on direction flip ===")
 
@@ -1645,6 +1673,7 @@ def run_all_tests():
     test_lot_size_table_current()
     test_live_exit_uses_broker_fill()
     test_dashboard_lots_and_terminal_layout()
+    test_strong_trend_only_signals()
     test_terminal_chart_zoom_and_view_lock()
     test_brand_logo_wired()
     test_token_hot_refresh_no_restart()

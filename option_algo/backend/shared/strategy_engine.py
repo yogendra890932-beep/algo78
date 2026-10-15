@@ -173,6 +173,7 @@ class SharedStrategyEngine:
         self._prev_direction: Optional[str] = None
         self._regime = MarketRegimeAnalyzer()
         self._last_regime_log: float = 0.0
+        self._last_phase_log: float = 0.0
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -254,6 +255,19 @@ class SharedStrategyEngine:
 
         indicators = SharedIndicatorEngine.compute_indicators(premium_df, "1m")
         if not indicators:
+            return
+
+        # ── Global gate: emit signals ONLY when the underlying 5m market
+        # structure phase is a STRONG_TREND. Applies to every strategy, not
+        # just the unified one.
+        under_structure = SharedMarketStructureEngine.get_underlying_structure(self.symbol)
+        under_phase = (under_structure or {}).get("market_phase", "")
+        if under_phase != "STRONG_TREND":
+            if time.time() - self._last_phase_log > 300:
+                self._last_phase_log = time.time()
+                print(f"{_now()} [strategy:{self.symbol}] Signals blocked — "
+                      f"underlying 5m phase={under_phase or 'N/A'} "
+                      f"(need STRONG_TREND)")
             return
 
         # Evaluate all strategies
