@@ -1296,6 +1296,8 @@ class LwcChart {
     this.drag = null;         // active drag {kind, value, base, symbol, side}
     this._fitted = false;
     this._lastFirst = null;
+    this._userRange = null;   // user's last zoom/pan (logical range) — survives symbol flips
+    this._applying = false;   // true while we apply a range programmatically
     this._scrollLocked = false;
     this._lastDragClientX = 0;
     this.init();
@@ -1336,6 +1338,14 @@ class LwcChart {
     this.rebuildMain();
     this.ensureOverlaySeries();
     this.chart.subscribeCrosshairMove((p) => this.onCrosshair(p));
+    // Remember the user's zoom/pan so a direction flip (new option symbol,
+    // new candle history) does not reset the chart view.
+    try {
+      this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (this._applying || !range) return;
+        this._userRange = range;
+      });
+    } catch (e) { }
     this.bindPointerEvents();
   }
 
@@ -1363,6 +1373,7 @@ class LwcChart {
     this.zonePrimitive = null;
     this._zoneKey = "";
     this._fitted = false;
+    this._userRange = null;   // timeframe switch → start from a fresh fit
     this.ensureZonePrimitive();
     this.renderPositionLines();
   }
@@ -1397,6 +1408,7 @@ class LwcChart {
     this.ensureOverlaySeries();
     const candles = state.candles || [];
     const main = this.series.main;
+    this._applying = true;
     main.setData(lwcPoints(candles.map(barToLwc).filter(Boolean)));
     const ov = state.overlays;
     this.series.vol.setData(lwcPoints(ov.vol ? candles.map(volToLwc).filter(Boolean) : []));
@@ -1408,12 +1420,17 @@ class LwcChart {
     this.series.bbM.setData(lwcPoints(ov.bb ? lineToLwc(state.bbM, candles) : []));
     this.series.bbL.setData(lwcPoints(ov.bb ? lineToLwc(state.bbL, candles) : []));
     this.renderPositionLines();
-    const first = candles.length ? barTime(candles[0]) : null;
-    if (!this._fitted || first !== this._lastFirst) {
+    // Preserve the user's zoom/pan across data changes (e.g. a direction flip
+    // swaps in a brand-new option symbol). Only auto-fit on the very first
+    // render or after a timeframe switch (which clears _userRange).
+    const ts = this.chart.timeScale();
+    if (this._userRange) {
+      try { ts.setVisibleLogicalRange(this._userRange); } catch (e) { }
+    } else if (!this._fitted && candles.length) {
       this._fitted = true;
-      this._lastFirst = first;
-      try { this.chart.timeScale().fitContent(); } catch (e) { }
+      try { ts.fitContent(); } catch (e) { }
     }
+    this._applying = false;
     renderLegend(candles.length ? num(candles[candles.length - 1].close) : null);
   }
 

@@ -1188,6 +1188,35 @@ def test_dashboard_lots_and_terminal_layout():
             _fail(f"asset missing: {rel}")
 
 
+def test_terminal_chart_zoom_and_view_lock():
+    print("\n=== Test: Terminal charts are larger + keep view on direction flip ===")
+
+    css = _read_src("frontend/static/css/terminal.css")
+    if "height: clamp(460px, 68vh, 880px)" in css:
+        _ok("chart wrap is taller (zoomed-in, larger area)")
+    else:
+        _fail("chart wrap height was not increased")
+
+    js = _read_src("frontend/static/js/terminal.js")
+    if "subscribeVisibleLogicalRangeChange" in js and "this._userRange = range" in js:
+        _ok("chart remembers the user's zoom/pan range")
+    else:
+        _fail("chart does not track the user's zoom/pan range")
+    if "setVisibleLogicalRange(this._userRange)" in js:
+        _ok("chart re-applies the user's range on data change")
+    else:
+        _fail("chart does not re-apply the user's range")
+    full_render = js.split("fullRender() {")[1].split("updateLive()")[0]
+    if "first !== this._lastFirst" not in full_render:
+        _ok("premium chart no longer refits when the option symbol changes")
+    else:
+        _fail("premium chart still refits on option symbol change")
+    if "this._userRange = null;   // timeframe switch" in js:
+        _ok("timeframe switch resets the range for a fresh fit")
+    else:
+        _fail("timeframe switch does not reset the saved range")
+
+
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
 
@@ -1616,6 +1645,7 @@ def run_all_tests():
     test_lot_size_table_current()
     test_live_exit_uses_broker_fill()
     test_dashboard_lots_and_terminal_layout()
+    test_terminal_chart_zoom_and_view_lock()
     test_brand_logo_wired()
     test_token_hot_refresh_no_restart()
     test_default_trading_params()
