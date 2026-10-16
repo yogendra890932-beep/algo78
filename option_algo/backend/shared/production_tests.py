@@ -1244,6 +1244,15 @@ def test_terminal_chart_zoom_and_view_lock():
     else:
         _fail("timeframe switch does not reset the saved range")
 
+    if "overflow-y: scroll" in css and "::-webkit-scrollbar" in css:
+        _ok("mobile terminal shows a visible vertical scrollbar")
+    else:
+        _fail("mobile terminal vertical scrollbar missing")
+    if "touch-action: pan-y" in css:
+        _ok("vertical swipe over charts scrolls the page")
+    else:
+        _fail("charts do not allow vertical page scroll")
+
 
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
