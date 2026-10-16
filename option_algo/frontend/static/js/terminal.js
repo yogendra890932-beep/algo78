@@ -1295,7 +1295,6 @@ class LwcChart {
     this._zoneKey = "";
     this.drag = null;         // active drag {kind, value, base, symbol, side}
     this._fitted = false;
-    this._lastFirst = null;
     this._userRange = null;   // user's last zoom/pan, stored relative to the last bar — survives symbol flips
     this._lastIndex = -1;     // index of the newest bar, used to re-anchor _userRange
     this._applying = false;   // true while we apply a range programmatically
@@ -1892,7 +1891,9 @@ class UnderlyingChart {
     this.series = {};
     this.ltpLine = null;
     this._fitted = false;
-    this._lastFirst = null;
+    this._userRange = null;   // user's last zoom/pan, stored relative to the last bar
+    this._lastIndex = -1;     // index of the newest bar, used to re-anchor _userRange
+    this._applying = false;   // true while we apply a range programmatically
     this.init();
   }
 
@@ -1957,20 +1958,45 @@ class UnderlyingChart {
     mk("bbL", "#64748b", { lineStyle: 2 });
 
     this.chart.subscribeCrosshairMove((p) => this.onCrosshair(p));
+    // Same view-preservation as the premium chart: remember the user's
+    // zoom/pan relative to the newest bar so data changes (new symbol, new
+    // history window) keep the developing candle at the right edge.
+    try {
+      this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (this._applying || !range || this._lastIndex < 0) return;
+        this._userRange = { span: range.to - range.from, rightGap: range.to - this._lastIndex };
+      });
+    } catch (e) { }
+  }
+
+  resetView() {
+    this._userRange = null;
+    this._fitted = false;
   }
 
   setData(candles) {
     if (!this.chart) return;
     const list = candles || [];
+    this._applying = true;
     this.series.main.setData(lwcPoints(list.map(barToLwc).filter(Boolean)));
     this.applyOverlays(list, false);
     this.syncLtpLine();
-    const first = list.length ? barTime(list[0]) : null;
-    if (!this._fitted || first !== this._lastFirst) {
-      this._fitted = true;
-      this._lastFirst = first;
-      try { this.chart.timeScale().fitContent(); } catch (e) { }
+    this._lastIndex = list.length - 1;
+    // Preserve the user's zoom/pan across data changes; only auto-fit on the
+    // first render or after a timeframe switch (which calls resetView()).
+    const ts = this.chart.timeScale();
+    if (list.length) {
+      if (this._userRange) {
+        const lastIdx = list.length - 1;
+        const to = lastIdx + this._userRange.rightGap;
+        const from = to - this._userRange.span;
+        try { ts.setVisibleLogicalRange({ from: from, to: to }); } catch (e) { }
+      } else if (!this._fitted) {
+        this._fitted = true;
+        try { ts.fitContent(); } catch (e) { }
+      }
     }
+    this._applying = false;
   }
 
   updateLive(candles) {
@@ -1980,6 +2006,7 @@ class UnderlyingChart {
     const time = last ? toLwcTime(barTime(last)) : null;
     if (last && time != null) {
       const i = list.length - 1;
+      this._lastIndex = i;
       const b = barToLwc(last);
       if (b) this.series.main.update(b);
       if (state.overlays.vol) {
@@ -2325,6 +2352,7 @@ function switchTimeframe() {
   state.candles = premiumShownCandles();
   prepareOverlays(state.candles);
   if (state.chart) state.chart.rebuildMain();
+  if (state.underlyingChart) state.underlyingChart.resetView();
   if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
   drawChart();
 }

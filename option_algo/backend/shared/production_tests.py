@@ -1244,6 +1244,21 @@ def test_terminal_chart_zoom_and_view_lock():
     else:
         _fail("timeframe switch does not reset the saved range")
 
+    under = js.split("class UnderlyingChart")[1].split("Overlay: live position panel")[0]
+    if "resetView()" in under and "this._userRange.rightGap" in under \
+            and "setVisibleLogicalRange({ from: from, to: to })" in under:
+        _ok("underlying chart mirrors the premium chart view logic")
+    else:
+        _fail("underlying chart does not mirror the premium chart view logic")
+    if "state.underlyingChart.resetView()" in js:
+        _ok("timeframe switch resets the underlying chart view too")
+    else:
+        _fail("timeframe switch does not reset the underlying chart view")
+    if "this._lastFirst" not in js:
+        _ok("legacy first-bar refit logic removed")
+    else:
+        _fail("legacy first-bar refit logic still present")
+
     if "overflow-y: scroll" in css and "::-webkit-scrollbar" in css:
         _ok("mobile terminal shows a visible vertical scrollbar")
     else:
