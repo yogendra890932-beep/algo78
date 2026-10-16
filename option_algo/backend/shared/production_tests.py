@@ -1226,14 +1226,14 @@ def test_terminal_chart_zoom_and_view_lock():
         _fail("chart wrap height was not increased")
 
     js = _read_src("frontend/static/js/terminal.js")
-    if "subscribeVisibleLogicalRangeChange" in js and "this._userRange = range" in js:
-        _ok("chart remembers the user's zoom/pan range")
+    if "subscribeVisibleLogicalRangeChange" in js and "this._userRange = { span:" in js:
+        _ok("chart remembers the user's zoom/pan range (relative to the last bar)")
     else:
         _fail("chart does not track the user's zoom/pan range")
-    if "setVisibleLogicalRange(this._userRange)" in js:
-        _ok("chart re-applies the user's range on data change")
+    if "this._userRange.rightGap" in js and "setVisibleLogicalRange({ from: from, to: to })" in js:
+        _ok("chart re-applies the user's range anchored to the newest bar")
     else:
-        _fail("chart does not re-apply the user's range")
+        _fail("chart does not re-anchor the user's range to the newest bar")
     full_render = js.split("fullRender() {")[1].split("updateLive()")[0]
     if "first !== this._lastFirst" not in full_render:
         _ok("premium chart no longer refits when the option symbol changes")

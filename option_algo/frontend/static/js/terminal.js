@@ -1296,7 +1296,8 @@ class LwcChart {
     this.drag = null;         // active drag {kind, value, base, symbol, side}
     this._fitted = false;
     this._lastFirst = null;
-    this._userRange = null;   // user's last zoom/pan (logical range) — survives symbol flips
+    this._userRange = null;   // user's last zoom/pan, stored relative to the last bar — survives symbol flips
+    this._lastIndex = -1;     // index of the newest bar, used to re-anchor _userRange
     this._applying = false;   // true while we apply a range programmatically
     this._scrollLocked = false;
     this._lastDragClientX = 0;
@@ -1339,11 +1340,13 @@ class LwcChart {
     this.ensureOverlaySeries();
     this.chart.subscribeCrosshairMove((p) => this.onCrosshair(p));
     // Remember the user's zoom/pan so a direction flip (new option symbol,
-    // new candle history) does not reset the chart view.
+    // new candle history) does not reset the chart view. Stored relative to
+    // the newest bar (span + gap from the right edge) so the developing candle
+    // stays visible at the right edge even when the new series is shorter.
     try {
       this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (this._applying || !range) return;
-        this._userRange = range;
+        if (this._applying || !range || this._lastIndex < 0) return;
+        this._userRange = { span: range.to - range.from, rightGap: range.to - this._lastIndex };
       });
     } catch (e) { }
     this.bindPointerEvents();
@@ -1421,14 +1424,23 @@ class LwcChart {
     this.series.bbL.setData(lwcPoints(ov.bb ? lineToLwc(state.bbL, candles) : []));
     this.renderPositionLines();
     // Preserve the user's zoom/pan across data changes (e.g. a direction flip
-    // swaps in a brand-new option symbol). Only auto-fit on the very first
-    // render or after a timeframe switch (which clears _userRange).
+    // swaps in a brand-new option symbol that may have a different bar count).
+    // The saved view is anchored to the newest bar so the currently-forming
+    // candle always stays visible at the right edge, exactly like before the
+    // chart changed. Only auto-fit on the very first render / after a
+    // timeframe switch (which clears _userRange).
     const ts = this.chart.timeScale();
-    if (this._userRange) {
-      try { ts.setVisibleLogicalRange(this._userRange); } catch (e) { }
-    } else if (!this._fitted && candles.length) {
-      this._fitted = true;
-      try { ts.fitContent(); } catch (e) { }
+    this._lastIndex = candles.length - 1;
+    if (candles.length) {
+      if (this._userRange) {
+        const lastIdx = candles.length - 1;
+        const to = lastIdx + this._userRange.rightGap;
+        const from = to - this._userRange.span;
+        try { ts.setVisibleLogicalRange({ from: from, to: to }); } catch (e) { }
+      } else if (!this._fitted) {
+        this._fitted = true;
+        try { ts.fitContent(); } catch (e) { }
+      }
     }
     this._applying = false;
     renderLegend(candles.length ? num(candles[candles.length - 1].close) : null);
@@ -1442,6 +1454,7 @@ class LwcChart {
     const time = toLwcTime(barTime(last));
     if (time == null) return;
     const i = candles.length - 1;
+    this._lastIndex = i;
     const b = barToLwc(last);
     if (b) this.series.main.update(b);
     if (state.overlays.vol) {
