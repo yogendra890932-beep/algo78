@@ -1313,7 +1313,8 @@ class LwcChart {
       layout: {
         background: { type: "solid", color: "#0b0e17" },
         textColor: "#8b99be",
-        fontSize: 11
+        fontSize: 11,
+        attributionLogo: false
       },
       grid: {
         vertLines: { color: "rgba(46,58,88,0.35)" },
@@ -1907,7 +1908,8 @@ class UnderlyingChart {
       layout: {
         background: { type: "solid", color: "#0b0e17" },
         textColor: "#8b99be",
-        fontSize: 11
+        fontSize: 11,
+        attributionLogo: false
       },
       grid: {
         vertLines: { color: "rgba(46,58,88,0.35)" },

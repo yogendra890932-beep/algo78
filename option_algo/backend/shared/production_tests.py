@@ -1258,6 +1258,10 @@ def test_terminal_chart_zoom_and_view_lock():
         _ok("legacy first-bar refit logic removed")
     else:
         _fail("legacy first-bar refit logic still present")
+    if js.count("attributionLogo: false") == 2:
+        _ok("TradingView attribution logo hidden on both charts")
+    else:
+        _fail("TradingView attribution logo is still shown")
 
     if "overflow-y: scroll" in css and "::-webkit-scrollbar" in css:
         _ok("mobile terminal shows a visible vertical scrollbar")
