@@ -42,7 +42,8 @@ const TICK_SIZE = 0.05; // NSE/BSE equity-option premium tick size
 const state = {
   bootstrap: null,
   selectedSymbol: null,
-  tf: "1m",
+  premiumTf: "1m",         // timeframe for the premium (option) chart
+  underlyingTf: "1m",      // timeframe for the underlying chart (independent)
   chartMode: "12",         // "1"=underlying only, "2"=premium only, "12"=both
   overlays: { ema: true, vwap: false, bb: false, vol: true },
   candles: [],
@@ -235,7 +236,7 @@ function aggregate5m(candles) {
 }
 
 function premiumShownCandles() {
-  return state.tf === "5m" ? aggregate5m(state.premiumCandles) : state.premiumCandles;
+  return state.premiumTf === "5m" ? aggregate5m(state.premiumCandles) : state.premiumCandles;
 }
 
 function handleSnapshot(m) {
@@ -535,7 +536,7 @@ function buildUnderlyingLive5m() {
 }
 
 function underlyingShownCandles() {
-  if (state.tf === "5m") {
+  if (state.underlyingTf === "5m") {
     const arr = state.underlying5m.slice();
     const live5 = buildUnderlyingLive5m();
     if (live5) {
@@ -2349,17 +2350,24 @@ function refreshShownLive() {
   if (state.chart) state.chart.setData();
 }
 
-function switchTimeframe() {
-  if (!state.premiumCandles.length && !state.underlyingCandles.length && state.selectedSymbol) {
+function switchPremiumTimeframe() {
+  if (!state.premiumCandles.length && state.selectedSymbol) {
     fetchSnapshot(state.selectedSymbol);
     return;
   }
   state.candles = premiumShownCandles();
   prepareOverlays(state.candles);
   if (state.chart) state.chart.rebuildMain();
+  if (state.chart) state.chart.fullRender();
+}
+
+function switchUnderlyingTimeframe() {
+  if (!state.underlyingCandles.length && state.selectedSymbol) {
+    fetchSnapshot(state.selectedSymbol);
+    return;
+  }
   if (state.underlyingChart) state.underlyingChart.resetView();
   if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
-  drawChart();
 }
 
 function setChartMode(mode) {
@@ -2450,7 +2458,7 @@ function updateCandleTimer() {
   const el = $("candle-timer");
   if (!el) return;
   const { m, s } = istParts();
-  const tfMin = state.tf === "5m" ? 5 : 1;
+  const tfMin = state.premiumTf === "5m" ? 5 : 1;
   const secondsInto = (m % tfMin) * 60 + s;
   const remaining = (secondsInto === 0 ? tfMin * 60 : tfMin * 60 - secondsInto);
   const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
@@ -2508,12 +2516,20 @@ function bindVoiceToggle() {
 /* ─────────────── Toolbar events ─────────────── */
 function bindToolbar() {
   bindOverlayUI();
-  document.querySelectorAll(".term-tf").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".term-tf").forEach((b) => b.classList.remove("term-tf-active"));
-      btn.classList.add("term-tf-active");
-      state.tf = btn.dataset.tf;
-      switchTimeframe();
+  document.querySelectorAll(".term-tf-group").forEach((group) => {
+    const chart = group.dataset.chart;
+    group.querySelectorAll(".term-tf").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        group.querySelectorAll(".term-tf").forEach((b) => b.classList.remove("term-tf-active"));
+        btn.classList.add("term-tf-active");
+        if (chart === "underlying") {
+          state.underlyingTf = btn.dataset.tf;
+          switchUnderlyingTimeframe();
+        } else {
+          state.premiumTf = btn.dataset.tf;
+          switchPremiumTimeframe();
+        }
+      });
     });
   });
 

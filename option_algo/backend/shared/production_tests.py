@@ -1303,6 +1303,39 @@ def test_terminal_voice_alerts():
         _fail("voice-alerts library is not the shared implementation")
 
 
+def test_terminal_independent_timeframes():
+    print("\n=== Test: Premium and underlying charts have independent timeframes ===")
+
+    js = _read_src("frontend/static/js/terminal.js")
+    if 'premiumTf: "1m"' in js and 'underlyingTf: "1m"' in js:
+        _ok("separate premium/underlying timeframe state exists")
+    else:
+        _fail("charts do not keep separate timeframe state")
+    if 'state.premiumTf === "5m"' in js:
+        _ok("premium candles use the premium timeframe")
+    else:
+        _fail("premium candles do not use the premium timeframe")
+    if 'state.underlyingTf === "5m"' in js:
+        _ok("underlying candles use the underlying timeframe")
+    else:
+        _fail("underlying candles do not use the underlying timeframe")
+    if "function switchPremiumTimeframe()" in js and "function switchUnderlyingTimeframe()" in js:
+        _ok("timeframe switches are scoped per chart")
+    else:
+        _fail("timeframe switches are not scoped per chart")
+    if "state.tf =" not in js and "state.tf ===" not in js:
+        _ok("legacy single-timeframe state removed")
+    else:
+        _fail("legacy single-timeframe state still present")
+
+    html = _read_src("frontend/templates/terminal.html")
+    if html.count('class="term-tf-group"') == 2 \
+            and 'data-chart="premium"' in html and 'data-chart="underlying"' in html:
+        _ok("toolbar exposes a timeframe selector for each chart")
+    else:
+        _fail("toolbar does not expose two separate timeframe selectors")
+
+
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
 
@@ -1734,6 +1767,7 @@ def run_all_tests():
     test_strong_trend_only_signals()
     test_terminal_chart_zoom_and_view_lock()
     test_terminal_voice_alerts()
+    test_terminal_independent_timeframes()
     test_brand_logo_wired()
     test_token_hot_refresh_no_restart()
     test_default_trading_params()

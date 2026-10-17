@@ -239,7 +239,7 @@
   border-radius: var(--term-radius);
   flex-wrap: wrap;
 }
-.term-tf-group { display: flex; gap: 4px; }
+.term-tf-group { display: flex; align-items: center; gap: 6px; }
 .term-tf {
   background: transparent; color: var(--term-muted);
   border: 1px solid var(--term-border); border-radius: 6px;
