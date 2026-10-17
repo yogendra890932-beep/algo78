@@ -564,6 +564,9 @@ function handleEvent(m) {
   const symbol = m.symbol || m.trading_symbol || state.selectedSymbol || "";
   const ts = m.ts || m.timestamp || new Date().toISOString();
 
+  // Spoken alerts for trade events (shares settings with the dashboard).
+  if (typeof VoiceAlerts !== "undefined") VoiceAlerts.announce(evt, m);
+
   if (evt === "SL_TRAIL") {
     msg = (msg || symbol) + " SL → ₹" + fmt(m.new_sl) + " | LTP ₹" + fmt(m.ltp);
   }
@@ -2474,6 +2477,32 @@ function tokenExpired() {
   } catch (e) { return true; }
 }
 
+/* ─────────────── Voice alerts ─────────────── */
+function bindVoiceToggle() {
+  const btn = $("term-voice-toggle");
+  if (!btn) return;
+  if (typeof VoiceAlerts === "undefined") { btn.style.display = "none"; return; }
+  const sync = () => {
+    const on = !!VoiceAlerts.settings.enabled;
+    btn.textContent = on ? "Voice: On" : "Voice: Off";
+    btn.classList.toggle("term-btn-accent", on);
+    btn.title = on ? "Voice alerts on — click to mute" : "Voice alerts off — click to enable";
+  };
+  btn.addEventListener("click", () => {
+    const on = !VoiceAlerts.settings.enabled;
+    VoiceAlerts.set({ enabled: on });
+    sync();
+    if (on) {
+      // Speak a test line; this also satisfies the browser's user-gesture
+      // requirement so later announcements are allowed to play.
+      VoiceAlerts.test();
+    } else {
+      try { window.speechSynthesis.cancel(); } catch (e) { }
+    }
+  });
+  sync();
+}
+
 /* ─────────────── Toolbar events ─────────────── */
 function bindToolbar() {
   bindOverlayUI();
@@ -2520,6 +2549,8 @@ function bindToolbar() {
 
   const navLogout = $("nav-logout");
   if (navLogout) navLogout.addEventListener("click", logout);
+
+  bindVoiceToggle();
 
   const toggleLeft = $("term-toggle-left");
   const syncLeftToggle = (collapsed) => {

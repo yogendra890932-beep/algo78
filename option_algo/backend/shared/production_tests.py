@@ -1269,6 +1269,36 @@ def test_terminal_chart_zoom_and_view_lock():
         _fail("charts do not allow vertical page scroll")
 
 
+def test_terminal_voice_alerts():
+    print("\n=== Test: Terminal page announces trade events by voice ===")
+
+    html = _read_src("frontend/templates/terminal.html")
+    if "/static/js/voice-alerts.js" in html:
+        _ok("terminal loads the voice-alerts library")
+    else:
+        _fail("terminal does not load voice-alerts.js")
+    if 'id="term-voice-toggle"' in html:
+        _ok("terminal has a voice on/off toggle")
+    else:
+        _fail("terminal voice toggle missing")
+
+    js = _read_src("frontend/static/js/terminal.js")
+    if "VoiceAlerts.announce(evt, m)" in js:
+        _ok("terminal announces WS events via VoiceAlerts")
+    else:
+        _fail("terminal does not announce WS events")
+    if "function bindVoiceToggle()" in js and "VoiceAlerts.set({ enabled: on })" in js:
+        _ok("terminal toggle persists the shared voice setting")
+    else:
+        _fail("terminal voice toggle is not wired")
+
+    va = _read_src("frontend/static/js/voice-alerts.js")
+    if "speechSynthesis" in va and "STORAGE_KEY = 'voice_alerts_settings_v1'" in va:
+        _ok("voice alerts use Web Speech API and shared localStorage settings")
+    else:
+        _fail("voice-alerts library is not the shared implementation")
+
+
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
 
@@ -1699,6 +1729,7 @@ def run_all_tests():
     test_dashboard_lots_and_terminal_layout()
     test_strong_trend_only_signals()
     test_terminal_chart_zoom_and_view_lock()
+    test_terminal_voice_alerts()
     test_brand_logo_wired()
     test_token_hot_refresh_no_restart()
     test_default_trading_params()
