@@ -36,6 +36,13 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# Underlying 5m phases that may produce signals when the user enables
+# Quick Scalp. Without Quick Scalp only STRONG_TREND is allowed. The
+# per-user filter lives in UserExecutionManager._process_signal(), which
+# reads the phase tagged on each signal.
+QUICK_SCALP_PHASES = {"STRONG_TREND", "DISTRIBUTION", "COMPRESSION"}
+
+
 # ================================================================
 # REGIME ANALYZER (copied from engine_v6 — kept identical)
 # ================================================================
@@ -257,17 +264,18 @@ class SharedStrategyEngine:
         if not indicators:
             return
 
-        # ── Global gate: emit signals ONLY when the underlying 5m market
-        # structure phase is a STRONG_TREND. Applies to every strategy, not
-        # just the unified one.
+        # ── Global gate: emit signals only for the allowed underlying 5m
+        # structure phases. STRONG_TREND is always allowed; DISTRIBUTION and
+        # COMPRESSION are published too so Quick-Scalp users receive them,
+        # while non-Quick-Scalp users filter them out per-user downstream.
         under_structure = SharedMarketStructureEngine.get_underlying_structure(self.symbol)
         under_phase = (under_structure or {}).get("market_phase", "")
-        if under_phase != "STRONG_TREND":
+        if under_phase not in QUICK_SCALP_PHASES:
             if time.time() - self._last_phase_log > 300:
                 self._last_phase_log = time.time()
                 print(f"{_now()} [strategy:{self.symbol}] Signals blocked — "
                       f"underlying 5m phase={under_phase or 'N/A'} "
-                      f"(need STRONG_TREND)")
+                      f"(need STRONG_TREND, or quick-scalp phases)")
             return
 
         # Evaluate all strategies
@@ -311,6 +319,9 @@ class SharedStrategyEngine:
               f"premium_bars={len(premium_df)} ltp={ltp} signals={len(signals)}")
 
         for signal in signals:
+            # Tag the phase so the per-user execution layer can enforce the
+            # Quick Scalp preference (STRONG_TREND-only when disabled).
+            signal["market_phase"] = under_phase
             self._publish_signal(signal)
 
     def _get_direction(self, df: pd.DataFrame) -> Optional[str]:
@@ -646,7 +657,7 @@ class SharedStrategyEngine:
             return None
 
         under_phase = underlying_structure.get("market_phase", "")
-        if under_phase != "STRONG_TREND":
+        if under_phase not in QUICK_SCALP_PHASES:
             return None
 
         inds = ind

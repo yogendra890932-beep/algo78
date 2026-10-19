@@ -54,6 +54,9 @@ NEW_COLUMNS = [
     # and the one-time trial guard flag
     ("users", "mobile_number", "VARCHAR(15)"),
     ("users", "trial_used", "BOOLEAN DEFAULT 0"),
+    # Quick Scalp terminal preference (allows DISTRIBUTION/COMPRESSION phases
+    # in addition to STRONG_TREND). Defaults to off for existing users.
+    ("users", "quick_scalp_enabled", "BOOLEAN DEFAULT 0"),
     # Global admin-only ITM depth (1 = 1 strike ITM). Integer column with no
     # inline default so the Postgres "DEFAULT 1"->"DEFAULT TRUE" rewrite in
     # migrate() doesn't corrupt it; NULL coalesces to 1 in the readers.

@@ -53,6 +53,10 @@ class TerminalOrderRequest(BaseModel):
     enabled: Optional[bool] = None
 
 
+class QuickScalpRequest(BaseModel):
+    enabled: bool
+
+
 # ── Order helpers (defence-in-depth; the worker/engine stays authoritative) ──
 
 def _snap_tick(value: float) -> float:
@@ -164,6 +168,36 @@ async def terminal_snapshot(
     """Full read-only snapshot for one symbol (chart + panels)."""
     snap = await build_symbol_snapshot(user.id, symbol)
     return {"ok": True, **snap}
+
+
+@router.post("/api/terminal/quick-scalp")
+async def terminal_quick_scalp(
+    body: QuickScalpRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle Quick Scalp for the current user.
+
+    When ON, signals are allowed in the underlying 5m phases STRONG_TREND,
+    DISTRIBUTION and COMPRESSION. When OFF, only STRONG_TREND is allowed.
+    Persisted on the user row and pushed to the running worker so the
+    change applies without a restart.
+    """
+    enabled = bool(body.enabled)
+    user.quick_scalp_enabled = enabled
+    db.add(user)
+    await db.commit()
+
+    try:
+        await send_command(
+            "set_quick_scalp", user.id, {"enabled": enabled}, timeout=1.0
+        )
+    except Exception as e:
+        # The DB flag is authoritative; the worker also re-reads it from
+        # the DB (5s cache), so a missed push is self-healing.
+        print(f"[terminal] quick-scalp push failed (user {user.id}): {e}")
+
+    return {"ok": True, "enabled": enabled}
 
 
 # ── Order endpoints (web → Redis command queue → worker) ─────────

@@ -116,6 +116,12 @@ class User(Base):
     )
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # ── Terminal preference ─────────────────────────────────────
+    # Quick Scalp: when enabled, signals are allowed for the underlying
+    # 5m phases STRONG_TREND, DISTRIBUTION and COMPRESSION. When disabled
+    # (default), signals are allowed only in STRONG_TREND.
+    quick_scalp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
     config: Mapped[Optional[BotConfig]] = relationship(
         "BotConfig", back_populates="user", uselist=False, cascade="all, delete-orphan"
     )

@@ -414,4 +414,5 @@ async def build_bootstrap(user, db) -> dict:
         "positions": await get_user_positions(user.id),
         "pending_trades": await get_pending_trades(user.id),
         "itm_depth": _itm_depth(),
+        "quick_scalp": bool(getattr(user, "quick_scalp_enabled", False)),
     }

@@ -550,6 +550,17 @@ def _handle_pause_resume(user_id: int, paused: bool) -> dict:
     return {"ok": True, key: [e.symbol for e in engines]}
 
 
+def _handle_set_quick_scalp(user_id: int, payload: dict) -> dict:
+    """Apply the terminal Quick Scalp toggle to running engines."""
+    enabled = bool((payload or {}).get("enabled"))
+    engines = _get_engines(user_id)
+    if not engines:
+        return {"ok": True, "running": False, "enabled": enabled}
+    for eng in engines:
+        eng.config["quick_scalp"] = enabled
+    return {"ok": True, "running": True, "enabled": enabled}
+
+
 def _handle_update_token(user_id: int, payload: dict) -> dict:
     """Hot-swap a running bot's Upstox token (no restart)."""
     token = (payload or {}).get("access_token", "")
@@ -662,6 +673,8 @@ def _command_loop(main_loop: asyncio.AbstractEventLoop, stop_event: threading.Ev
                 result = _handle_pause_resume(user_id, False)
             elif action == "update_token":
                 result = _handle_update_token(user_id, payload)
+            elif action == "set_quick_scalp":
+                result = _handle_set_quick_scalp(user_id, payload)
             elif action == "approve_pending_trade":
                 result = _handle_approve_pending_trade(user_id, payload, main_loop)
             elif action == "reject_pending_trade":

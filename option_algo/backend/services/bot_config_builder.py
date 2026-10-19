@@ -30,6 +30,26 @@ async def load_user_and_config(user_id: int):
         return user, cfg
 
 
+def get_user_quick_scalp(user_id: int) -> Optional[bool]:
+    """Return the user's Quick Scalp preference (sync), or None if unknown.
+
+    Read from the worker's execution thread so the terminal toggle can take
+    effect without a restart. Callers should cache briefly.
+    """
+    try:
+        from backend.db.database import get_sync_session
+        from sqlalchemy import select as _select
+
+        with get_sync_session() as db:
+            res = db.execute(
+                _select(User.quick_scalp_enabled).where(User.id == user_id)
+            )
+            val = res.scalar_one_or_none()
+            return bool(val) if val is not None else None
+    except Exception:
+        return None
+
+
 async def get_user_access_token(user_id: int) -> Optional[str]:
     """Return the decrypted Upstox access token currently stored for a user.
 
@@ -321,6 +341,10 @@ async def resolve_start_inputs(
     # Expose admin status to the engine so the runtime AUTO safety net
     # can exempt admins (they may always run FULLY AUTO for testing).
     config["is_admin"] = user.role == UserRole.admin
+    # Quick Scalp preference (terminal toggle) — initial value; the running
+    # execution manager also re-reads it from the DB so toggling applies
+    # without a restart.
+    config["quick_scalp"] = bool(getattr(user, "quick_scalp_enabled", False))
     if force_paper:
         # Trial users: paper trading only, regardless of their saved
         # BotConfig.paper_mode — enforced once here since paper_mode

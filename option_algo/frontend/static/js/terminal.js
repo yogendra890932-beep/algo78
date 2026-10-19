@@ -45,6 +45,7 @@ const state = {
   premiumTf: "1m",         // timeframe for the premium (option) chart
   underlyingTf: "1m",      // timeframe for the underlying chart (independent)
   chartMode: "12",         // "1"=underlying only, "2"=premium only, "12"=both
+  quickScalp: false,       // terminal toggle: allow DISTRIBUTION/COMPRESSION phases
   overlays: { ema: true, vwap: false, bb: false, vol: true },
   candles: [],
   candles5m: [],
@@ -96,6 +97,7 @@ async function loadBootstrap() {
   state.bootstrap = data;
   renderUser(data.user);
   initSiteNav(data.user);
+  syncQuickScalp(data.quick_scalp);
   renderWatchlist(data.symbols, data.available_symbols);
   renderBotStatus(data.bot_running, data.bot_status);
   renderPositions(data.positions || []);
@@ -2487,6 +2489,43 @@ function tokenExpired() {
   } catch (e) { return true; }
 }
 
+/* ─────────────── Quick Scalp ─────────────── */
+function syncQuickScalp(enabled) {
+  state.quickScalp = !!enabled;
+  const btn = $("term-quick-scalp");
+  if (!btn) return;
+  btn.textContent = enabled ? "Quick Scalp: On" : "Quick Scalp: Off";
+  btn.classList.toggle("term-btn-accent", !!enabled);
+  btn.title = enabled
+    ? "Quick Scalp on — signals in STRONG_TREND, DISTRIBUTION, COMPRESSION. Click to restrict to STRONG_TREND."
+    : "Quick Scalp off — signals only in STRONG_TREND. Click to allow DISTRIBUTION/COMPRESSION too.";
+}
+
+function bindQuickScalp() {
+  const btn = $("term-quick-scalp");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const enabled = !state.quickScalp;
+    btn.disabled = true;
+    try {
+      const r = await apiFetch("/api/terminal/quick-scalp", {
+        method: "POST",
+        body: JSON.stringify({ enabled: enabled }),
+      });
+      if (r && r.ok) {
+        syncQuickScalp(enabled);
+        toast(enabled
+          ? "Quick Scalp ON — STRONG_TREND, DISTRIBUTION, COMPRESSION"
+          : "Quick Scalp OFF — STRONG_TREND only", "ok");
+      } else {
+        toast("Could not update Quick Scalp", "err");
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 /* ─────────────── Voice alerts ─────────────── */
 function bindVoiceToggle() {
   const btn = $("term-voice-toggle");
@@ -2569,6 +2608,7 @@ function bindToolbar() {
   if (navLogout) navLogout.addEventListener("click", logout);
 
   bindVoiceToggle();
+  bindQuickScalp();
 
   const toggleLeft = $("term-toggle-left");
   const syncLeftToggle = (collapsed) => {

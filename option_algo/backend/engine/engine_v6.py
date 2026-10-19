@@ -1352,12 +1352,19 @@ class SymbolEngine:
             MarketPhase as UnderPhase,
         )
         us_gate = self.underlying_structure
-        if us_gate is None or us_gate.market_phase != UnderPhase.STRONG_TREND:
+        quick_scalp = bool(self.config.get("quick_scalp", False))
+        allowed_phases = (
+            {UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION,
+             UnderPhase.COMPRESSION}
+            if quick_scalp else {UnderPhase.STRONG_TREND}
+        )
+        if us_gate is None or us_gate.market_phase not in allowed_phases:
             if self._last_phase_log != self._ul_cur_min:
                 self._last_phase_log = self._ul_cur_min
                 phase_txt = us_gate.market_phase.value if us_gate else "None"
+                need = "STRONG_TREND, DISTRIBUTION, COMPRESSION" if quick_scalp else "STRONG_TREND"
                 print(_now(), f"[{self.symbol}] Signals blocked — underlying "
-                      f"5m phase={phase_txt} (need STRONG_TREND)")
+                      f"5m phase={phase_txt} (need {need})")
             return
 
         # ── Step 2: Existing strategy evaluation ──────────────────
@@ -2194,10 +2201,16 @@ class SymbolEngine:
                   f"{us.confidence:.0f} < {under_conf_threshold}")
             return
 
-        # 5d. Market phase must be a STRONG_TREND (signals only in strong trends)
-        if us.market_phase != UnderPhase.STRONG_TREND:
+        # 5d. Market phase must match the allowed set (Quick Scalp widens it)
+        _allowed = (
+            (UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION,
+             UnderPhase.COMPRESSION)
+            if self.config.get("quick_scalp", False)
+            else (UnderPhase.STRONG_TREND,)
+        )
+        if us.market_phase not in _allowed:
             print(_now(), f"[{self.symbol}][{label}] ❌ Market phase "
-                  f"{us.market_phase.value} != STRONG_TREND")
+                  f"{us.market_phase.value} not in {[p.value for p in _allowed]}")
             return
 
         # 5e. No opposing confirmed reversal pattern

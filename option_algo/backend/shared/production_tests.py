@@ -1196,16 +1196,21 @@ def test_strong_trend_only_signals():
         _ok("shared engine reads the underlying 5m structure before signaling")
     else:
         _fail("shared engine does not gate on the underlying structure")
-    if _has_function_with_code(se, "_evaluate_all", 'under_phase != "STRONG_TREND"'):
-        _ok("shared engine blocks signals unless phase is STRONG_TREND")
+    if 'QUICK_SCALP_PHASES = {"STRONG_TREND", "DISTRIBUTION", "COMPRESSION"}' in se:
+        _ok("shared engine allows STRONG_TREND + quick-scalp phases")
     else:
-        _fail("shared engine does not require STRONG_TREND")
+        _fail("quick-scalp phase set is missing")
+    if _has_function_with_code(se, "_evaluate_all",
+                               "under_phase not in QUICK_SCALP_PHASES"):
+        _ok("shared engine blocks phases outside the allowed set")
+    else:
+        _fail("shared engine does not gate on the allowed phase set")
 
     ev6 = _read_src("backend/engine/engine_v6.py")
-    if "us.market_phase != UnderPhase.STRONG_TREND" in ev6:
-        _ok("legacy engine requires STRONG_TREND (unified strategy)")
+    if "UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION" in ev6:
+        _ok("legacy engine allows quick-scalp phases when enabled")
     else:
-        _fail("legacy unified strategy does not require STRONG_TREND")
+        _fail("legacy engine does not allow quick-scalp phases")
     if "(UnderPhase.STRONG_TREND, UnderPhase.WEAK_TREND)" not in ev6:
         _ok("legacy engine no longer accepts WEAK_TREND")
     else:
@@ -1214,6 +1219,66 @@ def test_strong_trend_only_signals():
         _ok("legacy engine gates all strategies in _on_bar_close")
     else:
         _fail("legacy engine does not gate the 6 strategies")
+
+
+def test_quick_scalp_phase_gate():
+    print("\n=== Test: Quick Scalp toggles DISTRIBUTION/COMPRESSION signals ===")
+
+    models = _read_src("backend/db/models.py")
+    if "quick_scalp_enabled" in models:
+        _ok("User has a persisted quick_scalp_enabled flag")
+    else:
+        _fail("User.quick_scalp_enabled is missing")
+
+    initdb = _read_src("scripts/init_db.py")
+    if "quick_scalp_enabled" in initdb:
+        _ok("init_db adds the quick_scalp column")
+    else:
+        _fail("init_db does not add the quick_scalp column")
+
+    uem = _read_src("backend/shared/user_execution_manager.py")
+    if "_quick_scalp_enabled" in uem and "get_user_quick_scalp" in uem:
+        _ok("execution manager reads the per-user quick-scalp flag")
+    else:
+        _fail("execution manager does not read the quick-scalp flag")
+    if "DISTRIBUTION" in uem and "COMPRESSION" in uem:
+        _ok("execution manager filters DISTRIBUTION/COMPRESSION when off")
+    else:
+        _fail("execution manager does not filter quick-scalp phases")
+
+    sw = _read_src("backend/shared/shared_worker.py")
+    if "set_quick_scalp" in sw and "_handle_set_quick_scalp" in sw:
+        _ok("shared worker handles the set_quick_scalp command")
+    else:
+        _fail("shared worker does not handle set_quick_scalp")
+
+    wk = _read_src("worker.py")
+    if "set_quick_scalp" in wk and "_handle_set_quick_scalp" in wk:
+        _ok("legacy worker handles the set_quick_scalp command")
+    else:
+        _fail("legacy worker does not handle set_quick_scalp")
+
+    router = _read_src("backend/routers/terminal.py")
+    if '"/api/terminal/quick-scalp"' in router:
+        _ok("terminal exposes a quick-scalp toggle endpoint")
+    else:
+        _fail("quick-scalp endpoint missing")
+    tsvc = _read_src("backend/services/terminal_service.py")
+    if '"quick_scalp"' in tsvc:
+        _ok("bootstrap returns the quick-scalp state")
+    else:
+        _fail("bootstrap does not return quick-scalp state")
+
+    html = _read_src("frontend/templates/terminal.html")
+    if 'id="term-quick-scalp"' in html:
+        _ok("terminal has a Quick Scalp toggle button")
+    else:
+        _fail("Quick Scalp button missing")
+    js = _read_src("frontend/static/js/terminal.js")
+    if "function syncQuickScalp(" in js and "/api/terminal/quick-scalp" in js:
+        _ok("terminal toggle is wired to the API")
+    else:
+        _fail("terminal Quick Scalp toggle is not wired")
 
 
 def test_terminal_chart_zoom_and_view_lock():
@@ -1334,6 +1399,10 @@ def test_terminal_independent_timeframes():
         _ok("toolbar exposes a timeframe selector for each chart")
     else:
         _fail("toolbar does not expose two separate timeframe selectors")
+    if html.index('data-chart="underlying"') < html.index('data-chart="premium"'):
+        _ok("underlying timeframe selector is listed first")
+    else:
+        _fail("underlying timeframe selector is not first")
 
 
 def test_email_sender_branding():
@@ -1765,6 +1834,7 @@ def run_all_tests():
     test_live_exit_uses_broker_fill()
     test_dashboard_lots_and_terminal_layout()
     test_strong_trend_only_signals()
+    test_quick_scalp_phase_gate()
     test_terminal_chart_zoom_and_view_lock()
     test_terminal_voice_alerts()
     test_terminal_independent_timeframes()

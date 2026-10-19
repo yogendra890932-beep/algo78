@@ -524,6 +524,8 @@ class SharedWorkerOrchestrator:
             return self._handle_pause_resume(user_id, False)
         elif action == "update_token":
             return self._handle_update_token(user_id, payload)
+        elif action == "set_quick_scalp":
+            return self._handle_set_quick_scalp(user_id, payload)
         elif action == "approve_pending_trade":
             return self._handle_approve_pending_trade(user_id, payload)
         elif action == "reject_pending_trade":
@@ -722,6 +724,18 @@ class SharedWorkerOrchestrator:
             mgr.resume()
         key = "paused" if paused else "resumed"
         return {"ok": True, key: list(mgr.symbols)}
+
+    def _handle_set_quick_scalp(self, user_id: int, payload: dict) -> dict:
+        """Apply the terminal Quick Scalp toggle to the running manager."""
+        enabled = bool(payload.get("enabled"))
+        mgr = self._user_registry.get_manager(user_id)
+        if mgr is None:
+            return {"ok": True, "running": False, "enabled": enabled}
+        mgr.config["quick_scalp"] = enabled
+        mgr._quick_scalp_cache = enabled
+        mgr._quick_scalp_checked_at = time.time()
+        print(f"{_now()} [shared-orch] quick_scalp user={user_id} enabled={enabled}")
+        return {"ok": True, "running": True, "enabled": enabled}
 
     def _handle_update_token(self, user_id: int, payload: dict) -> dict:
         new_token = payload.get("access_token", "")

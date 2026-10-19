@@ -43,6 +43,7 @@
   </div>
 
   <div class="term-top-actions">
+    <button id="term-quick-scalp" class="term-btn term-btn-ghost" title="Quick Scalp off — signals only in STRONG_TREND. Click to allow DISTRIBUTION/COMPRESSION too.">Quick Scalp: Off</button>
     <button id="term-voice-toggle" class="term-btn term-btn-ghost" title="Voice alerts off — click to enable">Voice: Off</button>
     <button id="term-toggle-left" class="term-btn term-btn-ghost" title="Show / hide left panel (watchlist)">Watchlist</button>
     <span id="term-user-label" class="term-user">--</span>
@@ -81,13 +82,13 @@
   <!-- ── CENTER: CHART ── -->
   <section class="term-center">
     <div class="term-chart-toolbar">
-      <div class="term-tf-group" id="tf-group-premium" data-chart="premium" title="Premium chart timeframe">
-        <span class="term-muted">Premium</span>
+      <div class="term-tf-group" id="tf-group-underlying" data-chart="underlying" title="Underlying chart timeframe">
+        <span class="term-muted">Underlying</span>
         <button class="term-tf term-tf-active" data-tf="1m">1m</button>
         <button class="term-tf" data-tf="5m">5m</button>
       </div>
-      <div class="term-tf-group" id="tf-group-underlying" data-chart="underlying" title="Underlying chart timeframe">
-        <span class="term-muted">Underlying</span>
+      <div class="term-tf-group" id="tf-group-premium" data-chart="premium" title="Premium chart timeframe">
+        <span class="term-muted">Premium</span>
         <button class="term-tf term-tf-active" data-tf="1m">1m</button>
         <button class="term-tf" data-tf="5m">5m</button>
       </div>
@@ -222,6 +223,6 @@
 
 <script src="/static/vendor/lightweight-charts.standalone.production.js?v=20260811-2"></script>
   <script src="/static/js/voice-alerts.js?v=20261016-1"></script>
-  <script src="/static/js/terminal.js?v=20261016-6"></script>
+  <script src="/static/js/terminal.js?v=20261016-7"></script>
 </body>
 </html>

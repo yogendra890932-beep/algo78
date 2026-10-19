@@ -92,6 +92,11 @@ class UserExecutionManager:
         self._monitor_busy: dict[str, bool] = {}
         self._r = get_redis_sync()
 
+        # Quick Scalp (per-user terminal toggle). Cached DB read so the
+        # toggle applies live without restarting the worker.
+        self._quick_scalp_cache = bool(config.get("quick_scalp", False))
+        self._quick_scalp_checked_at = 0.0
+
         # Position state per symbol
         self._positions: dict[str, dict] = {}
         self._positions_lock = threading.Lock()
@@ -261,6 +266,23 @@ class UserExecutionManager:
     def pause_reason(self) -> Optional[str]:
         return self._pause_reason
 
+    def _quick_scalp_enabled(self) -> bool:
+        """Whether the user's Quick Scalp toggle is on (5s-cached DB read)."""
+        now = time.time()
+        if now - self._quick_scalp_checked_at < 5.0:
+            return self._quick_scalp_cache
+        enabled = self._quick_scalp_cache
+        try:
+            from backend.services.bot_config_builder import get_user_quick_scalp
+            val = get_user_quick_scalp(self.user_id)
+            if val is not None:
+                enabled = val
+        except Exception as e:
+            print(f"{_now()} [exec:u{self.user_id}] quick_scalp read error: {e}")
+        self._quick_scalp_cache = enabled
+        self._quick_scalp_checked_at = now
+        return enabled
+
     def _loop(self):
         """Subscribe to signal channels for user's symbols."""
         from backend.shared.pubsub_utils import resilient_pubsub_consumer
@@ -280,6 +302,17 @@ class UserExecutionManager:
         if sig_symbol.upper() not in self.symbols:
             return
         sig_symbol = sig_symbol.upper()
+
+        # Quick Scalp gate: weaker underlying phases (DISTRIBUTION /
+        # COMPRESSION) are only traded when the user has Quick Scalp on.
+        # STRONG_TREND always passes. Re-read from the DB (5s cache) so the
+        # terminal toggle takes effect without a worker restart.
+        phase = str(signal.get("market_phase") or "").upper()
+        if phase and phase != "STRONG_TREND" and not self._quick_scalp_enabled():
+            print(f"{_now()} [exec:u{self.user_id}] Skip "
+                  f"{signal.get('strategy', '')} {sig_symbol} — "
+                  f"phase={phase} (Quick Scalp off)")
+            return
 
         entry_ltp = signal.get("entry_price")
         if entry_ltp:
@@ -1870,6 +1903,10 @@ class UserExecutionRegistry:
     def is_running(self, user_id: int) -> bool:
         with self._lock:
             return user_id in self._managers
+
+    def get_manager(self, user_id: int) -> Optional["UserExecutionManager"]:
+        with self._lock:
+            return self._managers.get(user_id)
 
     def running_users(self) -> list[int]:
         with self._lock:
