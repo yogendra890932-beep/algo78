@@ -30,6 +30,7 @@ from backend.shared.option_premium_service import SharedOptionPremiumBuilder
 from backend.services.redis_client import get_redis_sync
 from backend.shared.shared_cache import get_lot_size, is_market_open
 from backend.services.state_store import set_bot_status_sync
+from backend.shared.range_detector import detect_range_channel, range_entry
 
 
 def _now() -> str:
@@ -41,6 +42,10 @@ def _now() -> str:
 # per-user filter lives in UserExecutionManager._process_signal(), which
 # reads the phase tagged on each signal.
 QUICK_SCALP_PHASES = {"STRONG_TREND", "DISTRIBUTION", "COMPRESSION"}
+
+# RANGE is always allowed: the Range Fade strategy is always-on for every
+# user whenever the underlying 5m structure is rangebound.
+SIGNAL_PHASES = QUICK_SCALP_PHASES | {"RANGE"}
 
 
 # ================================================================
@@ -268,14 +273,15 @@ class SharedStrategyEngine:
         # structure phases. STRONG_TREND is always allowed; DISTRIBUTION and
         # COMPRESSION are published too so Quick-Scalp users receive them,
         # while non-Quick-Scalp users filter them out per-user downstream.
+        # RANGE is allowed for the always-on Range Fade strategy.
         under_structure = SharedMarketStructureEngine.get_underlying_structure(self.symbol)
         under_phase = (under_structure or {}).get("market_phase", "")
-        if under_phase not in QUICK_SCALP_PHASES:
+        if under_phase not in SIGNAL_PHASES:
             if time.time() - self._last_phase_log > 300:
                 self._last_phase_log = time.time()
                 print(f"{_now()} [strategy:{self.symbol}] Signals blocked — "
                       f"underlying 5m phase={under_phase or 'N/A'} "
-                      f"(need STRONG_TREND, or quick-scalp phases)")
+                      f"(need STRONG_TREND, RANGE, or quick-scalp phases)")
             return
 
         # Evaluate all strategies
@@ -308,6 +314,11 @@ class SharedStrategyEngine:
         # Evaluate unified structure-based strategy
         s = self._eval_unified_strategy(premium_df, direction, indicators)
         if s: signals.append(s)
+
+        # Range Fade — always-on whenever the underlying 5m phase is RANGE.
+        if under_phase == "RANGE":
+            s = self._eval_range_fade(premium_df, direction)
+            if s: signals.append(s)
 
         # Publish signals
         self._prev_direction = direction
@@ -615,6 +626,34 @@ class SharedStrategyEngine:
             "timestamp": datetime.utcnow().isoformat(),
         }
 
+    def _eval_range_fade(self, df: pd.DataFrame, direction: str) -> Optional[dict]:
+        """Buy premium at the lower boundary of a flat range channel.
+
+        Always-on: the caller only invokes this when the underlying 5m
+        structure phase is RANGE. Entries are dip-buys inside the channel;
+        SL / target still come from the user's sl_pct / target_rr settings.
+        """
+        channel = detect_range_channel(df)
+        if not channel:
+            return None
+        setup = range_entry(df, channel)
+        if not setup:
+            return None
+
+        return {
+            "symbol": self.symbol,
+            "opt_type": self._get_opt_type(direction),
+            "direction": "BUY",
+            "entry_price": setup["entry"],
+            "stop_loss": setup["stop_loss"],
+            "strategy": "range_fade",
+            "regime": self._regime.regime,
+            "range_high": round(channel["high"], 2),
+            "range_low": round(channel["low"], 2),
+            "range_width": round(channel["width"], 2),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
     def _eval_unified_strategy(self, df: pd.DataFrame, direction: str,
                                ind: dict) -> Optional[dict]:
         opt_type = self._get_opt_type(direction)
@@ -657,7 +696,7 @@ class SharedStrategyEngine:
             return None
 
         under_phase = underlying_structure.get("market_phase", "")
-        if under_phase not in QUICK_SCALP_PHASES:
+        if under_phase not in SIGNAL_PHASES:
             return None
 
         inds = ind

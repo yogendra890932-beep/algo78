@@ -82,6 +82,9 @@ from backend.services.execution_layer import (
 # references to NSE_LOT_SIZES keep working without a duplicated table.
 from backend.shared.shared_cache import DEFAULT_LOT_SIZES as NSE_LOT_SIZES
 
+# Range Fade (legacy engine parity with the shared strategy engine).
+from backend.shared.range_detector import detect_range_channel, range_entry
+
 # Fallback if symbol not in table — warn and use 1 so order
 # quantity = exactly what user typed (raw qty, not lots).
 _LOT_SIZE_FALLBACK = 1
@@ -1353,19 +1356,25 @@ class SymbolEngine:
         )
         us_gate = self.underlying_structure
         quick_scalp = bool(self.config.get("quick_scalp", False))
-        allowed_phases = (
-            {UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION,
-             UnderPhase.COMPRESSION}
-            if quick_scalp else {UnderPhase.STRONG_TREND}
-        )
+        allowed_phases = {UnderPhase.STRONG_TREND, UnderPhase.RANGE}
+        if quick_scalp:
+            allowed_phases |= {UnderPhase.DISTRIBUTION, UnderPhase.COMPRESSION}
         if us_gate is None or us_gate.market_phase not in allowed_phases:
             if self._last_phase_log != self._ul_cur_min:
                 self._last_phase_log = self._ul_cur_min
                 phase_txt = us_gate.market_phase.value if us_gate else "None"
-                need = "STRONG_TREND, DISTRIBUTION, COMPRESSION" if quick_scalp else "STRONG_TREND"
+                need = "STRONG_TREND, RANGE"
+                if quick_scalp:
+                    need += ", DISTRIBUTION, COMPRESSION"
                 print(_now(), f"[{self.symbol}] Signals blocked — underlying "
                       f"5m phase={phase_txt} (need {need})")
             return
+
+        # Range Fade — always-on when the underlying 5m phase is RANGE.
+        if us_gate.market_phase == UnderPhase.RANGE:
+            self._eval_range_fade()
+            if self.position:
+                return
 
         # ── Step 2: Existing strategy evaluation ──────────────────
         # Keep the existing 6 strategies intact — they have been
@@ -2082,7 +2091,34 @@ class SymbolEngine:
         self._place_trade(cur_ltp, sl, "vcgb")
 
     # ================================================================
-    # STRATEGY 7 — UNIFIED STRUCTURE-BASED  (CE / PE via direction)
+    # STRATEGY 7 — RANGE FADE  (always-on when underlying phase = RANGE)
+    # ================================================================
+
+    def _eval_range_fade(self):
+        """Buy premium at the lower boundary of a flat range channel.
+
+        Always-on while the underlying 5m phase is RANGE. The execution
+        layer never shorts option premium, so only the lower boundary is
+        faded (a dip-buy inside the channel). SL / target still come from
+        the user's sl_pct / target_rr settings.
+        """
+        if self.position or not self.instrument_key or not self.direction:
+            return
+        with self._df_lock:
+            df = self.opt_df.copy()
+        channel = detect_range_channel(df)
+        if not channel:
+            return
+        setup = range_entry(df, channel)
+        if not setup:
+            return
+        print(_now(), f"[{self.symbol}] RANGE FADE entry={setup['entry']:.2f} "
+              f"range={channel['low']:.2f}-{channel['high']:.2f} "
+              f"touches={channel['touches']}")
+        self._place_trade(setup["entry"], setup["stop_loss"], "range_fade")
+
+    # ================================================================
+    # STRATEGY 8 — UNIFIED STRUCTURE-BASED  (CE / PE via direction)
     # ================================================================
 
     def _eval_unified_strategy(self, direction: str):
@@ -2203,10 +2239,10 @@ class SymbolEngine:
 
         # 5d. Market phase must match the allowed set (Quick Scalp widens it)
         _allowed = (
-            (UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION,
-             UnderPhase.COMPRESSION)
+            (UnderPhase.STRONG_TREND, UnderPhase.RANGE,
+             UnderPhase.DISTRIBUTION, UnderPhase.COMPRESSION)
             if self.config.get("quick_scalp", False)
-            else (UnderPhase.STRONG_TREND,)
+            else (UnderPhase.STRONG_TREND, UnderPhase.RANGE)
         )
         if us.market_phase not in _allowed:
             print(_now(), f"[{self.symbol}][{label}] ❌ Market phase "

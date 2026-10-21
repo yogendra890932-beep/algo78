@@ -1201,13 +1201,18 @@ def test_strong_trend_only_signals():
     else:
         _fail("quick-scalp phase set is missing")
     if _has_function_with_code(se, "_evaluate_all",
-                               "under_phase not in QUICK_SCALP_PHASES"):
+                               "under_phase not in SIGNAL_PHASES"):
         _ok("shared engine blocks phases outside the allowed set")
     else:
         _fail("shared engine does not gate on the allowed phase set")
 
     ev6 = _read_src("backend/engine/engine_v6.py")
-    if "UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION" in ev6:
+    if "UnderPhase.RANGE" in ev6:
+        _ok("legacy engine allows the RANGE phase")
+    else:
+        _fail("legacy engine does not allow the RANGE phase")
+    if "UnderPhase.STRONG_TREND, UnderPhase.DISTRIBUTION" in ev6 or \
+            "UnderPhase.DISTRIBUTION, UnderPhase.COMPRESSION" in ev6:
         _ok("legacy engine allows quick-scalp phases when enabled")
     else:
         _fail("legacy engine does not allow quick-scalp phases")
@@ -1279,6 +1284,90 @@ def test_quick_scalp_phase_gate():
         _ok("terminal toggle is wired to the API")
     else:
         _fail("terminal Quick Scalp toggle is not wired")
+
+
+def test_range_fade_strategy():
+    print("\n=== Test: always-on Range Fade strategy in RANGE phase ===")
+
+    se = _read_src("backend/shared/strategy_engine.py")
+    if 'SIGNAL_PHASES = QUICK_SCALP_PHASES | {"RANGE"}' in se:
+        _ok("RANGE is part of the allowed signal phases")
+    else:
+        _fail("RANGE is not allowed by the signal gate")
+    if "def _eval_range_fade(" in se and 'under_phase == "RANGE"' in se:
+        _ok("shared engine evaluates Range Fade only in RANGE")
+    else:
+        _fail("shared engine does not evaluate Range Fade in RANGE")
+
+    ev6 = _read_src("backend/engine/engine_v6.py")
+    if "def _eval_range_fade(" in ev6 and "self._eval_range_fade()" in ev6:
+        _ok("legacy engine has Range Fade parity")
+    else:
+        _fail("legacy engine has no Range Fade parity")
+
+    uem = _read_src("backend/shared/user_execution_manager.py")
+    if '"range_fade": "all"' in uem:
+        _ok("Range Fade bypasses the per-user strategy filter")
+    else:
+        _fail("Range Fade is filtered by the user's strategy choice")
+    if 'phase not in ("STRONG_TREND", "RANGE")' in uem:
+        _ok("RANGE passes the per-user phase gate without Quick Scalp")
+    else:
+        _fail("RANGE is blocked by the Quick Scalp phase gate")
+
+    rd = _read_src("backend/shared/range_detector.py")
+    for token in ("detect_range_channel", "range_entry", "RANGE_ENTRY_ZONE",
+                  "RANGE_MIN_TOUCHES"):
+        if token not in rd:
+            _fail(f"range_detector missing {token}")
+            break
+    else:
+        _ok("range detector exposes channel + entry helpers")
+
+    # Synthetic data: a flat oscillating channel must be detected and the
+    # lower-boundary bounce accepted; drifting / micro channels rejected.
+    try:
+        import math
+        import pandas as pd
+        from backend.shared.range_detector import (
+            detect_range_channel, range_entry,
+        )
+
+        rows = []
+        for i in range(48):
+            c = 100.0 + 1.0 * math.sin(i * 2 * math.pi / 12.0)
+            rows.append({"open": c - 0.05, "high": c + 0.05,
+                         "low": c - 0.05, "close": c, "volume": 1000})
+        rows[-1] = {"open": 99.0, "high": 99.4, "low": 98.9,
+                    "close": 99.3, "volume": 1000}
+        flat = pd.DataFrame(rows)
+        ch = detect_range_channel(flat)
+        if ch and range_entry(flat, ch):
+            _ok("flat channel detected and dip-buy entry accepted")
+        else:
+            _fail("flat channel or entry not detected")
+
+        drift = pd.DataFrame([
+            {"open": c - 0.2, "high": c + 0.3, "low": c - 0.3,
+             "close": c, "volume": 1000}
+            for c in [100 + i * 0.5 for i in range(40)]
+        ])
+        if detect_range_channel(drift) is None:
+            _ok("drifting channel rejected")
+        else:
+            _fail("drifting channel accepted as a range")
+
+        micro = pd.DataFrame([
+            {"open": 100.0, "high": 100.02, "low": 99.99,
+             "close": 100.01, "volume": 1000}
+            for _ in range(40)
+        ])
+        if detect_range_channel(micro) is None:
+            _ok("micro range rejected")
+        else:
+            _fail("micro range accepted")
+    except Exception as e:
+        _fail(f"range detector synthetic check crashed: {e}")
 
 
 def test_terminal_chart_zoom_and_view_lock():
@@ -1835,6 +1924,7 @@ def run_all_tests():
     test_dashboard_lots_and_terminal_layout()
     test_strong_trend_only_signals()
     test_quick_scalp_phase_gate()
+    test_range_fade_strategy()
     test_terminal_chart_zoom_and_view_lock()
     test_terminal_voice_alerts()
     test_terminal_independent_timeframes()
