@@ -305,11 +305,13 @@ class UserExecutionManager:
 
         # Quick Scalp gate: weaker underlying phases (DISTRIBUTION /
         # COMPRESSION) are only traded when the user has Quick Scalp on.
-        # STRONG_TREND always passes, and RANGE passes because Range Fade
-        # is always-on. Re-read from the DB (5s cache) so the terminal
-        # toggle takes effect without a worker restart.
+        # STRONG_TREND always passes; RANGE (Range Fade) and WEAK_TREND /
+        # PULLBACK (trend pullback entries) are always allowed too.
+        # Re-read from the DB (5s cache) so the terminal toggle takes
+        # effect without a worker restart.
         phase = str(signal.get("market_phase") or "").upper()
-        if phase and phase not in ("STRONG_TREND", "RANGE") \
+        if phase and phase not in ("STRONG_TREND", "RANGE",
+                                   "WEAK_TREND", "PULLBACK") \
                 and not self._quick_scalp_enabled():
             print(f"{_now()} [exec:u{self.user_id}] Skip "
                   f"{signal.get('strategy', '')} {sig_symbol} — "

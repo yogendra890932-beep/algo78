@@ -31,6 +31,7 @@ from backend.services.redis_client import get_redis_sync
 from backend.shared.shared_cache import get_lot_size, is_market_open
 from backend.services.state_store import set_bot_status_sync
 from backend.shared.range_detector import detect_range_channel, range_entry
+from backend.shared.trend_direction import resolve_direction
 
 
 def _now() -> str:
@@ -44,8 +45,10 @@ def _now() -> str:
 QUICK_SCALP_PHASES = {"STRONG_TREND", "DISTRIBUTION", "COMPRESSION"}
 
 # RANGE is always allowed: the Range Fade strategy is always-on for every
-# user whenever the underlying 5m structure is rangebound.
-SIGNAL_PHASES = QUICK_SCALP_PHASES | {"RANGE"}
+# user whenever the underlying 5m structure is rangebound. WEAK_TREND /
+# PULLBACK are allowed so a small pullback inside an intact trend can be
+# traded instead of being blocked (and without flipping the option).
+SIGNAL_PHASES = QUICK_SCALP_PHASES | {"RANGE", "WEAK_TREND", "PULLBACK"}
 
 
 # ================================================================
@@ -236,8 +239,9 @@ class SharedStrategyEngine:
         if df_1m.empty or len(df_1m) < 25:
             return
 
-        # Determine direction from underlying
-        direction = self._get_direction(df_1m)
+        # Determine direction from underlying (trend-aware: a small pullback
+        # inside an intact trend must not flip CE↔PE)
+        direction = self._get_direction(df_1m, self._prev_direction)
         if direction is None:
             return
 
@@ -335,14 +339,23 @@ class SharedStrategyEngine:
             signal["market_phase"] = under_phase
             self._publish_signal(signal)
 
-    def _get_direction(self, df: pd.DataFrame) -> Optional[str]:
-        """Determine BULL/BEAR from underlying EMA cross."""
+    def _get_direction(self, df: pd.DataFrame,
+                       prev: Optional[str] = None) -> Optional[str]:
+        """Determine BULL/BEAR with trend-aware hysteresis.
+
+        Keeps ``prev`` while the underlying 5m structure still supports it,
+        so a small pullback inside a trend does not flip the option.
+        """
         if df.empty or len(df) < 15:
             return None
-        close = df["close"]
-        ef = float(close.ewm(span=9, adjust=False).mean().iloc[-1])
-        es = float(close.ewm(span=15, adjust=False).mean().iloc[-1])
-        return "BULL" if ef > es else "BEAR"
+        try:
+            structure = SharedMarketStructureEngine.get_underlying_structure(
+                self.symbol
+            )
+            trend = (structure or {}).get("trend")
+        except Exception:
+            trend = None
+        return resolve_direction(df, prev, trend)
 
     def _publish_signal(self, signal: dict):
         """Publish a signal to Redis Pub/Sub and Stream with retry."""

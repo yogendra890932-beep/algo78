@@ -84,6 +84,8 @@ from backend.shared.shared_cache import DEFAULT_LOT_SIZES as NSE_LOT_SIZES
 
 # Range Fade (legacy engine parity with the shared strategy engine).
 from backend.shared.range_detector import detect_range_channel, range_entry
+# Trend-aware direction (do not flip on a small pullback inside a trend).
+from backend.shared.trend_direction import resolve_direction
 
 # Fallback if symbol not in table — warn and use 1 so order
 # quantity = exactly what user typed (raw qty, not lots).
@@ -828,9 +830,12 @@ class SymbolEngine:
     # ================================================================
 
     def _check_direction(self):
-        """
-        Instant direction flip on EMA9 vs EMA15 cross.
-        No debounce — responds immediately to every bar.
+        """Trend-aware direction update.
+
+        Keeps the current side while the underlying 5m structure still
+        supports it, so a small pullback inside a trend does not flip
+        CE↔PE. A genuine reversal needs a sustained EMA9/15 cross plus
+        price beyond EMA21.
         """
         with self._df_lock:
             df = self.ul_df.copy()
@@ -843,9 +848,15 @@ class SymbolEngine:
             print(_now(), f"[{self.symbol}] {self._regime.summary()}")
             self._last_regime_log = time.time()
 
-        ef      = float(df["close"].ewm(span=9,  adjust=False).mean().iloc[-1])
-        es      = float(df["close"].ewm(span=15, adjust=False).mean().iloc[-1])
-        new_dir = "BULL" if ef > es else "BEAR"
+        trend_val = None
+        try:
+            if self.underlying_structure is not None:
+                trend_val = self.underlying_structure.trend.value
+        except Exception:
+            trend_val = None
+        new_dir = resolve_direction(df, self.direction, trend_val)
+        if new_dir is None:
+            return
 
         if new_dir == self.direction:
             return
@@ -1356,7 +1367,8 @@ class SymbolEngine:
         )
         us_gate = self.underlying_structure
         quick_scalp = bool(self.config.get("quick_scalp", False))
-        allowed_phases = {UnderPhase.STRONG_TREND, UnderPhase.RANGE}
+        allowed_phases = {UnderPhase.STRONG_TREND, UnderPhase.RANGE,
+                          UnderPhase.WEAK_TREND, UnderPhase.PULLBACK}
         if quick_scalp:
             allowed_phases |= {UnderPhase.DISTRIBUTION, UnderPhase.COMPRESSION}
         if us_gate is None or us_gate.market_phase not in allowed_phases:
@@ -2240,9 +2252,11 @@ class SymbolEngine:
         # 5d. Market phase must match the allowed set (Quick Scalp widens it)
         _allowed = (
             (UnderPhase.STRONG_TREND, UnderPhase.RANGE,
+             UnderPhase.WEAK_TREND, UnderPhase.PULLBACK,
              UnderPhase.DISTRIBUTION, UnderPhase.COMPRESSION)
             if self.config.get("quick_scalp", False)
-            else (UnderPhase.STRONG_TREND, UnderPhase.RANGE)
+            else (UnderPhase.STRONG_TREND, UnderPhase.RANGE,
+                  UnderPhase.WEAK_TREND, UnderPhase.PULLBACK)
         )
         if us.market_phase not in _allowed:
             print(_now(), f"[{self.symbol}][{label}] ❌ Market phase "

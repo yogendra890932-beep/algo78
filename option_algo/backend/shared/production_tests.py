@@ -1290,10 +1290,10 @@ def test_range_fade_strategy():
     print("\n=== Test: always-on Range Fade strategy in RANGE phase ===")
 
     se = _read_src("backend/shared/strategy_engine.py")
-    if 'SIGNAL_PHASES = QUICK_SCALP_PHASES | {"RANGE"}' in se:
-        _ok("RANGE is part of the allowed signal phases")
+    if 'SIGNAL_PHASES = QUICK_SCALP_PHASES | {"RANGE", "WEAK_TREND", "PULLBACK"}' in se:
+        _ok("RANGE and trend-pullback phases are allowed")
     else:
-        _fail("RANGE is not allowed by the signal gate")
+        _fail("RANGE/WEAK_TREND/PULLBACK are not allowed by the signal gate")
     if "def _eval_range_fade(" in se and 'under_phase == "RANGE"' in se:
         _ok("shared engine evaluates Range Fade only in RANGE")
     else:
@@ -1310,10 +1310,10 @@ def test_range_fade_strategy():
         _ok("Range Fade bypasses the per-user strategy filter")
     else:
         _fail("Range Fade is filtered by the user's strategy choice")
-    if 'phase not in ("STRONG_TREND", "RANGE")' in uem:
-        _ok("RANGE passes the per-user phase gate without Quick Scalp")
+    if 'phase not in ("STRONG_TREND", "RANGE",' in uem:
+        _ok("RANGE/WEAK_TREND/PULLBACK pass the per-user phase gate")
     else:
-        _fail("RANGE is blocked by the Quick Scalp phase gate")
+        _fail("trend-pullback phases are blocked by the Quick Scalp gate")
 
     rd = _read_src("backend/shared/range_detector.py")
     for token in ("detect_range_channel", "range_entry", "RANGE_ENTRY_ZONE",
@@ -1368,6 +1368,65 @@ def test_range_fade_strategy():
             _fail("micro range accepted")
     except Exception as e:
         _fail(f"range detector synthetic check crashed: {e}")
+
+
+def test_trend_pullback_no_flip():
+    print("\n=== Test: no CE/PE flip on a small pullback inside a trend ===")
+
+    td = _read_src("backend/shared/trend_direction.py")
+    if "def resolve_direction(" in td and "EMA_CONFIRM_BARS" in td:
+        _ok("trend-aware direction resolver exists")
+    else:
+        _fail("trend-aware direction resolver missing")
+
+    psvc = _read_src("backend/shared/option_premium_service.py")
+    if "resolve_direction(df, prev_dir, trend)" in psvc:
+        _ok("premium builder no longer flips on a bare EMA cross")
+    else:
+        _fail("premium builder still flips on a bare EMA cross")
+
+    se = _read_src("backend/shared/strategy_engine.py")
+    if "resolve_direction(df, prev, trend)" in se and \
+            "self._get_direction(df_1m, self._prev_direction)" in se:
+        _ok("shared engine uses the sticky direction")
+    else:
+        _fail("shared engine still flips on a bare EMA cross")
+
+    ev6 = _read_src("backend/engine/engine_v6.py")
+    if "resolve_direction(df, self.direction, trend_val)" in ev6:
+        _ok("legacy engine uses the sticky direction")
+    else:
+        _fail("legacy engine still flips on a bare EMA cross")
+
+    try:
+        import pandas as pd
+        from backend.shared.trend_direction import resolve_direction
+
+        def mk(closes):
+            return pd.DataFrame([
+                {"open": c, "high": c, "low": c, "close": c, "volume": 1}
+                for c in closes
+            ])
+
+        up = [100 + i * 0.5 for i in range(40)]
+        pullback = mk(up + [116, 112, 108])
+        if resolve_direction(pullback, "BULL", "UPTREND") == "BULL":
+            _ok("small pullback in an uptrend keeps BULL (no flip)")
+        else:
+            _fail("small pullback flipped the direction")
+
+        down = mk([140 - i * 0.5 for i in range(40)])
+        if resolve_direction(down, "BULL", "DOWNTREND") == "BEAR":
+            _ok("confirmed reversal flips direction")
+        else:
+            _fail("confirmed reversal did not flip")
+
+        if resolve_direction(pullback, "BULL", "SIDEWAYS") == "BULL":
+            _ok("unconfirmed cross in a neutral market does not flip")
+        else:
+            _fail("unconfirmed cross flipped in a neutral market")
+    except Exception as e:
+        _fail(f"trend direction synthetic check crashed: {e}")
 
 
 def test_terminal_chart_zoom_and_view_lock():
@@ -1925,6 +1984,7 @@ def run_all_tests():
     test_strong_trend_only_signals()
     test_quick_scalp_phase_gate()
     test_range_fade_strategy()
+    test_trend_pullback_no_flip()
     test_terminal_chart_zoom_and_view_lock()
     test_terminal_voice_alerts()
     test_terminal_independent_timeframes()

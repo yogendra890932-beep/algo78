@@ -44,6 +44,7 @@ from backend.shared.redis_infra import (
 )
 from backend.services.redis_client import get_redis_sync
 from backend.shared.candle_builder import SharedCandleBuilder
+from backend.shared.trend_direction import resolve_direction
 
 MAX_1M_BARS = 750
 WARM_MIN_BARS = 25
@@ -206,19 +207,36 @@ class SharedOptionPremiumBuilder:
             return False
 
     def _maybe_roll_option(self) -> bool:
-        """If the underlying direction flipped, switch to the new ITM option.
+        """Roll the option only when the trend direction genuinely reverses.
 
-        Idempotent — no-op when the current option already matches the
-        direction-derived opt_type AND has not expired.
+        A small pullback inside a healthy trend crosses EMA9/15 briefly;
+        that must NOT flip CE↔PE. ``resolve_direction`` keeps the current
+        side while the underlying 5m structure still supports it.
         """
         df = SharedCandleBuilder.get_1m_df_from_redis(self.symbol)
         if df.empty or len(df) < 15:
             return False
 
-        close = df["close"]
-        ef = float(close.ewm(span=9, adjust=False).mean().iloc[-1])
-        es = float(close.ewm(span=15, adjust=False).mean().iloc[-1])
-        direction = "BULL" if ef > es else "BEAR"
+        prev_dir = (
+            "BULL" if self._opt_type == "CE"
+            else "BEAR" if self._opt_type == "PE"
+            else None
+        )
+        trend = None
+        try:
+            from backend.shared.market_structure_engine import (
+                SharedMarketStructureEngine,
+            )
+            structure = SharedMarketStructureEngine.get_underlying_structure(
+                self.symbol
+            )
+            trend = (structure or {}).get("trend")
+        except Exception:
+            pass
+
+        direction = resolve_direction(df, prev_dir, trend)
+        if direction is None:
+            return False
         opt_type = "CE" if direction == "BULL" else "PE"
 
         if self._opt_type == opt_type and self._instrument_key and not self._option_expired():
