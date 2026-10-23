@@ -422,14 +422,31 @@ class SharedStrategyEngine:
         return "CE" if direction == "BULL" else "PE"
 
     def _eval_pullback(self, df: pd.DataFrame, ind: dict, direction: str) -> Optional[dict]:
+        """High-accuracy pullback entry on the traded option premium.
+
+        Only fires when the trend is intact, the pullback is controlled,
+        and the recovery is confirmed. The signal carries its structural
+        stop and the available room to the prior swing high so the
+        execution layer can reject setups that do not satisfy the user's
+        account SL% / R:R.
+        """
         ind_df = df.copy()
 
         if not (ind.get("ema_9") and ind.get("ema_15") and ind.get("ema_21")):
             return None
-        if not (ind["ema_9"] > ind["ema_15"] > ind["ema_21"] and ind["last_close"] > ind["ema_21"]):
+        # 1. Trend stack + rising fast EMA on the premium series.
+        if not (ind["ema_9"] > ind["ema_15"] > ind["ema_21"]
+                and ind["last_close"] > ind["ema_21"]):
+            return None
+        if ind.get("ema_9_slope", 0) <= 0:
+            return None
+        if not ind.get("is_bullish", False):
+            return None
+        # Do not chase a premium already stretched far above EMA21.
+        if ind["last_close"] > ind["ema_21"] * 1.03:
             return None
 
-        # EMA touch
+        # 2. EMA touch during the pullback window.
         tol = 0.015
         rec = ind_df.iloc[-8:]
         evas = [ind["ema_9"], ind["ema_15"], ind["ema_21"]]
@@ -441,19 +458,51 @@ class SharedStrategyEngine:
         if not touched:
             return None
 
-        # Recovery candle
+        # 3. Pullback on contracting volume, recovery on healthy volume.
+        if "volume" in ind_df.columns and float(ind_df["volume"].sum()) > 0 \
+                and len(ind_df) >= 20:
+            vol = ind_df["volume"]
+            avg_vol = float(vol.rolling(20).mean().iloc[-1])
+            pb_vol = float(vol.iloc[-4:-1].mean())
+            if avg_vol > 0 and pb_vol > avg_vol * 1.5:
+                return None
+            if avg_vol > 0 and float(vol.iloc[-1]) < avg_vol * 0.5:
+                return None
+
+        # 4. Strong recovery candle closing in the top 40% of its range.
         last_bar = ind_df.iloc[-1]
         rng = float(last_bar["high"]) - float(last_bar["low"])
-        body_r = abs(float(last_bar["close"]) - float(last_bar["open"])) / rng if rng > 0 else 0
-        if body_r < 0.25:
+        body_r = abs(float(last_bar["close"]) - float(last_bar["open"])) / rng \
+            if rng > 0 else 0
+        if body_r < 0.5:
             return None
-        if float(last_bar["close"]) <= float(last_bar["open"]):
+        if float(last_bar["close"]) < float(last_bar["low"]) + 0.6 * rng:
             return None
 
+        # 5. Recovery must clear the prior (pullback) bar high.
+        if len(ind_df) >= 2:
+            if float(last_bar["close"]) <= float(ind_df.iloc[-2]["high"]):
+                return None
+
+        # 6. Premium must be trending, not chopping.
+        try:
+            adx = MarketRegimeAnalyzer._calc_adx(ind_df, 14)
+            if adx > 0 and adx < 20:
+                return None
+        except Exception:
+            pass
+
+        # 7. Structural stop + room to the prior swing high.
         entry_ref = ind["last_close"]
-        lows = ind.get("recent_lows", [entry_ref])
-        sl = round(max(min(lows) - 0.05 if lows else entry_ref - 0.05,
-                       entry_ref * 0.997), 2)
+        lows = ind.get("recent_lows") or [entry_ref]
+        sl = round(max(min(lows) - 0.05, entry_ref * 0.995), 2)
+        risk = entry_ref - sl
+        if risk <= 0:
+            return None
+        resistance = float(ind_df["high"].iloc[-21:-1].max()) \
+            if len(ind_df) >= 21 else float(ind_df["high"].max())
+        if resistance <= entry_ref:
+            resistance = entry_ref + risk * 2.0
 
         return {
             "symbol": self.symbol,
@@ -461,6 +510,8 @@ class SharedStrategyEngine:
             "direction": "BUY",
             "entry_price": entry_ref,
             "stop_loss": sl,
+            "take_profit": round(resistance, 2),
+            "risk_pct": round(risk / entry_ref, 5) if entry_ref else 0,
             "strategy": "pullback_1m",
             "regime": self._regime.regime,
             "timestamp": datetime.utcnow().isoformat(),

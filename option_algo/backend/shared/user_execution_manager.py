@@ -283,6 +283,53 @@ class UserExecutionManager:
         self._quick_scalp_checked_at = now
         return enabled
 
+    def _pullback_risk_ok(self, signal: dict) -> bool:
+        """Reject pullbacks whose structure cannot support the account R:R.
+
+        The account executes entry*(1-sl_pct) as the stop and
+        entry*(1+sl_pct*target_rr) as the target. A setup is skipped when
+        its structural invalidation is BELOW the account stop (the account
+        would stop out inside the noise), or when the prior swing high is
+        CLOSER than the account target (no room to reach R:R).
+        """
+        try:
+            entry = float(signal.get("entry_price") or 0)
+        except (TypeError, ValueError):
+            return True
+        if entry <= 0:
+            return True
+        sl = signal.get("stop_loss")
+        if sl is None:
+            return True
+        try:
+            sl = float(sl)
+        except (TypeError, ValueError):
+            return True
+
+        sl_pct = float(self.config.get("sl_pct", 0.05) or 0.05)
+        rr = float(self.config.get("target_rr", 1.5) or 1.5)
+        account_sl = entry * (1.0 - sl_pct)
+        account_tp = entry * (1.0 + sl_pct * rr)
+
+        if sl < account_sl:
+            print(f"{_now()} [exec:u{self.user_id}] Skip pullback "
+                  f"{signal.get('symbol', '')} — structural SL {sl:.2f} "
+                  f"below account SL {account_sl:.2f} (sl_pct={sl_pct})")
+            return False
+
+        tp = signal.get("take_profit")
+        if tp is not None:
+            try:
+                tp = float(tp)
+            except (TypeError, ValueError):
+                tp = 0.0
+            if tp > 0 and tp < account_tp:
+                print(f"{_now()} [exec:u{self.user_id}] Skip pullback "
+                      f"{signal.get('symbol', '')} — room {tp:.2f} < "
+                      f"account target {account_tp:.2f} (rr={rr})")
+                return False
+        return True
+
     def _loop(self):
         """Subscribe to signal channels for user's symbols."""
         from backend.shared.pubsub_utils import resilient_pubsub_consumer
@@ -352,6 +399,13 @@ class UserExecutionManager:
         if cfg_strategy not in ("all", "both") and allowed_types not in (cfg_strategy, "all"):
             print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} — "
                   f"filter={cfg_strategy}")
+            return
+
+        # Pullback quality gate: the account executes a fixed SL% / R:R,
+        # so only take a pullback when its structural invalidation sits
+        # inside the account stop and the room to the prior swing high
+        # covers the account target.
+        if sig_strategy == "pullback_1m" and not self._pullback_risk_ok(signal):
             return
 
         # Risk check

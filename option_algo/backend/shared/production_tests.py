@@ -1370,6 +1370,60 @@ def test_range_fade_strategy():
         _fail(f"range detector synthetic check crashed: {e}")
 
 
+def test_pullback_quality_and_risk():
+    print("\n=== Test: refined pullback accuracy + account R:R filter ===")
+
+    se = _read_src("backend/shared/strategy_engine.py")
+    pb = se.split("def _eval_pullback(")[1].split("def _eval_trend_follow(")[0]
+    for token, label in (
+        ("ema_9_slope", "rising fast EMA"),
+        ("pb_vol > avg_vol * 1.5", "pullback volume contraction"),
+        ("body_r < 0.5", "strong recovery body"),
+        ("<= float(ind_df.iloc[-2][\"high\"])", "recovery clears prior bar"),
+        ("_calc_adx", "premium ADX filter"),
+        ("\"take_profit\"", "structural room to target"),
+        ("\"risk_pct\"", "structural risk tag"),
+    ):
+        if token in pb:
+            _ok(f"pullback requires {label}")
+        else:
+            _fail(f"pullback missing {label}")
+
+    uem = _read_src("backend/shared/user_execution_manager.py")
+    if "def _pullback_risk_ok(" in uem and \
+            'sig_strategy == "pullback_1m"' in uem:
+        _ok("execution gate applies the account R:R filter to pullbacks")
+    else:
+        _fail("execution gate does not filter pullbacks by account R:R")
+
+    try:
+        from backend.shared.user_execution_manager import UserExecutionManager
+
+        mgr = UserExecutionManager.__new__(UserExecutionManager)
+        mgr.user_id = 0
+        mgr.config = {"sl_pct": 0.03, "target_rr": 2.5}
+
+        good = {"entry_price": 100.0, "stop_loss": 98.0, "take_profit": 110.0}
+        if mgr._pullback_risk_ok(good):
+            _ok("setup inside account SL with enough room is accepted")
+        else:
+            _fail("good pullback was rejected")
+
+        wide = {"entry_price": 100.0, "stop_loss": 95.0, "take_profit": 110.0}
+        if not mgr._pullback_risk_ok(wide):
+            _ok("setup with structural SL beyond account SL is rejected")
+        else:
+            _fail("wide-stop pullback was accepted")
+
+        tight = {"entry_price": 100.0, "stop_loss": 98.0, "take_profit": 105.0}
+        if not mgr._pullback_risk_ok(tight):
+            _ok("setup without room to the account target is rejected")
+        else:
+            _fail("low-room pullback was accepted")
+    except Exception as e:
+        _fail(f"pullback risk filter synthetic check crashed: {e}")
+
+
 def test_trend_pullback_no_flip():
     print("\n=== Test: no CE/PE flip on a small pullback inside a trend ===")
 
@@ -1984,6 +2038,7 @@ def run_all_tests():
     test_strong_trend_only_signals()
     test_quick_scalp_phase_gate()
     test_range_fade_strategy()
+    test_pullback_quality_and_risk()
     test_trend_pullback_no_flip()
     test_terminal_chart_zoom_and_view_lock()
     test_terminal_voice_alerts()
