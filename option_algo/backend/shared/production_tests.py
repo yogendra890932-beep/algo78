@@ -1370,6 +1370,86 @@ def test_range_fade_strategy():
         _fail(f"range detector synthetic check crashed: {e}")
 
 
+def test_no_late_entry():
+    print("\n=== Test: no late entry in any strategy ===")
+
+    if not os.path.exists(os.path.join(BASE, "backend/shared/entry_timing.py")):
+        _fail("entry_timing guard module missing")
+        return
+
+    uem = _read_src("backend/shared/user_execution_manager.py")
+    if "_late_entry_reason(sig_symbol, signal)" in uem:
+        _ok("signal intake rejects late entries for every strategy")
+    else:
+        _fail("signal intake has no late-entry guard")
+
+    layer = _read_src("backend/services/execution_layer.py")
+    if "late_entry_reason(" in layer and "_live_ltp(eng, signal)" in layer:
+        _ok("fill-time check uses the freshest live LTP")
+    else:
+        _fail("fill-time late-entry check missing")
+    if "precheck_fn" in layer:
+        _ok("approval path can reject a late entry before marking APPROVED")
+    else:
+        _fail("approval precheck missing")
+    if '"timestamp": getattr(signal, "timestamp", None)' in layer:
+        _ok("pending trades persist the original signal time")
+    else:
+        _fail("pending trade payload drops the signal timestamp")
+
+    try:
+        from datetime import datetime, timedelta, timezone
+        from backend.shared.entry_timing import late_entry_reason
+
+        now = datetime.now(timezone.utc)
+        fresh = now.isoformat()
+
+        r = late_entry_reason(100.0, 95.0, None, 100.5, 0.05, 1.5,
+                              signal_ts=fresh, now=now, symbol="NIFTY")
+        if not r:
+            _ok("timely entry at the signal price is accepted")
+        else:
+            _fail(f"timely entry rejected: {r}")
+
+        r = late_entry_reason(100.0, 95.0, None, 102.0, 0.05, 1.5,
+                              signal_ts=fresh, now=now, symbol="NIFTY")
+        if "late entry" in r:
+            _ok("chasing entry beyond the drift budget is rejected")
+        else:
+            _fail(f"chasing entry accepted: {r!r}")
+
+        old = (now - timedelta(seconds=200)).isoformat()
+        r = late_entry_reason(100.0, 95.0, None, 100.1, 0.05, 1.5,
+                              signal_ts=old, now=now, symbol="NIFTY")
+        if "stale signal" in r:
+            _ok("stale signal is rejected")
+        else:
+            _fail(f"stale signal accepted: {r!r}")
+
+        r = late_entry_reason(100.0, 95.0, None, 94.5, 0.05, 1.5,
+                              signal_ts=fresh, now=now, symbol="NIFTY")
+        if "invalidated" in r:
+            _ok("entry below the stop is rejected")
+        else:
+            _fail(f"invalidated entry accepted: {r!r}")
+
+        r = late_entry_reason(100.0, 95.0, 110.0, 111.0, 0.05, 1.5,
+                              signal_ts=fresh, now=now, symbol="NIFTY")
+        if "at target" in r:
+            _ok("entry after the target is rejected")
+        else:
+            _fail(f"post-target entry accepted: {r!r}")
+
+        r = late_entry_reason(100.0, 95.0, None, None, 0.05, 1.5,
+                              signal_ts=fresh, now=now, symbol="NIFTY")
+        if not r:
+            _ok("missing live tick does not fabricate a rejection")
+        else:
+            _fail(f"missing LTP rejected: {r}")
+    except Exception as e:
+        _fail(f"late-entry guard synthetic check crashed: {e}")
+
+
 def test_pullback_quality_and_risk():
     print("\n=== Test: refined pullback accuracy + account R:R filter ===")
 
@@ -2038,6 +2118,7 @@ def run_all_tests():
     test_strong_trend_only_signals()
     test_quick_scalp_phase_gate()
     test_range_fade_strategy()
+    test_no_late_entry()
     test_pullback_quality_and_risk()
     test_trend_pullback_no_flip()
     test_terminal_chart_zoom_and_view_lock()

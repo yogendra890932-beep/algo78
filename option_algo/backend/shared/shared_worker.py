@@ -549,9 +549,29 @@ class SharedWorkerOrchestrator:
             return place_order_from_engines(
                 user_id, engines, signal, trade_id=trade_id)
 
+        def _late_precheck(signal):
+            """Reject approval when the signal is stale or price ran away."""
+            from backend.services.execution_layer import _live_ltp
+            from backend.shared.entry_timing import late_entry_reason
+            eng = next((e for e in engines
+                        if getattr(e, "symbol", None) == signal.symbol), None)
+            if eng is None:
+                return ""
+            return late_entry_reason(
+                signal.entry_price, signal.stop_loss, None,
+                _live_ltp(eng, signal),
+                float(eng.cfg.get("sl_pct", 0.05) or 0.05),
+                float(eng.cfg.get("target_rr", 1.5) or 1.5),
+                signal_ts=getattr(signal, "timestamp", None),
+                max_drift_frac=eng.cfg.get("late_entry_max_drift"),
+                max_age_sec=eng.cfg.get("late_entry_max_age_sec"),
+                symbol=signal.symbol,
+            )
+
         try:
             result = ptm.approve_sync(
-                trade_id, user_id, _place_order_from_signal)
+                trade_id, user_id, _place_order_from_signal,
+                precheck_fn=_late_precheck)
         except Exception as e:
             return {"ok": False, "error": f"Approval failed: {e}"}
 

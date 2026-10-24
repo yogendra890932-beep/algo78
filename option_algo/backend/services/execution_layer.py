@@ -50,6 +50,7 @@ from backend.db.models import (
 from backend.services.paper_trading import get_paper_book
 from backend.services.tick_size import round_to_tick
 from backend.services.audit_log import log_event
+from backend.shared.entry_timing import late_entry_reason
 
 
 # ================================================================
@@ -153,6 +154,48 @@ def _emit_entry_failed(eng, user_id: int, signal: TradeSignal,
         print(f"[execution_layer] failed to emit ORDER_ALERT: {e}")
 
 
+def _live_ltp(eng, signal: Optional[TradeSignal] = None) -> Optional[float]:
+    """Freshest LTP for the traded contract.
+
+    Shared mode answers signals from a symbol-level engine, so its
+    candle cache is seeded with the signal price and is NOT a live
+    quote — read the tick buffer for the exact instrument first.
+    """
+    ik = getattr(signal, "instrument_key", None) if signal else None
+    sym = getattr(eng, "symbol", "") or (getattr(signal, "symbol", "") if signal else "")
+    if ik:
+        try:
+            from backend.shared.market_data_service import read_latest_tick
+            tick = read_latest_tick(sym, ik)
+            if tick and tick.get("ltp"):
+                # Ignore a tick left over from a previous session.
+                ts = tick.get("timestamp")
+                stale = False
+                try:
+                    stale = bool(ts) and (time.time() - float(ts) > 90)
+                except (TypeError, ValueError):
+                    stale = False
+                if not stale:
+                    return float(tick["ltp"])
+        except Exception:
+            pass
+    try:
+        cur = getattr(eng, "_cur_candle", None)
+        if isinstance(cur, dict):
+            v = cur.get("close")
+            if v:
+                return float(v)
+    except Exception:
+        pass
+    try:
+        v = getattr(eng, "ltp", None)
+        if v:
+            return float(v)
+    except Exception:
+        pass
+    return None
+
+
 def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
                              trade_id: Optional[int] = None) -> Optional[str]:
     """
@@ -176,6 +219,26 @@ def place_order_from_engines(user_id: int, engines: list, signal: TradeSignal,
         seed = getattr(eng, "_seed_ltp", None)
         if seed and signal.entry_price:
             seed(signal.entry_price)
+
+        # No late entries (any strategy): re-check with the freshest LTP
+        # at the moment of the fill — this catches semi-auto approvals
+        # that arrive after the price already ran.
+        late = late_entry_reason(
+            signal.entry_price, signal.stop_loss, None, _live_ltp(eng, signal),
+            float(eng.cfg.get("sl_pct", 0.05) or 0.05),
+            float(eng.cfg.get("target_rr", 1.5) or 1.5),
+            signal_ts=getattr(signal, "timestamp", None),
+            max_drift_frac=eng.cfg.get("late_entry_max_drift"),
+            max_age_sec=eng.cfg.get("late_entry_max_age_sec"),
+            symbol=signal.symbol,
+        )
+        if late:
+            print(f"[execution_layer] LATE ENTRY BLOCKED user={user_id} "
+                  f"{signal.symbol} {signal.strategy_name or ''}: {late}")
+            _emit_entry_failed(
+                eng, user_id, signal, trade_id,
+                f"Late entry blocked: {late}")
+            return None
 
         num_lots = getattr(eng, "symbol_lots",
                            max(1, int(eng.cfg.get("order_qty", 1))))
@@ -815,6 +878,7 @@ class PendingTradeManager:
         trade_id: int,
         user_id: int,
         place_order_fn: Callable,
+        precheck_fn: Optional[Callable] = None,
     ) -> ExecutionResult:
         """
         Approve a pending trade and execute it.
@@ -863,6 +927,32 @@ class PendingTradeManager:
                 signal_data = json.loads(trade.signal_payload) if trade.signal_payload else {}
                 signal_data.setdefault("direction", "BUY")
                 signal = TradeSignal(**signal_data)
+
+                # Timeliness gate at approval time.
+                if precheck_fn is not None:
+                    try:
+                        reason = precheck_fn(signal) or ""
+                    except Exception as e:
+                        print(f"[execution_layer] precheck error: {e}")
+                        reason = ""
+                    if reason:
+                        trade.status = PendingTradeStatus.REJECTED
+                        trade.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                        db.add(trade)
+                        await log_event(
+                            db, user_id, "SIGNAL_REJECTED_LATE",
+                            f"Trade #{trade_id} rejected at approval: {reason}",
+                            metadata={"signal_id": trade.signal_id},
+                        )
+                        await db.commit()
+                        print(f"[execution_layer] PENDING #{trade_id} rejected "
+                              f"at approval — {reason}")
+                        return ExecutionResult(
+                            status=ExecutionStatus.REJECTED,
+                            message=f"Late entry blocked: {reason}",
+                            signal_id=trade.signal_id,
+                            pending_trade_id=trade_id,
+                        )
 
                 # Mark as approved
                 trade.status = PendingTradeStatus.APPROVED
@@ -1037,6 +1127,9 @@ class PendingTradeManager:
                 "instrument_key": signal.instrument_key,
                 "trading_symbol": signal.trading_symbol,
                 "regime": getattr(signal, "regime", None),
+                # Keep the original signal time so the fill-time guard can
+                # reject an approval that arrives too late.
+                "timestamp": getattr(signal, "timestamp", None),
             }
             
             trade = PendingTrade(
@@ -1070,6 +1163,7 @@ class PendingTradeManager:
         trade_id: int,
         user_id: int,
         place_order_fn: Callable,
+        precheck_fn: Optional[Callable] = None,
     ) -> 'ExecutionResult':
         """
         Synchronously approve a pending trade and execute it.
@@ -1114,6 +1208,28 @@ class PendingTradeManager:
                 signal_data = json.loads(trade.signal_payload) if trade.signal_payload else {}
                 signal_data.setdefault("direction", "BUY")
                 signal = TradeSignal(**signal_data)
+
+                # Timeliness gate at approval time: approving a signal
+                # whose price already ran must not place the order.
+                if precheck_fn is not None:
+                    try:
+                        reason = precheck_fn(signal) or ""
+                    except Exception as e:
+                        print(f"[execution_layer] precheck error: {e}")
+                        reason = ""
+                    if reason:
+                        trade.status = PendingTradeStatus.REJECTED
+                        trade.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                        db.add(trade)
+                        db.commit()
+                        print(f"[execution_layer] PENDING #{trade_id} rejected "
+                              f"at approval — {reason}")
+                        return ExecutionResult(
+                            status=ExecutionStatus.REJECTED,
+                            message=f"Late entry blocked: {reason}",
+                            signal_id=trade.signal_id,
+                            pending_trade_id=trade_id,
+                        )
 
                 # Mark as approved
                 trade.status = PendingTradeStatus.APPROVED

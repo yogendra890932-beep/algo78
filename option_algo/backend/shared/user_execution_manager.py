@@ -283,6 +283,42 @@ class UserExecutionManager:
         self._quick_scalp_checked_at = now
         return enabled
 
+    def _signal_live_price(self, symbol: str, signal: dict) -> Optional[float]:
+        """Live LTP for the signal's own option contract, if available."""
+        ik = signal.get("instrument_key")
+        if ik:
+            try:
+                from backend.shared.market_data_service import read_latest_tick
+                tick = read_latest_tick(symbol, ik)
+                if tick and tick.get("ltp"):
+                    # Ignore a tick left over from a previous session.
+                    ts = tick.get("timestamp")
+                    try:
+                        if ts and time.time() - float(ts) > 90:
+                            return self._last_ltp.get(symbol)
+                    except (TypeError, ValueError):
+                        pass
+                    return float(tick["ltp"])
+            except Exception:
+                pass
+        return self._last_ltp.get(symbol)
+
+    def _late_entry_reason(self, symbol: str, signal: dict) -> str:
+        """No late entries — same rule for every strategy."""
+        from backend.shared.entry_timing import late_entry_reason
+        return late_entry_reason(
+            signal.get("entry_price"),
+            signal.get("stop_loss"),
+            signal.get("take_profit"),
+            self._signal_live_price(symbol, signal),
+            float(self.config.get("sl_pct", 0.05) or 0.05),
+            float(self.config.get("target_rr", 1.5) or 1.5),
+            signal_ts=signal.get("timestamp"),
+            max_drift_frac=self.config.get("late_entry_max_drift"),
+            max_age_sec=self.config.get("late_entry_max_age_sec"),
+            symbol=symbol,
+        )
+
     def _pullback_risk_ok(self, signal: dict) -> bool:
         """Reject pullbacks whose structure cannot support the account R:R.
 
@@ -406,6 +442,14 @@ class UserExecutionManager:
         # inside the account stop and the room to the prior swing high
         # covers the account target.
         if sig_strategy == "pullback_1m" and not self._pullback_risk_ok(signal):
+            return
+
+        # No late entries in ANY strategy: reject stale signals and setups
+        # where the premium already ran away from the signal entry.
+        late = self._late_entry_reason(sig_symbol, signal)
+        if late:
+            print(f"{_now()} [exec:u{self.user_id}] Skip {sig_strategy} "
+                  f"{sig_symbol} — {late}")
             return
 
         # Risk check
