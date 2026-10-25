@@ -2199,12 +2199,13 @@ class SymbolEngine:
                   f"{ps.pullback.quality:.0f} < {pb_quality_threshold}")
             return
 
-        # ── 4. Premium Recovery Confirmed ─────────────────────────
-        # Recovery must be CONFIRMED (the premium has broken back above
-        # the pullback swing high/low).
+        # ── 4. Premium Recovery Underway or Confirmed ─────────────
+        # Accept ACTIVE as well as CONFIRMED: the premium structure
+        # engine clears the pullback context once the premium is back at
+        # the impulse highs, so a strict CONFIRMED-only gate never fired.
         from backend.engine.market_structure import RecoveryStatus as RecStatus
-        if ps.recovery.status != RecStatus.CONFIRMED:
-            print(_now(), f"[{self.symbol}][{label}] ❌ Recovery not confirmed: "
+        if ps.recovery.status not in (RecStatus.ACTIVE, RecStatus.CONFIRMED):
+            print(_now(), f"[{self.symbol}][{label}] ❌ Recovery not underway: "
                   f"{ps.recovery.status.value}")
             return
 

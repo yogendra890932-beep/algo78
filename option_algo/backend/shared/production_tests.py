@@ -1370,6 +1370,85 @@ def test_range_fade_strategy():
         _fail(f"range detector synthetic check crashed: {e}")
 
 
+def test_unified_strategy_reachable():
+    print("\n=== Test: unified strategy can actually fire ===")
+
+    ms = _read_src("backend/engine/market_structure.py")
+    if "keep the pullback context" in ms and "RecoveryStatus.ACTIVE" in ms:
+        _ok("structure engine keeps the pullback context while recovering")
+    else:
+        _fail("pullback context is wiped before recovery can confirm")
+
+    se = _read_src("backend/shared/strategy_engine.py")
+    unified = se.split("def _eval_unified_strategy(")[1].split("def ", 1)[0]
+    if 'not in ("ACTIVE", "CONFIRMED")' in unified:
+        _ok("shared unified accepts an ACTIVE recovery")
+    else:
+        _fail("shared unified still requires CONFIRMED only")
+
+    legacy = _read_src("backend/engine/engine_v6.py")
+    luni = legacy.split("def _eval_unified_strategy(")[1].split("\n    def ", 1)[0]
+    if "RecStatus.ACTIVE" in luni:
+        _ok("legacy unified accepts an ACTIVE recovery")
+    else:
+        _fail("legacy unified still requires CONFIRMED only")
+
+    mse = _read_src("backend/shared/market_structure_engine.py")
+    if "from backend.shared.redis_infra import (\n    STRUCTURE_TTL_SEC," in mse:
+        _ok("structure results use the 5-minute TTL, not the 5-second cache TTL")
+    else:
+        _fail("structure results still expire after 5 seconds")
+
+    try:
+        from backend.engine.market_structure import (
+            MarketStructureEngine, SwingPoint, SwingType, SwingLevel,
+            TrendDirection, PullbackType, RecoveryStatus,
+        )
+
+        e = MarketStructureEngine()
+        e.trend_direction = TrendDirection.BULLISH
+        e.global_index = 19
+        e.candles = [
+            {"open": 100, "high": 125, "low": 100, "close": 120, "volume": 100}
+        ] * 17 + [
+            {"open": 120, "high": 121, "low": 112, "close": 113, "volume": 100},
+            {"open": 113, "high": 124, "low": 112, "close": 122, "volume": 120},
+        ]
+        e.swing_lows = [SwingPoint(0, 100.0, SwingType.LOW, SwingLevel.MAJOR,
+                                   80, 80, 19, 0, 100)]
+        e.swing_highs = [
+            SwingPoint(10, 120.0, SwingType.HIGH, SwingLevel.MAJOR,
+                       80, 80, 9, 0, 100),
+            SwingPoint(18, 115.0, SwingType.HIGH, SwingLevel.MINOR,
+                       40, 40, 1, 0, 100),
+        ]
+        e.pullback_active = True
+        e.pullback_type = PullbackType.HEALTHY
+        e.pullback_start_idx = 17
+        e.pullback_duration = 2
+        e.pullback_max_depth = 40.0
+        e.recovery_status = RecoveryStatus.ACTIVE
+        e.recovery_start_idx = 17
+        e._analyze_pullback_recovery()
+        if (e.pullback_active and e.pullback_type.value == "HEALTHY"
+                and e.recovery_status.value == "CONFIRMED"):
+            _ok("pullback + CONFIRMED coexist on the confirmation bar")
+        else:
+            _fail(f"states do not coexist: pb={e.pullback_type.value} "
+                  f"rec={e.recovery_status.value}")
+
+        e.candles.append({"open": 122, "high": 126, "low": 121,
+                          "close": 125, "volume": 120})
+        e.global_index = 20
+        e._analyze_pullback_recovery()
+        if not e.pullback_active:
+            _ok("pullback context is not retained forever")
+        else:
+            _fail("pullback context never resets (would pin the phase)")
+    except Exception as e:
+        _fail(f"structure engine runtime check crashed: {e}")
+
+
 def test_no_late_entry():
     print("\n=== Test: no late entry in any strategy ===")
 
@@ -2118,6 +2197,7 @@ def run_all_tests():
     test_strong_trend_only_signals()
     test_quick_scalp_phase_gate()
     test_range_fade_strategy()
+    test_unified_strategy_reachable()
     test_no_late_entry()
     test_pullback_quality_and_risk()
     test_trend_pullback_no_flip()

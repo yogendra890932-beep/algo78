@@ -19,13 +19,13 @@ from typing import Optional
 from backend.shared.candle_builder import SharedCandleBuilder
 from backend.shared.option_premium_service import SharedOptionPremiumBuilder
 from backend.shared.redis_infra import (
+    STRUCTURE_TTL_SEC,
     shared_candle_close_channel,
     shared_premium_close_channel,
     shared_market_structure_1m,
     shared_market_structure_5m,
     shared_market_structure_state,
 )
-from backend.shared.shared_cache import STRUCTURE_TTL_SEC
 from backend.services.redis_client import get_redis_sync
 
 

@@ -757,10 +757,22 @@ class MarketStructureEngine:
                     else:
                         self.pullback_type = PullbackType.FAILED
                 else:
-                    self.pullback_active = False
-                    self.pullback_type = PullbackType.NONE
-                    self.pullback_max_depth = 0.0
-                    self.pullback_duration = 0
+                    # Price is back near the impulse highs. If a recovery
+                    # is underway/confirmed, keep the pullback context for
+                    # this bar so the recovery state machine can confirm
+                    # (and downstream strategies can observe
+                    # pullback+CONFIRMED together) instead of wiping the
+                    # pullback state one bar early.
+                    if self.pullback_active and self.pullback_type in (
+                            PullbackType.HEALTHY, PullbackType.DEEP,
+                            PullbackType.NESTED) and (
+                            self.recovery_status == RecoveryStatus.ACTIVE):
+                        self.pullback_duration += 1
+                    else:
+                        self.pullback_active = False
+                        self.pullback_type = PullbackType.NONE
+                        self.pullback_max_depth = 0.0
+                        self.pullback_duration = 0
                     
         elif self.trend_direction == TrendDirection.BEARISH:
             offset = max(0, len(self.candles) - (self.global_index - last_maj_h.index + 1))
@@ -786,10 +798,18 @@ class MarketStructureEngine:
                     else:
                         self.pullback_type = PullbackType.FAILED
                 else:
-                    self.pullback_active = False
-                    self.pullback_type = PullbackType.NONE
-                    self.pullback_max_depth = 0.0
-                    self.pullback_duration = 0
+                    # Same as the bullish branch: keep the pullback
+                    # context while a recovery is active/confirmed.
+                    if self.pullback_active and self.pullback_type in (
+                            PullbackType.HEALTHY, PullbackType.DEEP,
+                            PullbackType.NESTED) and (
+                            self.recovery_status == RecoveryStatus.ACTIVE):
+                        self.pullback_duration += 1
+                    else:
+                        self.pullback_active = False
+                        self.pullback_type = PullbackType.NONE
+                        self.pullback_max_depth = 0.0
+                        self.pullback_duration = 0
         else:
             self.pullback_active = False
             self.pullback_type = PullbackType.NONE

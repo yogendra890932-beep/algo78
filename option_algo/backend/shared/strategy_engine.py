@@ -743,7 +743,11 @@ class SharedStrategyEngine:
             return None
 
         rec_status = premium_structure.get("recovery", {}).get("status", "")
-        if rec_status != "CONFIRMED":
+        # The structure engine clears the pullback context as soon as the
+        # premium recovers back to the impulse highs, so demanding an
+        # exact CONFIRMED bar made this strategy unreachable. Accept a
+        # recovery that is ACTIVE (continuation underway) or CONFIRMED.
+        if rec_status not in ("ACTIVE", "CONFIRMED"):
             return None
 
         under_trend = underlying_structure.get("trend", "")
