@@ -2507,16 +2507,22 @@ function istParts() {
   return { h: d.getUTCHours(), m: d.getUTCMinutes(), s: d.getUTCSeconds() };
 }
 
-function updateCandleTimer() {
-  const el = $("candle-timer");
-  if (!el) return;
+function candleCountdown(tf) {
+  const tfMin = tf === "5m" ? 5 : 1;
   const { m, s } = istParts();
-  const tfMin = state.premiumTf === "5m" ? 5 : 1;
   const secondsInto = (m % tfMin) * 60 + s;
   const remaining = (secondsInto === 0 ? tfMin * 60 : tfMin * 60 - secondsInto);
   const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
   const ss = String(remaining % 60).padStart(2, "0");
-  el.textContent = "Candle " + tfMin + "m: " + mm + ":" + ss;
+  return "Candle " + tfMin + "m: " + mm + ":" + ss;
+}
+
+function updateCandleTimer() {
+  // Each chart has its own timeframe, so it also gets its own countdown.
+  const p = $("candle-timer");
+  if (p) p.textContent = candleCountdown(state.premiumTf);
+  const u = $("u-candle-timer");
+  if (u) u.textContent = candleCountdown(state.underlyingTf);
 }
 
 function esc(s) {

@@ -1798,6 +1798,25 @@ def test_terminal_independent_timeframes():
     else:
         _fail("underlying timeframe switch re-fits and moves the active candle")
 
+    # Candle countdown: each chart has its own timeframe, so it needs its own
+    # timer showing the time left in its forming candle.
+    if 'id="candle-timer"' in html and 'id="u-candle-timer"' in html:
+        _ok("both charts expose a candle countdown")
+    else:
+        _fail("underlying chart has no candle countdown")
+    prem_group = html.split('id="tf-group-premium"')[1].split("</div>")[0]
+    under_group = html.split('id="tf-group-underlying"')[1].split("</div>")[0]
+    if 'id="candle-timer"' in prem_group and 'id="u-candle-timer"' in under_group:
+        _ok("each countdown sits with its own timeframe selector")
+    else:
+        _fail("candle countdowns are not tied to their chart")
+    if "function candleCountdown(tf)" in js \
+            and "candleCountdown(state.premiumTf)" in js \
+            and "candleCountdown(state.underlyingTf)" in js:
+        _ok("countdown uses each chart's own timeframe")
+    else:
+        _fail("underlying countdown does not use the underlying timeframe")
+
 
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
