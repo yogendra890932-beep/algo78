@@ -1680,6 +1680,24 @@ def test_terminal_chart_zoom_and_view_lock():
         _ok("timeframe switch keeps the underlying chart view too")
     else:
         _fail("timeframe switch re-fits the underlying chart")
+
+    # A direction flip / strike roll swaps in a brand-new option contract.
+    # The visible window must be captured BEFORE the candles are cleared so
+    # the new premium chart renders with the active candle in the same place.
+    if "captureView() {" in js and "getVisibleLogicalRange()" in js.split("captureView() {")[1][:600]:
+        _ok("chart can snapshot the current visible window (auto-fit included)")
+    else:
+        _fail("chart cannot snapshot the current visible window")
+    state_msg = js.split('if (prevOpt && newOpt && newOpt !== prevOpt) {')[1][:400]
+    if "state.chart.captureView()" in state_msg:
+        _ok("option change (state msg) captures the view before clearing candles")
+    else:
+        _fail("option change (state msg) drops the chart view")
+    rolled = js.split("if (rolled) {")[1][:400]
+    if "state.chart.captureView()" in rolled:
+        _ok("option change (premium frame) captures the view before clearing candles")
+    else:
+        _fail("option change (premium frame) drops the chart view")
     if "this._lastFirst" not in js:
         _ok("legacy first-bar refit logic removed")
     else:

@@ -323,6 +323,9 @@ function handleWSMessage(m) {
         const newOpt = (state.premiumState && state.premiumState.trading_symbol) || null;
         state.chartOption = newOpt;
         if (prevOpt && newOpt && newOpt !== prevOpt) {
+          // New option contract = new premium chart: remember the current
+          // zoom/pan so the active candle stays in the same screen place.
+          if (state.chart) state.chart.captureView();
           state.premiumCandles = [];
           state.current = null;
           state.candles = premiumShownCandles();
@@ -445,6 +448,7 @@ function syncOptionIdentity(m) {
   state.premiumState = Object.assign({}, cur || {}, { trading_symbol: opt });
   if (m.instrument_key) state.premiumState.instrument_key = m.instrument_key;
   if (rolled) {
+    if (state.chart) state.chart.captureView();
     state.premiumCandles = [];
     state.current = null;
     state.candles = premiumShownCandles();
@@ -1358,22 +1362,37 @@ class LwcChart {
     this.bindPointerEvents();
   }
 
+  /* Snapshot the currently visible window (bars visible + gap from the
+     newest bar to the right edge) so it can be re-applied after the series
+     is swapped (timeframe switch, option roll / direction flip). Works for
+     auto-fit views too, so a chart the user never zoomed does not jump. */
+  captureView() {
+    if (!this.chart || this._lastIndex < 0) return;
+    try {
+      const r = this.chart.timeScale().getVisibleLogicalRange();
+      if (!r) return;
+      const span = r.to - r.from;
+      const rightGap = r.to - this._lastIndex;
+      if (!isFinite(span) || span <= 0 || !isFinite(rightGap)) return;
+      this._userRange = { span: span, rightGap: rightGap };
+    } catch (e) { }
+  }
+
   rebuildMain(keepView = false) {
     if (this.drag) {
       this.drag = null;
       this.hideDragPreview();
       this.setScrollLocked(false);
     }
-    // When switching timeframe we keep the forming candle in exactly the
-    // same screen spot: snapshot the CURRENT visible range (relative to the
-    // newest bar) before the series is rebuilt, then restore it in
-    // fullRender() even if the user had never zoomed (pure auto-fit).
+    // When switching timeframe (or swapping in a new option series) we keep
+    // the forming candle in exactly the same screen spot: snapshot the
+    // CURRENT visible range (relative to the newest bar) before the series is
+    // rebuilt, then restore it in fullRender() even if the user never zoomed
+    // (pure auto-fit view is captured too).
     let saved = this._userRange;
-    if (keepView && this.chart && this._lastIndex >= 0) {
-      try {
-        const r = this.chart.timeScale().getVisibleLogicalRange();
-        if (r) saved = { span: r.to - r.from, rightGap: r.to - this._lastIndex };
-      } catch (e) { }
+    if (keepView) {
+      this.captureView();
+      saved = this._userRange;
     }
     const old = this.series.main;
     if (old) {
