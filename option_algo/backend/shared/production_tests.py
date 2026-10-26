@@ -1665,21 +1665,21 @@ def test_terminal_chart_zoom_and_view_lock():
         _ok("premium chart no longer refits when the option symbol changes")
     else:
         _fail("premium chart still refits on option symbol change")
-    if "this._userRange = null;   // timeframe switch" in js:
-        _ok("timeframe switch resets the range for a fresh fit")
+    if "rebuildMain(keepView = false)" in js and "this._userRange = saved;" in js:
+        _ok("timeframe switch keeps the zoom + right gap instead of refitting")
     else:
-        _fail("timeframe switch does not reset the saved range")
+        _fail("timeframe switch does not keep the saved range")
 
     under = js.split("class UnderlyingChart")[1].split("Overlay: live position panel")[0]
-    if "resetView()" in under and "this._userRange.rightGap" in under \
+    if "preserveView()" in under and "this._userRange.rightGap" in under \
             and "setVisibleLogicalRange({ from: from, to: to })" in under:
         _ok("underlying chart mirrors the premium chart view logic")
     else:
         _fail("underlying chart does not mirror the premium chart view logic")
-    if "state.underlyingChart.resetView()" in js:
-        _ok("timeframe switch resets the underlying chart view too")
+    if "state.underlyingChart.preserveView()" in js:
+        _ok("timeframe switch keeps the underlying chart view too")
     else:
-        _fail("timeframe switch does not reset the underlying chart view")
+        _fail("timeframe switch re-fits the underlying chart")
     if "this._lastFirst" not in js:
         _ok("legacy first-bar refit logic removed")
     else:
@@ -1764,6 +1764,21 @@ def test_terminal_independent_timeframes():
         _ok("underlying timeframe selector is listed first")
     else:
         _fail("underlying timeframe selector is not first")
+
+    # Switching timeframe must keep the forming candle in the same spot:
+    # snapshot the current range, rebuild with keepView, then re-apply it.
+    if "rebuildMain(keepView = false)" in js and "getVisibleLogicalRange()" in js:
+        _ok("premium rebuild can snapshot the current visible range")
+    else:
+        _fail("premium rebuild cannot preserve the current range")
+    if "state.chart.rebuildMain(true)" in js:
+        _ok("premium timeframe switch keeps the current zoom/position")
+    else:
+        _fail("premium timeframe switch re-fits and moves the active candle")
+    if "preserveView()" in js and "state.underlyingChart.preserveView()" in js:
+        _ok("underlying timeframe switch keeps the current zoom/position")
+    else:
+        _fail("underlying timeframe switch re-fits and moves the active candle")
 
 
 def test_email_sender_branding():

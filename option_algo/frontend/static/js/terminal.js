@@ -1358,11 +1358,22 @@ class LwcChart {
     this.bindPointerEvents();
   }
 
-  rebuildMain() {
+  rebuildMain(keepView = false) {
     if (this.drag) {
       this.drag = null;
       this.hideDragPreview();
       this.setScrollLocked(false);
+    }
+    // When switching timeframe we keep the forming candle in exactly the
+    // same screen spot: snapshot the CURRENT visible range (relative to the
+    // newest bar) before the series is rebuilt, then restore it in
+    // fullRender() even if the user had never zoomed (pure auto-fit).
+    let saved = this._userRange;
+    if (keepView && this.chart && this._lastIndex >= 0) {
+      try {
+        const r = this.chart.timeScale().getVisibleLogicalRange();
+        if (r) saved = { span: r.to - r.from, rightGap: r.to - this._lastIndex };
+      } catch (e) { }
     }
     const old = this.series.main;
     if (old) {
@@ -1381,8 +1392,13 @@ class LwcChart {
     for (const k of Object.keys(this.overlay)) this.overlay[k] = null;
     this.zonePrimitive = null;
     this._zoneKey = "";
-    this._fitted = false;
-    this._userRange = null;   // timeframe switch → start from a fresh fit
+    if (keepView && saved) {
+      // Restore the same zoom (bars visible) + right gap → same place.
+      this._userRange = saved;
+    } else {
+      this._fitted = false;
+      this._userRange = null;   // timeframe switch → start from a fresh fit
+    }
     this.ensureZonePrimitive();
     this.renderPositionLines();
   }
@@ -1982,6 +1998,19 @@ class UnderlyingChart {
     this._fitted = false;
   }
 
+  preserveView() {
+    // Capture the current zoom/pan relative to the newest bar so the
+    // forming candle keeps its exact screen position across a timeframe
+    // switch (or any data swap). Works even when the user never zoomed.
+    if (!this.chart) return;
+    try {
+      const r = this.chart.timeScale().getVisibleLogicalRange();
+      if (r && this._lastIndex >= 0) {
+        this._userRange = { span: r.to - r.from, rightGap: r.to - this._lastIndex };
+      }
+    } catch (e) { }
+  }
+
   setData(candles) {
     if (!this.chart) return;
     const list = candles || [];
@@ -2359,7 +2388,9 @@ function switchPremiumTimeframe() {
   }
   state.candles = premiumShownCandles();
   prepareOverlays(state.candles);
-  if (state.chart) state.chart.rebuildMain();
+  // Keep the active/forming candle in the same on-screen position: reuse
+  // the current zoom + right gap instead of re-fitting the new series.
+  if (state.chart) state.chart.rebuildMain(true);
   if (state.chart) state.chart.fullRender();
 }
 
@@ -2368,7 +2399,8 @@ function switchUnderlyingTimeframe() {
     fetchSnapshot(state.selectedSymbol);
     return;
   }
-  if (state.underlyingChart) state.underlyingChart.resetView();
+  // Same as the premium chart: preserve the active candle's position.
+  if (state.underlyingChart) state.underlyingChart.preserveView();
   if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
 }
 
