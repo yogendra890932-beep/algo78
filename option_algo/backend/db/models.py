@@ -291,6 +291,31 @@ class PushSubscription(Base):
     user: Mapped[User] = relationship("User")
 
 
+class UserSession(Base):
+    """
+    One row per login (browser/device). Backs the sliding session policy:
+    a session stays valid as long as it is used at least once every
+    SESSION_IDLE_HOURS (48h) — after that the refresh token is rejected
+    and the user has to log in again.
+
+    Every authenticated API call and every /api/auth/refresh bumps
+    last_seen_at (throttled), so an active user is never logged out.
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255))
+    ip: Mapped[Optional[str]] = mapped_column(String(64))
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    user: Mapped[User] = relationship("User")
+
+
 # ================================================================
 # SUBSCRIPTION / BILLING / PAYMENT SYSTEM
 #

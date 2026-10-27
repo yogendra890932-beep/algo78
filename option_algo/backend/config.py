@@ -12,7 +12,13 @@ class Settings:
     SECRET_KEY: str                   = os.getenv("SECRET_KEY", "dev-secret-change-me-32chars-min!")
     ALGORITHM: str                    = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int  = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-    REFRESH_TOKEN_EXPIRE_DAYS: int    = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+    # Sliding session: every authenticated request / token refresh extends
+    # the session. Users who are active inside this window stay logged in
+    # indefinitely; after this much inactivity they must log in again.
+    SESSION_IDLE_HOURS: int           = int(os.getenv("SESSION_IDLE_HOURS", "48"))
+    # Refresh tokens are rotated on every refresh, so this only needs to
+    # cover one idle window (2 days = the 48h session idle limit).
+    REFRESH_TOKEN_EXPIRE_DAYS: int    = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "2"))
     FERNET_KEY: str                   = os.getenv("FERNET_KEY", "")
     DATABASE_URL: str                 = os.getenv("DATABASE_URL", "postgresql+asyncpg://algo_bot:algo_bot@localhost:5432/algo_bot")
     REDIS_URL: str                    = os.getenv("REDIS_URL", "redis://localhost:6379/0")

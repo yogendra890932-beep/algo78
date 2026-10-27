@@ -65,16 +65,89 @@ function getUserId() {
 }
 function getRole()   { return localStorage.getItem('role'); }
 
+// ── Sliding session (48h idle timeout) ──────────────────────────
+// Access tokens are short lived, so the page keeps itself signed in by
+// silently rotating them with the stored refresh token. The server only
+// rejects the refresh once the session has been idle for 48 hours, so an
+// active user is never logged out and a user returning after 48h has to
+// sign in again.
+
+function jwtPayload(token) {
+  try {
+    const b = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(b + '==='.slice((b.length + 3) % 4)));
+  } catch (e) { return null; }
+}
+
+function tokenExpired() {
+  const t = getToken();
+  if (!t) return true;
+  const p = jwtPayload(t);
+  return !p || !p.exp || p.exp * 1000 < Date.now();
+}
+
+let _refreshPromise = null;
+
+async function refreshSession() {
+  const rt = localStorage.getItem('refresh_token');
+  if (!rt) return false;
+  if (_refreshPromise) return _refreshPromise;
+  _refreshPromise = (async () => {
+    try {
+      const r = await fetch(API + '/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: rt })
+      });
+      if (!r.ok) return false;
+      const d = await r.json();
+      if (!d || !d.access_token) return false;
+      localStorage.setItem('access_token', d.access_token);
+      if (d.refresh_token) localStorage.setItem('refresh_token', d.refresh_token);
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+  return _refreshPromise;
+}
+
+let _refreshTimer = null;
+function scheduleTokenRefresh() {
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  const t = getToken();
+  const p = t ? jwtPayload(t) : null;
+  let ms = p && p.exp ? p.exp * 1000 - Date.now() - 60000 : 30 * 60 * 1000;
+  ms = Math.max(60000, Math.min(ms, 12 * 60 * 60 * 1000));
+  _refreshTimer = setTimeout(async () => {
+    await refreshSession();
+    scheduleTokenRefresh();
+  }, ms);
+}
+
 async function apiFetch(url, options = {}) {
-  const token = getToken();
-  options.headers = {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
-    ...(options.headers || {})
+  const doFetch = () => {
+    const token = getToken();
+    return fetch(API + url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+        ...(options.headers || {})
+      }
+    });
   };
   try {
-    const resp = await fetch(API + url, options);
-    if (resp.status === 401) { logout(); return null; }
+    let resp = await doFetch();
+    if (resp.status === 401) {
+      // Expired access token — rotate it and retry once before giving up.
+      if (!options._retried && await refreshSession()) {
+        resp = await doFetch();
+      }
+      if (resp.status === 401) { logout(); return null; }
+    }
     return resp;
   } catch (e) {
     console.error('API error:', e);
@@ -83,6 +156,15 @@ async function apiFetch(url, options = {}) {
 }
 
 function logout() {
+  const token = getToken();
+  try {
+    if (token) {
+      fetch(API + '/api/auth/logout', {
+        method: 'POST', keepalive: true,
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+    }
+  } catch (e) { }
   localStorage.clear();
   window.location.href = '/login';
 }
@@ -131,6 +213,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/login';
     return;
   }
+
+  // Keep an active session alive: rotate the access token before it
+  // expires (and immediately if this tab was left open past expiry).
+  // refreshSession() fails only when the session has been idle > 48h.
+  if (tokenExpired()) {
+    const ok = await refreshSession();
+    if (!ok) { logout(); return; }
+  }
+  scheduleTokenRefresh();
 
   // Fetch real role from server (cheap, needed for Admin nav link).
   // apiFetch returns null on 401 and calls logout() — that's safe here

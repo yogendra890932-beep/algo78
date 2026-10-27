@@ -43,6 +43,7 @@ from backend.db.models import User, BotConfig, UserRole
 from backend.services.auth_service import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
+    start_session, validate_session, revoke_session, revoke_user_sessions,
     get_current_user as get_current_user_dep,
 )
 from backend.services.email_service import (
@@ -119,12 +120,11 @@ async def _create_user_and_config(db: AsyncSession, email: str,
     return user
 
 
-def _issue_tokens(user: User) -> TokenOut:
-    data = {"sub": str(user.id)}
-    return TokenOut(
-        access_token  = create_access_token(data),
-        refresh_token = create_refresh_token(data),
-    )
+async def _issue_tokens(db: AsyncSession, user: User,
+                        request: Optional[Request] = None) -> TokenOut:
+    """Log the user in: create a sliding session + return fresh tokens."""
+    access, refresh = await start_session(db, user.id, request)
+    return TokenOut(access_token=access, refresh_token=refresh)
 
 
 async def _maybe_start_trial(db: AsyncSession, user: User, request: Optional[Request]) -> None:
@@ -158,7 +158,8 @@ async def _maybe_start_trial(db: AsyncSession, user: User, request: Optional[Req
 # ── REGISTER ────────────────────────────────────────────────────
 
 @router.post("/register", response_model=TokenOut)
-async def register(body: RegisterIn, db: AsyncSession = Depends(get_db)):
+async def register(body: RegisterIn, request: Request,
+                    db: AsyncSession = Depends(get_db)):
     # body.password / body.full_name / body.mobile_number are already
     # format-validated by RegisterIn (min length, mobile pattern) — a
     # malformed request never reaches here, FastAPI returns 422 first.
@@ -186,7 +187,7 @@ async def register(body: RegisterIn, db: AsyncSession = Depends(get_db)):
 
     # Return tokens immediately — user can explore the app but bot
     # start is blocked until is_active=True (email verified).
-    return _issue_tokens(user)
+    return await _issue_tokens(db, user, request)
 
 
 # ── LOGIN ────────────────────────────────────────────────────────
@@ -217,7 +218,7 @@ async def login(request: Request, form: OAuth2PasswordRequestForm = Depends(),
             db.add(user)
             await db.commit()
         await _maybe_start_trial(db, user, request)
-        return _issue_tokens(user)
+        return await _issue_tokens(db, user, request)
 
     if not user:
         raise HTTPException(401, "Invalid credentials")
@@ -235,7 +236,7 @@ async def login(request: Request, form: OAuth2PasswordRequestForm = Depends(),
     # First successful login after verification -> grant the one-time
     # 7-day paper-trading trial (no-op if already used).
     await _maybe_start_trial(db, user, request)
-    return _issue_tokens(user)
+    return await _issue_tokens(db, user, request)
 
 
 # ── EMAIL VERIFICATION ───────────────────────────────────────────
@@ -409,24 +410,50 @@ async def reset_password(body: dict, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
 
-    return _issue_tokens(user)
+    # A password reset invalidates every existing device session.
+    await revoke_user_sessions(db, user.id)
+    return await _issue_tokens(db, user)
 
 
 # ── TOKEN REFRESH ────────────────────────────────────────────────
 
 @router.post("/refresh", response_model=TokenOut)
-async def refresh(body: dict):
+async def refresh(body: dict, db: AsyncSession = Depends(get_db)):
+    """Rotate tokens while the session stays active.
+
+    A session that has been idle for more than SESSION_IDLE_HOURS (48h)
+    is rejected here, which is what forces a re-login after a long break.
+    """
     rt = body.get("refresh_token")
     if not rt:
         raise HTTPException(400, "refresh_token required")
     payload = decode_token(rt)
     if payload.get("type") != "refresh":
         raise HTTPException(401, "Invalid refresh token")
+    jti = payload.get("jti")
+    if jti and await validate_session(db, jti) is None:
+        raise HTTPException(401, "Session expired — please log in again")
     data = {"sub": payload["sub"]}
     return TokenOut(
-        access_token  = create_access_token(data),
-        refresh_token = create_refresh_token(data),
+        access_token  = create_access_token(data, jti=jti),
+        refresh_token = create_refresh_token(data, jti=jti),
     )
+
+
+@router.post("/logout")
+async def logout(request: Request, db: AsyncSession = Depends(get_db)):
+    """Revoke the current device session (best-effort)."""
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if token:
+        try:
+            payload = decode_token(token)
+            jti = payload.get("jti")
+            if jti:
+                await revoke_session(db, jti)
+        except HTTPException:
+            pass
+    return {"ok": True}
 
 
 # ── GOOGLE SIGN-IN ───────────────────────────────────────────────
@@ -552,7 +579,7 @@ async def google_callback(
     # paper-trading trial (no-op if already used).
     await _maybe_start_trial(db, user, None)
 
-    tokens = _issue_tokens(user)
+    tokens = await _issue_tokens(db, user)
 
     # Redirect to dashboard with tokens in URL — JS reads and removes them
     params = urllib.parse.urlencode({

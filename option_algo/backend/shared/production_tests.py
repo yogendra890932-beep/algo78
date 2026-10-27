@@ -1818,6 +1818,96 @@ def test_terminal_independent_timeframes():
         _fail("underlying countdown does not use the underlying timeframe")
 
 
+def test_sliding_session_48h():
+    print("\n=== Test: sessions slide for 48h of activity, then require re-login ===")
+
+    cfg = _read_src("backend/config.py")
+    if 'SESSION_IDLE_HOURS: int           = int(os.getenv("SESSION_IDLE_HOURS", "48"))' in cfg:
+        _ok("session idle window defaults to 48 hours")
+    else:
+        _fail("session idle window is not 48 hours")
+    if 'REFRESH_TOKEN_EXPIRE_DAYS: int    = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "2"))' in cfg:
+        _ok("refresh token TTL matches one idle window (2 days)")
+    else:
+        _fail("refresh token TTL is not tied to the idle window")
+
+    models = _read_src("backend/db/models.py")
+    if 'class UserSession(Base):' in models and '"user_sessions"' in models \
+            and "last_seen_at" in models and "jti" in models and "revoked" in models:
+        _ok("per-device session table stores jti / last_seen / revoked")
+    else:
+        _fail("no per-device session table")
+
+    svc = _read_src("backend/services/auth_service.py")
+    for fn in ("start_session", "validate_session", "touch_session",
+               "revoke_session", "revoke_user_sessions"):
+        if f"async def {fn}(" not in svc:
+            _fail(f"auth service is missing {fn}()")
+            break
+    else:
+        _ok("auth service creates, validates, slides and revokes sessions")
+    if 'timedelta(hours=settings.SESSION_IDLE_HOURS)' in svc:
+        _ok("a session is invalid once idle past the 48h window")
+    else:
+        _fail("idle expiry is not enforced from SESSION_IDLE_HOURS")
+    if 'jti = payload.get("jti")' in svc and "if jti and not await touch_session" in svc:
+        _ok("every authenticated request slides the session")
+    else:
+        _fail("authenticated requests do not slide the session")
+    if '"nonce": secrets.token_urlsafe(8)' in svc:
+        _ok("refresh tokens rotate to a new value on every refresh")
+    else:
+        _fail("refresh token rotation can return the same token")
+
+    router = _read_src("backend/routers/auth.py")
+    if 'async def _issue_tokens(db: AsyncSession, user: User' in router \
+            and "await start_session(db, user.id, request)" in router:
+        _ok("login / register / google / reset all open a session")
+    else:
+        _fail("token issuing does not open a session")
+    refresh_fn = router.split('@router.post("/refresh"')[1].split("@router.")[0]
+    if "validate_session(db, jti) is None" in refresh_fn:
+        _ok("/refresh rejects a session idle past 48h")
+    else:
+        _fail("/refresh accepts expired sessions")
+    if '@router.post("/logout")' in router and "await revoke_session(db, jti)" in router:
+        _ok("logout revokes the device session")
+    else:
+        _fail("logout does not revoke the session")
+    if "await revoke_user_sessions(db, user.id)" in router:
+        _ok("password reset revokes every device session")
+    else:
+        _fail("password reset leaves old sessions alive")
+
+    base = _read_src("frontend/templates/base.html")
+    if "async function refreshSession()" in base and "/api/auth/refresh" in base:
+        _ok("pages rotate the access token silently")
+    else:
+        _fail("pages never refresh the access token")
+    if "if (!options._retried && await refreshSession())" in base:
+        _ok("a 401 refreshes and retries instead of logging out")
+    else:
+        _fail("a 401 logs the user out immediately")
+    if "function scheduleTokenRefresh()" in base and "scheduleTokenRefresh();" in base:
+        _ok("active tabs keep refreshing before the token expires")
+    else:
+        _fail("active tabs never refresh proactively")
+    if "if (tokenExpired()) {" in base and "if (!ok) { logout(); return; }" in base:
+        _ok("an expired tab re-logins only when the session really ended")
+    else:
+        _fail("expired tabs are not recovered by a refresh")
+
+    js = _read_src("frontend/static/js/terminal.js")
+    if "async function refreshSession()" in js and "await refreshSession()" in js:
+        _ok("terminal rotates the access token too")
+    else:
+        _fail("terminal does not refresh the access token")
+    if "setInterval(() => { refreshSession(); }" in js:
+        _ok("long-open terminal keeps sliding the session")
+    else:
+        _fail("terminal session stops sliding")
+
+
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
 
@@ -2241,6 +2331,7 @@ def run_all_tests():
     test_partial_lot_reduce()
     test_single_pending_and_60s_approval()
     test_seo_and_indexing()
+    test_sliding_session_48h()
     test_email_sender_branding()
     test_watchlist_lot_size()
     test_lot_size_table_current()

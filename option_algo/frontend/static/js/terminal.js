@@ -19,22 +19,80 @@ function getUserId() {
     return p.sub || null;
   } catch (e) { return null; }
 }
+/* ── Sliding session (48h idle timeout) ──
+   Access tokens are short lived, so the terminal rotates them silently
+   with the stored refresh token. The server rejects the refresh only
+   after 48h of inactivity, so an active user is never signed out. */
+function jwtPayload(token) {
+  try {
+    const b = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b + "===".slice((b.length + 3) % 4)));
+  } catch (e) { return null; }
+}
+let _refreshPromise = null;
+async function refreshSession() {
+  const rt = localStorage.getItem("refresh_token");
+  if (!rt) return false;
+  if (_refreshPromise) return _refreshPromise;
+  _refreshPromise = (async () => {
+    try {
+      const r = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt })
+      });
+      if (!r.ok) return false;
+      const d = await r.json();
+      if (!d || !d.access_token) return false;
+      localStorage.setItem("access_token", d.access_token);
+      if (d.refresh_token) localStorage.setItem("refresh_token", d.refresh_token);
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+  return _refreshPromise;
+}
 async function apiFetch(url, options) {
   options = options || {};
-  const token = getToken();
-  options.headers = Object.assign({
-    "Content-Type": "application/json"
-  }, (token ? { "Authorization": "Bearer " + token } : {}), (options.headers || {}));
+  const doFetch = () => {
+    const token = getToken();
+    return fetch(url, Object.assign({}, options, {
+      headers: Object.assign({
+        "Content-Type": "application/json"
+      }, (token ? { "Authorization": "Bearer " + token } : {}), (options.headers || {}))
+    }));
+  };
   try {
-    const resp = await fetch(url, options);
-    if (resp.status === 401) { logout(); return null; }
+    let resp = await doFetch();
+    if (resp.status === 401) {
+      // Expired access token — rotate and retry once, then give up.
+      if (!options._retried && await refreshSession()) {
+        resp = await doFetch();
+      }
+      if (resp.status === 401) { logout(); return null; }
+    }
     return resp;
   } catch (e) {
     console.error("API error:", e);
     return null;
   }
 }
-function logout() { localStorage.clear(); window.location.href = "/login"; }
+function logout() {
+  const token = getToken();
+  try {
+    if (token) {
+      fetch("/api/auth/logout", {
+        method: "POST", keepalive: true,
+        headers: { "Authorization": "Bearer " + token }
+      });
+    }
+  } catch (e) { }
+  localStorage.clear();
+  window.location.href = "/login";
+}
 
 /* ─────────────── Global state ─────────────── */
 const TICK_SIZE = 0.05; // NSE/BSE equity-option premium tick size
@@ -271,12 +329,19 @@ function handleSnapshot(m) {
 }
 
 /* ─────────────── WS ─────────────── */
-function connectWS() {
+async function connectWS() {
   if (!state.botRunning) return;   // no bot → no feed
   const uid = getUserId();
+  if (!uid) { redirectLogin(); return; }
+  if (tokenExpired()) {
+    // Silent refresh keeps long-open terminals signed in; it only fails
+    // once the session has been idle for 48 hours.
+    const ok = await refreshSession();
+    if (!ok) { redirectLogin(); return; }
+  }
+  if (!state.botRunning) return;
   const token = getToken();
-  if (!uid || !token) { redirectLogin(); return; }
-  if (tokenExpired()) { redirectLogin(); return; }
+  if (!token) { redirectLogin(); return; }
   const proto = location.protocol === "https:" ? "wss://" : "ws://";
   const ws = new WebSocket(proto + location.host + "/terminal/ws?user_id=" + encodeURIComponent(uid) + "&token=" + encodeURIComponent(token));
   state.ws = ws;
@@ -2540,10 +2605,8 @@ function redirectLogin() {
 function tokenExpired() {
   const t = getToken();
   if (!t) return true;
-  try {
-    const p = JSON.parse(atob(t.split(".")[1]));
-    return !p.exp || p.exp * 1000 < Date.now();
-  } catch (e) { return true; }
+  const p = jwtPayload(t);
+  return !p || !p.exp || p.exp * 1000 < Date.now();
 }
 
 /* ─────────────── Quick Scalp ─────────────── */
@@ -2695,6 +2758,8 @@ document.addEventListener("DOMContentLoaded", () => {
   updateCandleTimer();
   setInterval(updateCandleTimer, 1000);
   setInterval(refreshBotStatus, 15000);   // idle: notice a start elsewhere
+  // Keep the session sliding while the terminal stays open all day.
+  setInterval(() => { refreshSession(); }, 25 * 60 * 1000);
   loadBootstrap();
 });
 
