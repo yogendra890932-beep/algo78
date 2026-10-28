@@ -1421,7 +1421,11 @@ class LwcChart {
     try {
       this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (this._applying || !range || this._lastIndex < 0) return;
-        this._userRange = { span: range.to - range.from, rightGap: range.to - this._lastIndex };
+        const span = range.to - range.from;
+        // Ignore the transient reset range lightweight-charts emits while a
+        // series is emptied/swapped — it would overwrite the saved view.
+        if (!isFinite(span) || span < 2) return;
+        this._userRange = { span: span, rightGap: range.to - this._lastIndex };
       });
     } catch (e) { }
     this.bindPointerEvents();
@@ -1548,8 +1552,24 @@ class LwcChart {
         try { ts.fitContent(); } catch (e) { }
       }
     }
-    this._applying = false;
+    // A new option contract can sit at a very different premium level, so
+    // re-fit the PRICE axis to the new candles while leaving the time axis
+    // exactly where it was (same zoom, same position).
+    try { this.chart.priceScale("right").applyOptions({ autoScale: true }); } catch (e) { }
+    try {
+      if (this.series.main) this.series.main.priceScale().applyOptions({ autoScale: true });
+    } catch (e) { }
+    this._releaseApply();
     renderLegend(candles.length ? num(candles[candles.length - 1].close) : null);
+  }
+
+  /* Release the "applying a range" guard on the next frame: the chart's
+     visible-range callback can fire asynchronously after setData(), and a
+     late callback must not clobber the view we just restored. */
+  _releaseApply() {
+    const done = () => { this._applying = false; };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(done);
+    else setTimeout(done, 16);
   }
 
   updateLive() {
@@ -2078,7 +2098,9 @@ class UnderlyingChart {
     try {
       this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (this._applying || !range || this._lastIndex < 0) return;
-        this._userRange = { span: range.to - range.from, rightGap: range.to - this._lastIndex };
+        const span = range.to - range.from;
+        if (!isFinite(span) || span < 2) return;
+        this._userRange = { span: span, rightGap: range.to - this._lastIndex };
       });
     } catch (e) { }
   }
@@ -2123,7 +2145,10 @@ class UnderlyingChart {
         try { ts.fitContent(); } catch (e) { }
       }
     }
-    this._applying = false;
+    try { this.chart.priceScale("right").applyOptions({ autoScale: true }); } catch (e) { }
+    const done = () => { this._applying = false; };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(done);
+    else setTimeout(done, 16);
   }
 
   updateLive(candles) {

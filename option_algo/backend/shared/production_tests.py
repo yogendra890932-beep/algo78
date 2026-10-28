@@ -1698,6 +1698,21 @@ def test_terminal_chart_zoom_and_view_lock():
         _ok("option change (premium frame) captures the view before clearing candles")
     else:
         _fail("option change (premium frame) drops the chart view")
+
+    # The restored view must survive the chart's own async range callbacks,
+    # and the price axis must re-fit to the new contract's premium level.
+    if "if (!isFinite(span) || span < 2) return;" in js:
+        _ok("transient reset ranges cannot clobber the restored view")
+    else:
+        _fail("a reset range can overwrite the restored view")
+    if "requestAnimationFrame(done)" in js and "_releaseApply()" in js:
+        _ok("range guard released on the next frame (async callbacks ignored)")
+    else:
+        _fail("range guard is released synchronously (late callback can win)")
+    if 'this.chart.priceScale("right").applyOptions({ autoScale: true })' in js:
+        _ok("price axis re-fits vertically after the contract swap")
+    else:
+        _fail("price axis keeps the old contract scale")
     if "this._lastFirst" not in js:
         _ok("legacy first-bar refit logic removed")
     else:
