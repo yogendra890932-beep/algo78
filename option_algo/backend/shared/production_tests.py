@@ -1095,7 +1095,47 @@ def test_seo_and_indexing():
     else:
         _fail("sitemap still lists the noindex login page")
 
+    if '("/about", 0.6, "monthly")' in seo:
+        _ok("about page is in the sitemap")
+    else:
+        _fail("about page missing from the sitemap")
+
     main_src = _read_src("backend/main.py")
+    if '@app.get("/about", response_class=HTMLResponse)' in main_src \
+            and 'TemplateResponse("about.html"' in main_src:
+        _ok("/about route serves the About page")
+    else:
+        _fail("/about route missing")
+    if "/about" not in main_src.split("_NOINDEX_PREFIXES")[1].split(")")[0]:
+        _ok("about page is indexable (not in the noindex list)")
+    else:
+        _fail("about page is marked noindex")
+    about_html = _read_src("frontend/templates/about.html")
+    for needle, label in [
+        ('<link rel="canonical" href="{{ site_url | default(\'https://optiscalper.com\') }}/about">', "canonical URL"),
+        ('name="description"', "meta description"),
+        ('name="robots" content="index, follow"', "indexable robots meta"),
+        ('property="og:title"', "Open Graph title"),
+        ("Risk Disclosure", "risk disclosure"),
+        ("support@optiscalper.com", "support contact"),
+        ('href="/terms"', "terms link"),
+        ('href="/privacy"', "privacy link"),
+    ]:
+        if needle in about_html:
+            _ok(f"about page has {label}")
+        else:
+            _fail(f"about page missing {label}")
+    landing_src = _read_src("frontend/templates/landing.html")
+    if 'href="/about"' in landing_src:
+        _ok("landing page links to the About page")
+    else:
+        _fail("landing page has no About link")
+    priv = _read_src("frontend/templates/privacy.html")
+    if 'href="/about"' in priv:
+        _ok("legal pages link to the About page")
+    else:
+        _fail("legal pages do not link to About")
+
     if "from backend.routers.seo import router as seo_router" in main_src and "app.include_router(seo_router)" in main_src:
         _ok("SEO router is registered on the app")
     else:

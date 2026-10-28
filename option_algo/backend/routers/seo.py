@@ -43,6 +43,7 @@ _DISALLOW = [
 # (authenticated shell) and would otherwise conflict with the sitemap.
 _PUBLIC_PAGES = [
     ("/", 1.0, "daily"),
+    ("/about", 0.6, "monthly"),
     ("/terms", 0.3, "yearly"),
     ("/privacy", 0.3, "yearly"),
     ("/refund", 0.3, "yearly"),

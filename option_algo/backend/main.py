@@ -256,6 +256,10 @@ async def trading_terminal(request: Request):
 async def reset_password_page(request: Request):
     return templates.TemplateResponse("reset_password.html", {"request": request})
 
+@app.get("/about", response_class=HTMLResponse)
+async def about_page(request: Request):
+    return templates.TemplateResponse("about.html", {"request": request})
+
 @app.get("/terms", response_class=HTMLResponse)
 async def terms_page(request: Request):
     return templates.TemplateResponse("terms.html", {"request": request})
