@@ -1908,6 +1908,69 @@ def test_sliding_session_48h():
         _fail("terminal session stops sliding")
 
 
+def test_manual_trailing_uses_live_premium():
+    print("\n=== Test: manual trailing SL is validated against the live premium ===")
+
+    price = _read_src("backend/shared/engine_price.py")
+    if "def engine_premium_price(" in price and '"ltp", "_ltp"' in price \
+            and "_last_ltp" in price:
+        _ok("engine premium price helper (shared + legacy engines)")
+    else:
+        _fail("no helper to read an engine's live premium")
+
+    js = _read_src("frontend/static/js/terminal.js")
+    sl_branch = js.rsplit('if (kind === "sl") {', 1)[1][:1400]
+    if "const live = pos ? livePrice(pos) : null;" in sl_branch \
+            and "SL must stay below the premium price" in sl_branch \
+            and "SL must stay below entry" not in sl_branch:
+        _ok("chart drag validates SL against the current premium, not the entry")
+    else:
+        _fail("chart drag still blocks trailing above entry")
+    if "SELL SL must stay above the premium price" in sl_branch \
+            and "SELL SL must stay above entry" not in sl_branch:
+        _ok("SELL side mirrors the same rule (SL above live premium)")
+    else:
+        _fail("SELL trailing rule missing")
+
+    router = _read_src("backend/routers/terminal.py")
+    if "async def _find_open_position_ctx(" in router and 'p.get("opt_ltp")' in router:
+        _ok("/api/terminal/order gets the live premium from the snapshot")
+    else:
+        _fail("order endpoint has no live premium to validate against")
+    if "_validate_level(action, value, ctx[\"position\"], ctx.get(\"ltp\"))" in router:
+        _ok("order endpoint validates SL against the live premium")
+    else:
+        _fail("order endpoint still validates against the entry")
+    if "SL must stay below the premium price" in router:
+        _ok("server rejects only the wrong side of the live price")
+    else:
+        _fail("server SL rule not updated")
+
+    sw = _read_src("backend/shared/shared_worker.py")
+    if "engine_premium_price(eng, entry)" in sw \
+            and "SL must be below entry" not in sw:
+        _ok("shared worker trailing uses the live premium")
+    else:
+        _fail("shared worker still rejects SL above entry")
+    lw = _read_src("worker.py")
+    if "engine_premium_price(eng, entry)" in lw \
+            and "SL must be below entry" not in lw:
+        _ok("legacy worker trailing uses the live premium")
+    else:
+        _fail("legacy worker still rejects SL above entry")
+    tg = _read_src("backend/services/telegram_bot.py")
+    if "engine_premium_price(eng, entry)" in tg \
+            and "must be below entry" not in tg:
+        _ok("telegram /sl uses the live premium too")
+    else:
+        _fail("telegram /sl still rejects SL above entry")
+
+    if "Manual trailing is validated against the CURRENT premium" in _read_src("backend/routers/terminal.py"):
+        _ok("trailing intent documented on the server")
+    else:
+        _fail("trailing intent not documented")
+
+
 def test_email_sender_branding():
     print("\n=== Test: User mail is sent From support@optiscalper.com ===")
 
@@ -2332,6 +2395,7 @@ def run_all_tests():
     test_single_pending_and_60s_approval()
     test_seo_and_indexing()
     test_sliding_session_48h()
+    test_manual_trailing_uses_live_premium()
     test_email_sender_branding()
     test_watchlist_lot_size()
     test_lot_size_table_current()

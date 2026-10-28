@@ -1969,11 +1969,17 @@ function validateLevel(kind, value, d) {
     effTgt = value;
   }
   if (kind === "sl") {
+    // Manual trailing is validated against the CURRENT premium price, not
+    // the entry: once the premium has moved in our favour the stop may be
+    // trailed past the entry to lock in profit. It just may never sit on
+    // the wrong side of the live price (that would trigger instantly).
+    const live = pos ? livePrice(pos) : null;
+    const ref = live != null ? live : entry;
     if (side === "SELL") {
-      if (value <= entry) return { valid: false, reason: "SELL SL must stay above entry " + fmt(entry) };
+      if (value <= ref) return { valid: false, reason: "SELL SL must stay above the premium price " + fmt(ref) };
       if (tgt != null && value <= tgt) return { valid: false, reason: "SELL SL must stay above target " + fmt(tgt) };
     } else {
-      if (value >= entry) return { valid: false, reason: "SL must stay below entry " + fmt(entry) };
+      if (value >= ref) return { valid: false, reason: "SL must stay below the premium price " + fmt(ref) };
       if (tgt != null && value >= tgt) return { valid: false, reason: "SL must stay below target " + fmt(tgt) };
     }
   } else {

@@ -45,6 +45,7 @@ from backend.db.database import init_db, AsyncSessionLocal, close_db
 from backend.db.models import BotConfig, BotStatus, Trade, TradeStatus
 from backend.services.bot_manager import bot_manager, set_main_loop
 from backend.services.bot_config_builder import resolve_start_inputs
+from backend.shared.engine_price import engine_premium_price
 from backend.services.command_queue import pop_command_sync, post_result_sync
 from backend.services.event_bus import publish_event_sync
 from backend.services.state_store import set_bot_status_sync, clear_bot_status_sync
@@ -383,8 +384,17 @@ def _handle_modify_sl(user_id: int, payload: dict) -> dict:
         if not pos:
             continue
         entry = pos.get("entry_price", 0)
-        if new_sl >= entry:
-            errors.append(f"{eng.symbol}: SL must be below entry {entry}")
+        # Trailing is validated against the LIVE premium, not the entry: the
+        # stop may be trailed past the entry to lock in profit, it just may
+        # never sit on the wrong side of the current premium price.
+        ref = engine_premium_price(eng, entry) or entry
+        side = str(pos.get("side") or "BUY").upper()
+        wrong_side = (new_sl <= ref) if side == "SELL" else (new_sl >= ref)
+        if wrong_side:
+            errors.append(
+                f"{eng.symbol}: SL must stay "
+                + ("above" if side == "SELL" else "below")
+                + f" the premium price {ref}")
             continue
         try:
             eng._modify_sl_from_telegram(new_sl)

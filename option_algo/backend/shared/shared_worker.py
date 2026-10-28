@@ -51,6 +51,7 @@ from backend.shared.market_data_service import (
     SharedMarketDataService, update_global_streamer_token,
 )
 from backend.shared.candle_builder import SharedCandleBuilder
+from backend.shared.engine_price import engine_premium_price
 from backend.shared.indicator_engine import SharedIndicatorEngine
 from backend.shared.market_structure_engine import (
     SharedMarketStructureEngine,
@@ -652,8 +653,17 @@ class SharedWorkerOrchestrator:
             if not pos:
                 continue
             entry = pos.get("entry_price", 0)
-            if new_sl >= entry:
-                errors.append(f"{eng.symbol}: SL must be below entry Rs{entry}")
+            # Trailing is validated against the LIVE premium (not the entry)
+            # so a stop may be trailed past the entry to lock in profit; it
+            # just may never sit on the wrong side of the current price.
+            ref = engine_premium_price(eng, entry) or entry
+            side = str(pos.get("side") or "BUY").upper()
+            wrong_side = (new_sl <= ref) if side == "SELL" else (new_sl >= ref)
+            if wrong_side:
+                errors.append(
+                    f"{eng.symbol}: SL must stay "
+                    + ("above" if side == "SELL" else "below")
+                    + f" the premium price Rs{ref}")
                 continue
             try:
                 eng.modify_sl(new_sl)

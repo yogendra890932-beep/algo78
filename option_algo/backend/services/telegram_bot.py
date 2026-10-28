@@ -24,6 +24,8 @@ import requests
 from datetime import datetime
 from typing import Optional, Callable
 
+from backend.shared.engine_price import engine_premium_price
+
 _now = lambda: datetime.now().strftime("%H:%M:%S")
 
 
@@ -130,9 +132,16 @@ def _handle_sl(user_id: int, bot_token: str, chat_id: str, args: list):
             continue
         old_sl = pos.get("sl_trigger", 0)
         entry  = pos.get("entry_price", 0)
-        if new_sl >= entry:
+        # Trailing is validated against the live premium, so the stop can be
+        # trailed past the entry to lock in profit.
+        ref  = engine_premium_price(eng, entry) or entry
+        side = str(pos.get("side") or "BUY").upper()
+        wrong_side = (new_sl <= ref) if side == "SELL" else (new_sl >= ref)
+        if wrong_side:
             _tg_send(bot_token, chat_id,
-                     f"❌ SL ₹{new_sl} must be below entry ₹{entry}")
+                     f"❌ SL ₹{new_sl} must stay "
+                     + ("above" if side == "SELL" else "below")
+                     + f" the premium price ₹{ref}")
             continue
         # Modify via engine method
         try:

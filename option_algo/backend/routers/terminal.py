@@ -84,6 +84,21 @@ async def _find_open_position(user_id: int, symbol: str) -> Optional[dict]:
     return None
 
 
+async def _find_open_position_ctx(user_id: int, symbol: str) -> Optional[dict]:
+    """Like _find_open_position but keeps the live premium LTP from the
+    snapshot wrapper (`opt_ltp`), which SL trailing validation needs."""
+    symbol = (symbol or "").upper()
+    snap = await state_store.get_positions(user_id)
+    for p in snap.get("positions", []) or []:
+        pos = p.get("position") if isinstance(p, dict) and "position" in p else p
+        if not isinstance(pos, dict):
+            continue
+        if str((pos or {}).get("symbol", "")).upper() == symbol:
+            ltp = p.get("opt_ltp") if isinstance(p, dict) else None
+            return {"position": pos, "ltp": ltp}
+    return None
+
+
 async def _acquire_modify_lock(user_id: int, symbol: str, level: str) -> bool:
     """Per-user / per-symbol / per-level concurrency guard.
 
@@ -99,11 +114,18 @@ async def _acquire_modify_lock(user_id: int, symbol: str, level: str) -> bool:
         return True  # fail-open only on Redis unavailability
 
 
-def _validate_level(action: str, value: float, pos: dict):
+def _validate_level(action: str, value: float, pos: dict,
+                    ltp: Optional[float] = None):
     """Side-aware price validation for SL / Target modifications.
 
     Engine positions are long (BUY) premium; rules are still written for
     both sides so a short position is handled correctly too.
+
+    Manual trailing is validated against the CURRENT premium price, not the
+    entry: once the premium has moved in our favour the stop may be trailed
+    anywhere below (BUY) / above (SELL) the live price — including past the
+    entry to lock in profit. It just may never sit on the wrong side of the
+    live price (that would trigger instantly) or of the target.
     """
     try:
         entry = float(pos.get("entry_price"))
@@ -122,16 +144,21 @@ def _validate_level(action: str, value: float, pos: dict):
 
     tgt = _f(pos.get("target"))
     sl = _f(pos.get("sl_trigger"))
+    # Reference price for trailing = live premium, falling back to entry
+    # while no tick has arrived yet.
+    ref = _f(ltp)
+    if ref is None or ref <= 0:
+        ref = entry
 
     if action == "modify_sl":
         if side == "SELL":
-            if value <= entry:
-                return False, f"SELL SL must stay above entry {entry}"
+            if value <= ref:
+                return False, f"SELL SL must stay above the premium price {ref}"
             if tgt is not None and value <= tgt:
                 return False, f"SELL SL must stay above target {tgt}"
         else:
-            if value >= entry:
-                return False, f"SL must stay below entry {entry}"
+            if value >= ref:
+                return False, f"SL must stay below the premium price {ref}"
             if tgt is not None and value >= tgt:
                 return False, f"SL must stay below target {tgt}"
     else:  # modify_target
@@ -241,11 +268,11 @@ async def terminal_order(
         if not await _acquire_modify_lock(user.id, symbol, level):
             raise HTTPException(429, "Another SL/Target modification is already in progress")
 
-        pos = await _find_open_position(user.id, symbol)
-        if pos is None:
+        ctx = await _find_open_position_ctx(user.id, symbol)
+        if ctx is None:
             raise HTTPException(404, f"No open position found for {symbol}")
 
-        ok, reason = _validate_level(action, value, pos)
+        ok, reason = _validate_level(action, value, ctx["position"], ctx.get("ltp"))
         if not ok:
             raise HTTPException(400, reason)
 
