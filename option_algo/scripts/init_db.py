@@ -28,6 +28,9 @@ settings = get_settings()
 NEW_COLUMNS = [
     ("bot_configs", "paper_mode", "BOOLEAN DEFAULT 1"),
     ("bot_configs", "execution_mode", "VARCHAR(20) DEFAULT 'PAPER'"),
+    # Trailing-stop mode: "atr" (default) or "swing" (speed-adaptive swing
+    # low on the 1-minute premium chart).
+    ("bot_configs", "trail_mode", "VARCHAR(10) DEFAULT 'atr'"),
     ("bot_configs", "telegram_bot_token", "VARCHAR(100)"),
     ("bot_configs", "telegram_bot_chat_id", "VARCHAR(50)"),
     ("bot_configs", "telegram_on_entry", "BOOLEAN DEFAULT 1"),

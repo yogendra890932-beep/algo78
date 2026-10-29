@@ -125,6 +125,11 @@ class UserExecutionManager:
         # never trails it.
         self._trail_enabled: dict[str, bool] = {}
 
+        # Trailing mode from the bot config: "atr" (default) or "swing"
+        # (speed-adaptive swing low on the 1m premium chart).
+        self._trail_mode: str = str(
+            (self.config or {}).get("trail_mode") or "atr").lower()
+
         # Last position-snapshot push timestamp per symbol (throttle).
         self._snap_ts: dict[str, float] = {}
 
@@ -971,11 +976,29 @@ class UserExecutionManager:
         except Exception as e:
             print(f"{_now()} [exec:u{self.user_id}] Snap push err: {e}")
 
+    def _trail_candidate(self, sym: str, ltp: float, df) -> float:
+        """Next trailing level for the configured trail mode."""
+        if self._trail_mode == "swing":
+            from backend.shared.swing_trail import swing_low_stop
+            lvl, why = swing_low_stop(df)
+            if lvl is None:
+                return 0.0
+            print(f"{_now()} [exec:u{self.user_id}] SWING {sym} {why} -> {lvl}")
+            return float(lvl)
+        # Default: ATR(7) x 1.2 on the premium chart.
+        tr = (df["high"] - df["low"]).rolling(7).mean().iloc[-1]
+        atr_val = float(tr)
+        if pd.isna(atr_val) or atr_val <= 0:
+            return 0.0
+        return float(ltp - atr_val * 1.2)
+
     def _maybe_trail(self, sym: str, ltp: float):
         """
-        ATR(7) x 1.2 trailing SL on the option-premium chart
-        (mirrors legacy engine_v6._maybe_trail). Only the position's own
-        premium contract data is used — index data is never mixed in.
+        Trailing SL on the option-premium chart (mirrors legacy
+        engine_v6._maybe_trail). Trail mode comes from the bot config:
+        "atr" (ATR 7 x 1.2) or "swing" (speed-adaptive swing low on the
+        1m premium candles). Only the position's own premium contract data
+        is used — index data is never mixed in.
         """
         if not self._trail_enabled.get(sym, True):
             return
@@ -984,17 +1007,16 @@ class UserExecutionManager:
         try:
             from backend.shared.option_premium_service import SharedOptionPremiumBuilder
             df = SharedOptionPremiumBuilder.get_1m_df(sym)
-            if df.empty or len(df) < 8:
+            if df is None or df.empty or len(df) < 8:
                 return
-            df["TR"] = df["high"] - df["low"]
-            atr_val = float(df["TR"].rolling(7).mean().iloc[-1])
-            if pd.isna(atr_val) or atr_val <= 0:
+            proposed = self._trail_candidate(sym, ltp, df)
+            if not proposed:
                 return
         except Exception as e:
             print(f"{_now()} [exec:u{self.user_id}] Trail {sym} err: {e}")
             return
 
-        proposed = round_to_tick(ltp - atr_val * 1.2)
+        proposed = round_to_tick(proposed)
         cur = self._trailing_sl.get(sym, 0)
         if proposed <= cur or proposed >= ltp:
             return
@@ -1628,6 +1650,7 @@ class UserExecutionManager:
                     "symbol":         sym,
                     "mode":           "paper" if self.paper_mode else "live",
                     "paused":         self._paused.is_set(),
+                    "trail_mode":     self._trail_mode,
                     "opt_ltp":        ltp,
                     "opt_type":       pos.get("opt_type"),
                     "strike":         pos.get("strike"),

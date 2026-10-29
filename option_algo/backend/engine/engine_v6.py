@@ -2845,7 +2845,9 @@ class SymbolEngine:
 
     def _maybe_trail(self, ltp: float):
         """
-        ATR(7) x 1.2 trailing SL using SL-L.
+        Trailing SL using SL-L. Mode from cfg["trail_mode"]:
+          atr   -> ATR(7) x 1.2 below the premium
+          swing -> speed-adaptive swing low on the 1m premium candles
         SL-M banned for NSE/BSE options.
         limit_price = trigger x 0.995
         """
@@ -2853,10 +2855,18 @@ class SymbolEngine:
         with self._df_lock:
             df = self.opt_df.copy()
         if len(df) < 8: return
-        df["TR"] = df["high"] - df["low"]
-        atr_val  = float(df["TR"].rolling(7).mean().iloc[-1])
-        if pd.isna(atr_val) or atr_val <= 0: return
-        proposed = round(ltp - atr_val*1.2, 2)
+        mode = str((self.cfg or {}).get("trail_mode") or "atr").lower()
+        if mode == "swing":
+            from backend.shared.swing_trail import swing_low_stop
+            lvl, why = swing_low_stop(df)
+            if lvl is None: return
+            print(_now(), f"[{self.symbol}] SWING {why} -> {lvl}")
+            proposed = round(lvl, 2)
+        else:
+            df["TR"] = df["high"] - df["low"]
+            atr_val  = float(df["TR"].rolling(7).mean().iloc[-1])
+            if pd.isna(atr_val) or atr_val <= 0: return
+            proposed = round(ltp - atr_val*1.2, 2)
         if proposed <= self.trailing_sl or proposed >= ltp: return
         if abs((proposed-self.trailing_sl)/self.trailing_sl) < 0.0006: return
         old_sl      = self.trailing_sl

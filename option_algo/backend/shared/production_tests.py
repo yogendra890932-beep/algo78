@@ -2416,6 +2416,106 @@ def test_underlying_zero_volume_guard():
 # ================================================================
 
 
+
+def test_swing_low_trail_mode():
+    print("\n=== Test: swing-low trail mode (1m premium) ===")
+
+    from backend.shared.swing_trail import (
+        classify_speed, swing_low_stop,
+    )
+
+    if classify_speed(10, 5) == "fast" and classify_speed(1, 5) == "slow" \
+            and classify_speed(5, 5) == "medium":
+        _ok("market speed classifier (fast / slow / medium)")
+    else:
+        _fail("speed classifier thresholds wrong")
+
+    # Steady history: body of 4 on every bar, so the next candle's body
+    # is measured against a 4-point average.
+    hist = []
+    for i in range(12):
+        base = 100 + i * 4
+        hist.append({"open": base, "high": base + 5, "low": base - 1,
+                     "close": base + 4, "volume": 1})
+    # Bearish candle with a distinctive low, then the last candle varies.
+    hist.append({"open": 160, "high": 161, "low": 155.25, "close": 156,
+                 "volume": 1})
+
+    # Medium: last green body 5.2 (1.3x the average) -> strong enough to
+    # step up, but not "fast" -> trail the bearish candle it broke out of.
+    med = list(hist)
+    med.append({"open": 156, "high": 162, "low": 155.75, "close": 161.2,
+                "volume": 1})
+    lvl, why = swing_low_stop(med)
+    if lvl == 155.25 and "strong green" in why:
+        _ok("medium move: trails the bearish candle low after a strong green")
+    else:
+        _fail(f"medium-move stop wrong: {lvl!r} ({why})")
+
+    # Slow drift: 0.5 body -> the last bearish candle low.
+    slow = list(hist)
+    slow.append({"open": 156, "high": 156.6, "low": 155.4, "close": 156.5,
+                 "volume": 1})
+    lvl, why = swing_low_stop(slow)
+    if lvl == 155.25 and "slow" in why:
+        _ok("slow market: trails the last bearish candle low")
+    else:
+        _fail(f"slow-move stop wrong: {lvl!r} ({why})")
+
+    # Fast expansion: 20-point green body -> its own low.
+    fast = list(hist)
+    fast.append({"open": 156, "high": 177, "low": 155.6, "close": 176,
+                 "volume": 1})
+    lvl, why = swing_low_stop(fast)
+    if lvl == 155.6 and "fast" in why:
+        _ok("fast move: trails the big green candle low")
+    else:
+        _fail(f"fast-move stop wrong: {lvl!r} ({why})")
+
+    # Slow red candle -> bearish structure is the last candle itself.
+    red = list(hist)
+    red.append({"open": 156, "high": 157, "low": 153.5, "close": 154,
+                "volume": 1})
+    lvl, why = swing_low_stop(red)
+    if lvl == 153.5 and "slow" in why:
+        _ok("slow red candle: trails its own (bearish) low")
+    else:
+        _fail(f"slow red candle stop wrong: {lvl!r} ({why})")
+
+    if swing_low_stop([])[0] is None and swing_low_stop(hist[:5])[0] is None:
+        _ok("no stop with insufficient history")
+    else:
+        _fail("swing trail produced a level without history")
+
+    # Wiring: both engines must honour the configured mode.
+    um = _read_src("backend/shared/user_execution_manager.py")
+    if 'self._trail_mode' in um and "swing_low_stop" in um \
+            and "def _trail_candidate(" in um:
+        _ok("shared user engine dispatches on trail_mode")
+    else:
+        _fail("shared user engine ignores trail_mode")
+
+    eng = _read_src("backend/engine/engine_v6.py")
+    if 'cfg or {}).get("trail_mode")' in eng and "swing_low_stop" in eng:
+        _ok("legacy engine_v6 dispatches on trail_mode")
+    else:
+        _fail("legacy engine_v6 ignores trail_mode")
+
+    builder = _read_src("backend/services/bot_config_builder.py")
+    router = _read_src("backend/routers/all_routers.py")
+    if '"trail_mode": cfg.trail_mode or "atr"' in builder \
+            and 'must be \'atr\' or \'swing\'' in router:
+        _ok("trail_mode plumbed into the bot config and validated on save")
+    else:
+        _fail("trail_mode not plumbed/validated")
+
+    initdb = _read_src("scripts/init_db.py")
+    if '("bot_configs", "trail_mode"' in initdb:
+        _ok("existing databases get the trail_mode column")
+    else:
+        _fail("init_db does not migrate trail_mode")
+
+
 def run_all_tests():
     global PASS, FAIL
     PASS = 0
@@ -2451,6 +2551,7 @@ def run_all_tests():
     test_seo_and_indexing()
     test_sliding_session_48h()
     test_manual_trailing_uses_live_premium()
+    test_swing_low_trail_mode()
     test_email_sender_branding()
     test_watchlist_lot_size()
     test_lot_size_table_current()

@@ -578,6 +578,12 @@ async def update_config(
             if not ok:
                 raise HTTPException(403, reason)
 
+    if "trail_mode" in fields:
+        mode = str(fields["trail_mode"] or "atr").strip().lower()
+        if mode not in ("atr", "swing"):
+            raise HTTPException(400, "trail_mode must be 'atr' or 'swing'")
+        fields["trail_mode"] = mode
+
     for field, value in fields.items():
         setattr(cfg, field, value)
 
