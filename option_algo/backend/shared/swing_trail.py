@@ -1,32 +1,22 @@
-"""Swing-low trailing stop on the 1-minute premium chart.
+"""Structure-aware swing-low trailing stop on the 1-minute premium chart.
 
 Selected with `trail_mode = "swing"` (Settings → Trail Mode → Swing Low).
-The stop follows the structure of completed 1-minute candles, adapting to
-how fast the premium is moving:
 
-  slow   (small candle)        -> last bearish candle's LOW
-  fast   (big green candle)    -> that green candle's LOW
-  medium (in between)          -> last bearish candle's LOW, but only once
-                                  a strong green candle has completed
+Rules:
+  1. Trail below the most recent confirmed swing low.
+  2. If price breaks above the last swing high (resistance), trail below that
+     broken resistance level (now acting as support).
+  3. Only move the stop up (never down), and never to/above the live premium.
 
-"Speed" is the size of the last completed candle's body relative to the
-average body of the previous bars. The returned level is a *candidate*:
-callers only move the stop up (never down) and never to/above the live
-premium price.
+A swing high/low is confirmed when price makes a higher high/lower low with
+at least N intervening bars (default 2) to avoid false breaks.
 """
 from __future__ import annotations
-from typing import Iterable, Optional, Sequence
-
-# Body vs average-body thresholds (ratio).
-FAST_X = 1.5      # >= 1.5x average body  -> fast move
-SLOW_X = 0.7      # <= 0.7x average body  -> slow move
-STRONG_X = 1.2    # >= 1.2x average body  -> "strong" green candle
-AVG_WINDOW = 10   # bars used for the average body
-BEARISH_LOOKBACK = 6
+from typing import Iterable, Optional, Sequence, Tuple
 
 
 def _rows(candles) -> list[dict]:
-    """Normalise a DataFrame / list of bars into a list of dicts."""
+    """Normalize a DataFrame / list of bars into a list of dicts."""
     if candles is None:
         return []
     try:
@@ -45,79 +35,110 @@ def _f(v) -> Optional[float]:
     return f
 
 
-def classify_speed(body: float, avg_body: float,
-                   fast_x: float = FAST_X, slow_x: float = SLOW_X) -> str:
-    """'fast' | 'slow' | 'medium' for the last completed candle."""
-    if not avg_body or avg_body <= 0:
-        return "medium"
-    ratio = abs(body) / avg_body
-    if ratio >= fast_x:
-        return "fast"
-    if ratio <= slow_x:
-        return "slow"
-    return "medium"
+def _find_pivot_highs_lows(
+    rows: Sequence[dict], left: int = 2, right: int = 2
+) -> Tuple[list[Tuple[int, float]], list[Tuple[int, float]]]:
+    """Find confirmed pivot highs and lows (index, price).
 
+    A pivot high has the highest 'high' among `left` bars before and `right`
+    bars after. A pivot low has the lowest 'low' in the same window.
+    """
+    highs, lows = [], []
+    if len(rows) < left + right + 1:
+        return highs, lows
 
-def _last_bearish_low(rows: Sequence[dict], lookback: int) -> Optional[float]:
-    """Low of the most recent bearish (close < open) candle."""
-    for bar in reversed(list(rows)[-lookback:]):
-        o, c, low = _f(bar.get("open")), _f(bar.get("close")), _f(bar.get("low"))
-        if o is None or c is None or low is None:
+    for i in range(left, len(rows) - right):
+        cur_bar = rows[i]
+        cur_high = _f(cur_bar.get("high"))
+        cur_low = _f(cur_bar.get("low"))
+        if cur_high is None or cur_low is None:
             continue
-        if c < o:
-            return low
-    return None
+
+        # Check if this is a pivot high
+        is_high = True
+        for j in range(i - left, i + right + 1):
+            if j == i:
+                continue
+            h = _f(rows[j].get("high"))
+            if h is not None and h >= cur_high:
+                is_high = False
+                break
+        if is_high:
+            highs.append((i, cur_high))
+
+        # Check if this is a pivot low
+        is_low = True
+        for j in range(i - left, i + right + 1):
+            if j == i:
+                continue
+            l = _f(rows[j].get("low"))
+            if l is not None and l <= cur_low:
+                is_low = False
+                break
+        if is_low:
+            lows.append((i, cur_low))
+
+    return highs, lows
 
 
-def swing_low_stop(candles, avg_window: int = AVG_WINDOW,
-                   fast_x: float = FAST_X, slow_x: float = SLOW_X,
-                   strong_x: float = STRONG_X,
-                   lookback: int = BEARISH_LOOKBACK) -> tuple[Optional[float], str]:
+def swing_low_stop(
+    candles,
+    left: int = 2,
+    right: int = 2,
+    min_bars: int = 6,
+) -> Tuple[Optional[float], str]:
     """Candidate trailing stop (and why) for a long premium position.
 
-    `candles` must be COMPLETED 1-minute premium candles, oldest first
-    (SharedOptionPremiumBuilder.get_1m_df already returns exactly that).
+    `candles` must be COMPLETED 1-minute premium candles, oldest first.
     Returns (None, reason) when the stop should stay where it is.
+
+    Logic:
+      1. Find confirmed pivot highs and lows.
+      2. Use the most recent pivot low as the base trailing level.
+      3. If the current price has broken above the most recent pivot high
+         (resistance), trail below that broken resistance instead.
+      4. Return the higher of the two levels (more conservative trailing).
     """
     rows = _rows(candles)
-    if len(rows) < avg_window + 2:
+    if len(rows) < min_bars:
         return None, "insufficient history"
 
-    last = rows[-1]
-    o, c, low = _f(last.get("open")), _f(last.get("close")), _f(last.get("low"))
-    if o is None or c is None or low is None:
-        return None, "bad candle"
+    highs, lows = _find_pivot_highs_lows(rows, left, right)
 
-    bodies = []
-    for bar in rows[-(avg_window + 1):-1]:          # exclude the last bar itself
-        bo, bc = _f(bar.get("open")), _f(bar.get("close"))
-        if bo is None or bc is None:
-            continue
-        bodies.append(abs(bc - bo))
-    if not bodies:
-        return None, "no body history"
-    avg_body = sum(bodies) / len(bodies)
-    if avg_body <= 0:
-        return None, "flat history"
+    if not lows:
+        return None, "no swing lows found"
 
-    body = c - o
-    speed = classify_speed(body, avg_body, fast_x, slow_x)
+    # Most recent confirmed swing low
+    last_low_idx, last_low = lows[-1]
 
-    if speed == "slow":
-        # Slow grind: the bears' lows are the only structure worth using.
-        lvl = _last_bearish_low(rows, lookback)
-        return (lvl, "slow: bearish candle low") if lvl is not None else (None, "slow: no bearish candle")
+    # Current live price (use the last candle's close as proxy)
+    last_bar = rows[-1]
+    current_price = _f(last_bar.get("close")) or _f(last_bar.get("high")) or 0.0
+    if current_price <= 0:
+        return None, "no current price"
 
-    if speed == "fast":
-        # Fast expansion: a big green candle's own low is the tightest
-        # structure that is still safe.
-        if body > 0 and body >= fast_x * avg_body:
-            return low, "fast: big green candle low"
-        return None, "fast: hold (no big green candle)"
+    # Default trail level = last swing low
+    trail_level = last_low
+    reason = f"swing low at {trail_level:.2f}"
 
-    # Medium: only step up once a strong green candle has COMPLETED, and
-    # then to the low of the bearish candle it broke out of.
-    if body > 0 and body >= strong_x * avg_body:
-        lvl = _last_bearish_low(rows[:-1], lookback)
-        return (lvl, "medium: bearish low after strong green") if lvl is not None else (None, "medium: no bearish candle")
-    return None, "medium: hold"
+    # Check if price has broken above any recent swing high
+    if highs:
+        last_high_idx, last_high = highs[-1]
+
+        # If price is above the last swing high, use that as the trail level
+        # (broken resistance becomes support)
+        if current_price > last_high:
+            # Trail below the broken resistance
+            if last_high > trail_level:
+                trail_level = last_high
+                reason = f"broken resistance at {trail_level:.2f}"
+
+        # Look for more recent swing highs after the last swing low
+        for idx, high_val in reversed(highs):
+            if idx > last_low_idx and current_price > high_val:
+                if high_val > trail_level:
+                    trail_level = high_val
+                    reason = f"broken swing high at {trail_level:.2f}"
+                break
+
+    return trail_level, reason

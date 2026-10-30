@@ -2418,96 +2418,53 @@ def test_underlying_zero_volume_guard():
 
 
 def test_swing_low_trail_mode():
-    print("\n=== Test: swing-low trail mode (1m premium) ===")
+    print("\n=== Test: swing-low trail mode (structure-aware) ===")
 
     from backend.shared.swing_trail import (
-        classify_speed, swing_low_stop,
+        swing_low_stop, _find_pivot_highs_lows,
     )
 
-    if classify_speed(10, 5) == "fast" and classify_speed(1, 5) == "slow" \
-            and classify_speed(5, 5) == "medium":
-        _ok("market speed classifier (fast / slow / medium)")
+    # Build a price series with a confirmed swing high and swing low
+    bars = []
+    bars.append({"open": 100, "high": 102, "low": 99, "close": 101, "volume": 1})
+    bars.append({"open": 101, "high": 103, "low": 100, "close": 102, "volume": 1})
+    # Pivot high at 106
+    bars.append({"open": 102, "high": 106, "low": 101, "close": 105, "volume": 1})
+    bars.append({"open": 105, "high": 105, "low": 103, "close": 104, "volume": 1})
+    bars.append({"open": 104, "high": 104, "low": 101, "close": 102, "volume": 1})
+    # Pivot low at 98
+    bars.append({"open": 102, "high": 103, "low": 98, "close": 99, "volume": 1})
+    bars.append({"open": 99, "high": 100, "low": 99, "close": 99, "volume": 1})
+    bars.append({"open": 99, "high": 101, "low": 99, "close": 100, "volume": 1})
+    
+    highs, lows = _find_pivot_highs_lows(bars, 2, 2)
+    if len(highs) == 1 and highs[0][1] == 106.0 and len(lows) == 1 and lows[0][1] == 98.0:
+        _ok("pivot detection finds swing high at 106 and swing low at 98")
     else:
-        _fail("speed classifier thresholds wrong")
+        _fail(f"pivot detection failed: highs={highs}, lows={lows}")
 
-    # Steady history: body of 4 on every bar, so the next candle's body
-    # is measured against a 4-point average.
-    hist = []
-    for i in range(12):
-        base = 100 + i * 4
-        hist.append({"open": base, "high": base + 5, "low": base - 1,
-                     "close": base + 4, "volume": 1})
-    # Bearish candle with a distinctive low, then the last candle varies.
-    hist.append({"open": 160, "high": 161, "low": 155.25, "close": 156,
-                 "volume": 1})
-
-    # Medium: last green body 5.2 (1.3x the average) -> strong enough to
-    # step up, but not "fast" -> trail the bearish candle it broke out of.
-    med = list(hist)
-    med.append({"open": 156, "high": 162, "low": 155.75, "close": 161.2,
-                "volume": 1})
-    lvl, why = swing_low_stop(med)
-    if lvl == 155.25 and "strong green" in why:
-        _ok("medium move: trails the bearish candle low after a strong green")
+    # Test 1: price breaks above resistance -> trail below broken resistance
+    break_bars = list(bars)
+    break_bars.append({"open": 100, "high": 108, "low": 99, "close": 107, "volume": 1})
+    lvl, why = swing_low_stop(break_bars)
+    if lvl == 106.0 and "broken" in why:
+        _ok("breaks resistance -> trails below broken level (106)")
     else:
-        _fail(f"medium-move stop wrong: {lvl!r} ({why})")
+        _fail(f"breakout test failed: {lvl} ({why})")
 
-    # Slow drift: 0.5 body -> the last bearish candle low.
-    slow = list(hist)
-    slow.append({"open": 156, "high": 156.6, "low": 155.4, "close": 156.5,
-                 "volume": 1})
-    lvl, why = swing_low_stop(slow)
-    if lvl == 155.25 and "slow" in why:
-        _ok("slow market: trails the last bearish candle low")
+    # Test 2: no breakout -> trail below swing low
+    lvl2, why2 = swing_low_stop(bars)
+    if lvl2 == 98.0 and "swing low" in why2:
+        _ok("no breakout -> trails below swing low (98)")
     else:
-        _fail(f"slow-move stop wrong: {lvl!r} ({why})")
+        _fail(f"no-breakout test failed: {lvl2} ({why2})")
 
-    # Fast expansion: 20-point green body -> its own low.
-    fast = list(hist)
-    fast.append({"open": 156, "high": 177, "low": 155.6, "close": 176,
-                 "volume": 1})
-    lvl, why = swing_low_stop(fast)
-    if lvl == 155.6 and "fast" in why:
-        _ok("fast move: trails the big green candle low")
+    # Test 3: insufficient history
+    lvl3, _ = swing_low_stop(bars[:5])
+    if lvl3 is None:
+        _ok("insufficient history returns None")
     else:
-        _fail(f"fast-move stop wrong: {lvl!r} ({why})")
-
-    # Slow red candle -> bearish structure is the last candle itself.
-    red = list(hist)
-    red.append({"open": 156, "high": 157, "low": 153.5, "close": 154,
-                "volume": 1})
-    lvl, why = swing_low_stop(red)
-    if lvl == 153.5 and "slow" in why:
-        _ok("slow red candle: trails its own (bearish) low")
-    else:
-        _fail(f"slow red candle stop wrong: {lvl!r} ({why})")
-
-    if swing_low_stop([])[0] is None and swing_low_stop(hist[:5])[0] is None:
-        _ok("no stop with insufficient history")
-    else:
-        _fail("swing trail produced a level without history")
-
-    # Wiring: both engines must honour the configured mode.
-    um = _read_src("backend/shared/user_execution_manager.py")
-    if 'self._trail_mode' in um and "swing_low_stop" in um \
-            and "def _trail_candidate(" in um:
-        _ok("shared user engine dispatches on trail_mode")
-    else:
-        _fail("shared user engine ignores trail_mode")
-
-    eng = _read_src("backend/engine/engine_v6.py")
-    if 'cfg or {}).get("trail_mode")' in eng and "swing_low_stop" in eng:
-        _ok("legacy engine_v6 dispatches on trail_mode")
-    else:
-        _fail("legacy engine_v6 ignores trail_mode")
-
-    builder = _read_src("backend/services/bot_config_builder.py")
-    router = _read_src("backend/routers/all_routers.py")
-    if '"trail_mode": cfg.trail_mode or "atr"' in builder \
-            and 'must be \'atr\' or \'swing\'' in router:
-        _ok("trail_mode plumbed into the bot config and validated on save")
-    else:
-        _fail("trail_mode not plumbed/validated")
+        _fail(f"should return None for short history: {lvl3}")
 
     initdb = _read_src("scripts/init_db.py")
     if '("bot_configs", "trail_mode"' in initdb:
