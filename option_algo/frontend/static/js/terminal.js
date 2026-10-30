@@ -1388,6 +1388,10 @@ class LwcChart {
         fontSize: 11,
         attributionLogo: false
       },
+      animation: {
+        timing: LightweightCharts.AnimationTiming.EaseOut,
+        duration: 300
+      },
       grid: {
         vertLines: { color: "rgba(46,58,88,0.35)" },
         horzLines: { color: "rgba(46,58,88,0.35)" }
@@ -2039,6 +2043,10 @@ class UnderlyingChart {
         textColor: "#8b99be",
         fontSize: 11,
         attributionLogo: false
+      },
+      animation: {
+        timing: LightweightCharts.AnimationTiming.EaseOut,
+        duration: 300
       },
       grid: {
         vertLines: { color: "rgba(46,58,88,0.35)" },
