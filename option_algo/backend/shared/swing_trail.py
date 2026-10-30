@@ -5,8 +5,11 @@ Selected with `trail_mode = "swing"` (Settings → Trail Mode → Swing Low).
 Rules:
   1. Trail below the most recent confirmed swing low.
   2. If price breaks above the last swing high (resistance), trail below that
-     broken resistance level (now acting as support).
-  3. Only move the stop up (never down), and never to/above the live premium.
+     broken resistance (now acting as support).
+  3. If the last completed candle is a strong bullish candle (body >= 1.5x 
+     average), trail below that green candle's low.
+  4. Return the highest valid trailing level (most conservative).
+  5. Only move the stop up (never down), and never to/above the live premium.
 
 A swing high/low is confirmed when price makes a higher high/lower low with
 at least N intervening bars (default 2) to avoid false breaks.
@@ -81,64 +84,97 @@ def _find_pivot_highs_lows(
     return highs, lows
 
 
+def _avg_body(rows: Sequence[dict], window: int = 10) -> float:
+    """Calculate average candle body over the last `window` bars."""
+    if len(rows) < window:
+        rows = rows[-len(rows):] if rows else []
+    else:
+        rows = rows[-window:]
+    
+    bodies = []
+    for bar in rows:
+        o, c = _f(bar.get("open")), _f(bar.get("close"))
+        if o is not None and c is not None:
+            bodies.append(abs(c - o))
+    
+    return sum(bodies) / len(bodies) if bodies else 0.0
+
+
 def swing_low_stop(
     candles,
     left: int = 2,
     right: int = 2,
     min_bars: int = 6,
+    strong_x: float = 1.5,
 ) -> Tuple[Optional[float], str]:
     """Candidate trailing stop (and why) for a long premium position.
 
     `candles` must be COMPLETED 1-minute premium candles, oldest first.
     Returns (None, reason) when the stop should stay where it is.
 
-    Logic:
+    Logic (returns the highest valid level):
       1. Find confirmed pivot highs and lows.
       2. Use the most recent pivot low as the base trailing level.
-      3. If the current price has broken above the most recent pivot high
-         (resistance), trail below that broken resistance instead.
-      4. Return the higher of the two levels (more conservative trailing).
+      3. If price has broken above the most recent pivot high (resistance),
+         trail below that broken resistance instead.
+      4. If the last candle is a strong bullish candle (body >= 1.5x avg),
+         trail below that green candle's low.
+      5. Return the highest of all applicable levels.
     """
     rows = _rows(candles)
     if len(rows) < min_bars:
         return None, "insufficient history"
 
-    highs, lows = _find_pivot_highs_lows(rows, left, right)
+    # Get the last completed candle
+    last_bar = rows[-1]
+    last_open = _f(last_bar.get("open"))
+    last_close = _f(last_bar.get("close"))
+    last_low = _f(last_bar.get("low"))
+    
+    if last_open is None or last_close is None or last_low is None:
+        return None, "bad candle data"
 
-    if not lows:
-        return None, "no swing lows found"
-
-    # Most recent confirmed swing low
-    last_low_idx, last_low = lows[-1]
+    is_bullish = last_close > last_open
+    avg_body_val = _avg_body(rows[:-1], 10)  # exclude current candle
+    is_strong_bullish = (
+        is_bullish and 
+        avg_body_val > 0 and 
+        (last_close - last_open) >= strong_x * avg_body_val
+    )
 
     # Current live price (use the last candle's close as proxy)
-    last_bar = rows[-1]
-    current_price = _f(last_bar.get("close")) or _f(last_bar.get("high")) or 0.0
+    current_price = last_close
     if current_price <= 0:
         return None, "no current price"
 
-    # Default trail level = last swing low
-    trail_level = last_low
-    reason = f"swing low at {trail_level:.2f}"
+    trail_levels = []  # collect all candidate levels
 
-    # Check if price has broken above any recent swing high
+    # Rule 1: Most recent confirmed swing low
+    highs, lows = _find_pivot_highs_lows(rows, left, right)
+    if lows:
+        last_low_idx, last_swing_low = lows[-1]
+        trail_levels.append((last_swing_low, f"swing low at {last_swing_low:.2f}"))
+
+    # Rule 2: Broken resistance (price above last swing high)
     if highs:
-        last_high_idx, last_high = highs[-1]
+        last_high_idx, last_swing_high = highs[-1]
+        if current_price > last_swing_high:
+            trail_levels.append((last_swing_high, f"broken resistance at {last_swing_high:.2f}"))
+        
+        # Check for more recent swing highs after the last swing low
+        if lows:
+            for idx, high_val in reversed(highs):
+                if idx > last_low_idx and current_price > high_val:
+                    trail_levels.append((high_val, f"broken swing high at {high_val:.2f}"))
+                    break
 
-        # If price is above the last swing high, use that as the trail level
-        # (broken resistance becomes support)
-        if current_price > last_high:
-            # Trail below the broken resistance
-            if last_high > trail_level:
-                trail_level = last_high
-                reason = f"broken resistance at {trail_level:.2f}"
+    # Rule 3: Strong bullish candle -> trail below its low
+    if is_strong_bullish:
+        trail_levels.append((last_low, f"strong green candle low at {last_low:.2f}"))
 
-        # Look for more recent swing highs after the last swing low
-        for idx, high_val in reversed(highs):
-            if idx > last_low_idx and current_price > high_val:
-                if high_val > trail_level:
-                    trail_level = high_val
-                    reason = f"broken swing high at {trail_level:.2f}"
-                break
+    if not trail_levels:
+        return None, "no valid trailing level"
 
-    return trail_level, reason
+    # Return the highest level (most conservative trailing)
+    best_level, best_reason = max(trail_levels, key=lambda x: x[0])
+    return best_level, best_reason

@@ -2466,6 +2466,37 @@ def test_swing_low_trail_mode():
     else:
         _fail(f"should return None for short history: {lvl3}")
 
+    # Test 4: strong green candle trails below its low
+    strong_bars = []
+    for i in range(10):
+        strong_bars.append({"open": 100 + i * 2, "high": 105 + i * 2, 
+                           "low": 99 + i * 2, "close": 103 + i * 2, "volume": 1})
+    # Strong bullish candle (body=12 vs avg~4)
+    strong_bars.append({"open": 123, "high": 138, "low": 122.5, 
+                       "close": 135, "volume": 1})
+    lvl4, why4 = swing_low_stop(strong_bars)
+    if lvl4 == 122.5 and "strong green" in why4:
+        _ok("strong green candle -> trails below its low (122.5)")
+    else:
+        _fail(f"strong green test failed: {lvl4} ({why4})")
+
+    # Test 5: strong green low wins over lower swing low
+    combo_bars = []
+    for i in range(8):
+        combo_bars.append({"open": 100 + i, "high": 102 + i, 
+                          "low": 99 + i, "close": 101 + i, "volume": 1})
+    # Swing low at 95
+    combo_bars.append({"open": 105, "high": 106, "low": 95, "close": 96, "volume": 1})
+    combo_bars.append({"open": 96, "high": 97, "low": 95, "close": 96, "volume": 1})
+    combo_bars.append({"open": 96, "high": 97, "low": 95, "close": 96, "volume": 1})
+    # Strong green with low at 97 (higher than swing low)
+    combo_bars.append({"open": 96, "high": 110, "low": 97, "close": 109, "volume": 1})
+    lvl5, why5 = swing_low_stop(combo_bars)
+    if lvl5 == 97.0:
+        _ok("picks higher level: strong green low (97) over swing low (95)")
+    else:
+        _fail(f"level selection failed: {lvl5} ({why5})")
+
     initdb = _read_src("scripts/init_db.py")
     if '("bot_configs", "trail_mode"' in initdb:
         _ok("existing databases get the trail_mode column")
