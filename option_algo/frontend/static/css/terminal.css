@@ -255,6 +255,14 @@
   border: 1px solid var(--term-border); border-radius: 6px; padding: 3px 6px; font-size: 11px;
 }
 .term-mode-group { display: flex; gap: 4px; }
+.term-drawing-toolbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; }
+.term-draw {
+  padding: 4px 10px; border-radius: 4px; background: #1e2537; border: 1px solid #2e3a58;
+  color: #8b99be; font-size: 16px; cursor: pointer; transition: all 0.2s;
+}
+.term-draw:hover { background: #2e3a58; }
+.term-draw.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.term-draw[data-tool="none"] { font-size: 14px; }
 .term-mode {
   background: transparent; color: var(--term-muted);
   border: 1px solid var(--term-border); border-radius: 6px;
