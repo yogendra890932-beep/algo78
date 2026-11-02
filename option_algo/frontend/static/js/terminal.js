@@ -150,7 +150,22 @@ const sign = (v) => (v > 0 ? "+" : "");
 /* ─────────────── Bootstrap ─────────────── */
 async function loadBootstrap() {
   const r = await apiFetch("/api/terminal/bootstrap");
-  if (!r) return;
+  if (!r) {
+    console.error('Terminal bootstrap failed - no response');
+    if (r && r.status === 401) {
+      Swal.fire({ icon: 'error', title: 'Session Expired', text: 'Please login again',
+        confirmButtonText: 'Login', confirmButtonColor: '#3b82f6'
+      }).then(() => { window.location.href = '/login'; });
+    }
+    return;
+  }
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    console.error('Terminal bootstrap error:', err);
+    Swal.fire({ icon: 'error', title: 'Terminal Error', text: err.detail || 'Failed to load terminal',
+      confirmButtonText: 'OK', confirmButtonColor: '#3b82f6' });
+    return;
+  }
   const data = await r.json();
   state.bootstrap = data;
   renderUser(data.user);
