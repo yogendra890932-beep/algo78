@@ -774,11 +774,13 @@ function renderUser(user) {
 
 /* ─────────────── Site header (navbar) ─────────────── */
 function initSiteNav(user) {
-  const role = (user && user.role) || "user";
-  if (role === "admin") {
-    const adminWrap = $("nav-admin-wrap");
-    if (adminWrap) adminWrap.style.display = "inline";
+  const role = (user && (user.role || user.role === "admin" ? "admin" : "user")) || "user";
+  const adminWrap = $("nav-admin-wrap");
+  if (adminWrap) {
+    adminWrap.style.display = (role === "admin") ? "inline" : "none";
+    console.log("[initSiteNav] user role:", role, "adminWrap visible:", role === "admin");
   }
+  console.log("[initSiteNav] user:", user, "role:", role);
 }
 
 function renderSelectedSymbol(info) {
