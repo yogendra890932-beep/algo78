@@ -223,7 +223,78 @@
 <div class="term-toast" id="term-toast" hidden></div>
 
 <script src="/static/vendor/lightweight-charts.standalone.production.js?v=20260811-2"></script>
-  <script src="/static/js/voice-alerts.js?v=20261016-1"></script>
-  <script src="/static/js/terminal.js?v=20261102-1"></script>
+<script src="/static/js/voice-alerts.js?v=20261016-1"></script>
+<!-- Shared auth helpers (getToken, refreshSession, apiFetch) -->
+<script>
+function $(id) { return document.getElementById(id); }
+function getToken() { return localStorage.getItem("access_token"); }
+function getUserId() {
+  const cached = localStorage.getItem("user_id");
+  if (cached) return cached;
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const p = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return p.sub || null;
+  } catch (e) { return null; }
+}
+function jwtPayload(token) {
+  try {
+    const b = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b + "===".slice((b.length + 3) % 4)));
+  } catch (e) { return null; }
+}
+const API = "";
+function redirectLogin() {
+  localStorage.clear();
+  window.location.href = "/login";
+}
+async function refreshSession() {
+  const rt = localStorage.getItem("refresh_token");
+  if (!rt) return false;
+  try {
+    const r = await fetch(API + "/api/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt })
+    });
+    if (!r.ok) { localStorage.clear(); return false; }
+    const d = await r.json();
+    if (d.access_token) {
+      localStorage.setItem("access_token", d.access_token);
+      if (d.refresh_token) localStorage.setItem("refresh_token", d.refresh_token);
+      if (d.user_id) localStorage.setItem("user_id", String(d.user_id));
+    }
+    return true;
+  } catch (e) { console.error("Session refresh failed:", e); return false; }
+}
+async function apiFetch(url, options = {}) {
+  const doFetch = () => {
+    const token = getToken();
+    return fetch(API + url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "Authorization": "Bearer " + token } : {}),
+        ...(options.headers || {})
+      }
+    });
+  };
+  try {
+    let resp = await doFetch();
+    if (resp.status === 401) {
+      if (!options._retried && await refreshSession()) {
+        resp = await doFetch();
+      }
+      if (resp.status === 401) { redirectLogin(); return null; }
+    }
+    return resp;
+  } catch (e) {
+    console.error("API error:", e);
+    return null;
+  }
+}
+</script>
+<script src="/static/js/terminal.js?v=20261103-1"></script>
 </body>
 </html>

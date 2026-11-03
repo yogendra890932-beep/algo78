@@ -2805,7 +2805,15 @@ function bindToolbar() {
 
 /* ─────────────── Init ─────────────── */
 document.addEventListener("DOMContentLoaded", () => {
-  if (!getToken()) { redirectLogin(); return; }
+  console.log("[Terminal] DOMContentLoaded, checking auth...");
+  const token = getToken();
+  console.log("[Terminal] Token present:", !!token);
+  if (!token) {
+    console.error("[Terminal] No token found, redirecting to login");
+    redirectLogin();
+    return;
+  }
+  console.log("[Terminal] Token OK, initializing UI...");
   bindToolbar();
   bindPnlToggle();
   state.chart = new LwcChart($("term-chart"), $("premium-col"));
