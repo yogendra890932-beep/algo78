@@ -2163,6 +2163,13 @@ class UnderlyingChart {
       }
     }
     try { this.chart.priceScale("right").applyOptions({ autoScale: true }); } catch (e) { }
+    this._releaseApply();
+  }
+
+  /* Release the "applying a range" guard on the next frame: the chart's
+     visible-range callback can fire asynchronously after setData(), and a
+     late callback must not clobber the view we just restored. */
+  _releaseApply() {
     const done = () => { this._applying = false; };
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(done);
     else setTimeout(done, 16);
