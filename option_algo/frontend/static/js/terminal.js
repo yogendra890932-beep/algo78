@@ -2205,6 +2205,16 @@ class UnderlyingChart {
       }
     }
     this.syncLtpLine();
+    // Preserve view on live updates to prevent reset/jump
+    if (this._userRange) {
+      try {
+        const ts = this.chart.timeScale();
+        const lastIdx = list.length - 1;
+        const to = lastIdx + this._userRange.rightGap;
+        const from = to - this._userRange.span;
+        ts.setVisibleLogicalRange({ from, to });
+      } catch (e) {}
+    }
   }
 
   applyOverlays(list, live) {
