@@ -7,6 +7,9 @@
 (function () {
 "use strict";
 
+// Default number of candles to show on initial load / timeframe switch
+const DEFAULT_CANDLES = 20;
+
 /* ─────────────── Auth helpers (mirrors base.html) ─────────────── */
 function getToken() { return localStorage.getItem("access_token"); }
 function getUserId() {
@@ -1569,7 +1572,11 @@ class LwcChart {
         try { ts.setVisibleLogicalRange({ from: from, to: to }); } catch (e) { }
       } else if (!this._fitted) {
         this._fitted = true;
-        try { ts.fitContent(); } catch (e) { }
+        // Default to showing last DEFAULT_CANDLES with some padding
+        const lastIdx = candles.length - 1;
+        const from = Math.max(0, lastIdx - DEFAULT_CANDLES + 1);
+        const to = lastIdx + 2; // Add 2 bars padding on right
+        try { ts.setVisibleLogicalRange({ from: from, to: to }); } catch (e) { }
       }
     }
     // A new option contract can sit at a very different premium level, so
@@ -2162,7 +2169,11 @@ class UnderlyingChart {
         try { ts.setVisibleLogicalRange({ from: from, to: to }); } catch (e) { }
       } else if (!this._fitted) {
         this._fitted = true;
-        try { ts.fitContent(); } catch (e) { }
+        // Default to showing last DEFAULT_CANDLES with some padding
+        const lastIdx = list.length - 1;
+        const from = Math.max(0, lastIdx - DEFAULT_CANDLES + 1);
+        const to = lastIdx + 2; // Add 2 bars padding on right
+        try { ts.setVisibleLogicalRange({ from: from, to: to }); } catch (e) { }
       }
     }
     try { this.chart.priceScale("right").applyOptions({ autoScale: true }); } catch (e) { }
