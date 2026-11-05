@@ -2568,8 +2568,24 @@ function switchUnderlyingTimeframe() {
     return;
   }
   // Same as the premium chart: preserve the active candle's position.
-  if (state.underlyingChart) state.underlyingChart.preserveView();
-  if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
+  if (state.underlyingChart) {
+    state.underlyingChart.preserveView();
+    state.underlyingChart.setData(underlyingShownCandles());
+    // Restore view after setData completes
+    setTimeout(() => {
+      if (state.underlyingChart && state.underlyingChart._userRange) {
+        try {
+          const ts = state.underlyingChart.chart.timeScale();
+          const list = underlyingShownCandles();
+          const lastIdx = list.length - 1;
+          const r = state.underlyingChart._userRange;
+          const to = lastIdx + r.rightGap;
+          const from = to - r.span;
+          ts.setVisibleLogicalRange({ from, to });
+        } catch (e) {}
+      }
+    }, 0);
+  }
 }
 
 function setChartMode(mode) {
