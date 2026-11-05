@@ -575,7 +575,10 @@ function pushUnderlyingBar(interval, candle) {
       state.underlyingLive = null;
     }
   }
-  if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
+  // Use updateLive for smooth real-time updates (same as premium chart)
+  if (state.underlyingChart) {
+    state.underlyingChart.updateLive(underlyingShownCandles());
+  }
 }
 
 function currentIstMinuteStr() {
@@ -2206,11 +2209,10 @@ class UnderlyingChart {
     }
     this.syncLtpLine();
     // Preserve view on live updates to prevent reset/jump
-    if (this._userRange) {
+    if (this._userRange && this._lastIndex >= 0) {
       try {
         const ts = this.chart.timeScale();
-        const lastIdx = list.length - 1;
-        const to = lastIdx + this._userRange.rightGap;
+        const to = this._lastIndex + this._userRange.rightGap;
         const from = to - this._userRange.span;
         ts.setVisibleLogicalRange({ from, to });
       } catch (e) {}
@@ -2506,7 +2508,24 @@ function bindOverlayUI() {
 
 function drawChart() {
   if (state.chart) state.chart.fullRender();
-  if (state.underlyingChart) state.underlyingChart.setData(underlyingShownCandles());
+  if (state.underlyingChart) {
+    state.underlyingChart.preserveView();
+    state.underlyingChart.setData(underlyingShownCandles());
+    // Restore view after setData completes
+    setTimeout(() => {
+      if (state.underlyingChart && state.underlyingChart._userRange) {
+        try {
+          const ts = state.underlyingChart.chart.timeScale();
+          const list = underlyingShownCandles();
+          const lastIdx = list.length - 1;
+          const r = state.underlyingChart._userRange;
+          const to = lastIdx + r.rightGap;
+          const from = to - r.span;
+          ts.setVisibleLogicalRange({ from, to });
+        } catch (e) {}
+      }
+    }, 0);
+  }
 }
 
 function renderLegend(lastC) {
