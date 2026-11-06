@@ -25,6 +25,8 @@ import upstox_client
 from upstox_client.rest import ApiException
 
 from backend.shared.redis_infra import (
+    shared_candle_close_channel,
+    shared_premium_close_channel,
     shared_signal_channel,
     shared_tick_channel,
     user_execution_state,
@@ -129,6 +131,9 @@ class UserExecutionManager:
         # (speed-adaptive swing low on the 1m premium chart).
         self._trail_mode: str = str(
             (self.config or {}).get("trail_mode") or "atr").lower()
+
+        # Last candle-close timestamp per symbol (for swing trailing).
+        self._candle_close_ts: dict[str, float] = {}
 
         # Last position-snapshot push timestamp per symbol (throttle).
         self._snap_ts: dict[str, float] = {}
@@ -817,9 +822,11 @@ class UserExecutionManager:
         safety net (e.g. restored positions, missing instrument_key)."""
         try:
             self._tick_pubsub = self._r.pubsub()
-            chans = [shared_tick_channel(s) for s in self.symbols]
-            if chans:
-                self._tick_pubsub.subscribe(*chans)
+            tick_chans = [shared_tick_channel(s) for s in self.symbols]
+            candle_chans = [shared_premium_close_channel(s) for s in self.symbols]
+            all_chans = list(set(tick_chans + candle_chans))
+            if all_chans:
+                self._tick_pubsub.subscribe(*all_chans)
                 self._tick_subscribed.update(self.symbols)
             while not self._stop_event.is_set():
                 try:
@@ -839,6 +846,20 @@ class UserExecutionManager:
                 if not msg or msg.get("type") != "message":
                     self._sync_tick_subscriptions()
                     continue
+                
+                # Check if this is a premium candle close event
+                data_str = msg.get("data", "{}")
+                if isinstance(data_str, str) and "candle" in data_str and "premium" in data_str:
+                    try:
+                        event = json.loads(data_str)
+                        sym = (event.get("symbol") or "").upper()
+                        if sym and event.get("kind") == "premium":
+                            self._candle_close_ts[sym] = time.time()
+                    except Exception:
+                        pass
+                    self._sync_tick_subscriptions()
+                    continue
+                
                 tick = json.loads(msg["data"])
                 sym = (tick.get("symbol") or "").upper()
                 if not sym:
@@ -999,11 +1020,22 @@ class UserExecutionManager:
         "atr" (ATR 7 x 1.2) or "swing" (speed-adaptive swing low on the
         1m premium candles). Only the position's own premium contract data
         is used — index data is never mixed in.
+        
+        For swing mode: only trail when a 1-minute candle completes.
+        For ATR mode: trail on every tick.
         """
         if not self._trail_enabled.get(sym, True):
             return
         if time.time() - self._sl_mod_ts.get(sym, 0) < 8:
             return
+        
+        # Swing mode: only trail on candle close
+        if self._trail_mode == "swing":
+            last_close_ts = self._candle_close_ts.get(sym, 0)
+            if time.time() - last_close_ts > 2.0:
+                # No recent candle close, skip trailing
+                return
+        
         try:
             from backend.shared.option_premium_service import SharedOptionPremiumBuilder
             df = SharedOptionPremiumBuilder.get_1m_df(sym)

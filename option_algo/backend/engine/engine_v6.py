@@ -425,6 +425,9 @@ class SymbolEngine:
         self._cur_candle:    dict          = {}
         self._ul_cur_min:    Optional[str] = None
         self._ul_cur_candle: dict          = {}
+        
+        # Swing trailing: timestamp of last 1m candle close
+        self._last_candle_close_ts: float = 0.0
 
         # API refresh throttle (once per minute)
         self._last_api_refresh_min: Optional[str] = None
@@ -1350,6 +1353,9 @@ class SymbolEngine:
             print(_now(), f"[{self.symbol}] append_opt: {e}")
 
     def _on_bar_close(self):
+        # Track candle close time for swing trailing
+        self._last_candle_close_ts = time.time()
+        
         if self._paused or not self._risk_ok() or not self._trading_hours_ok():
             return
 
@@ -2850,8 +2856,17 @@ class SymbolEngine:
           swing -> speed-adaptive swing low on the 1m premium candles
         SL-M banned for NSE/BSE options.
         limit_price = trigger x 0.995
+        
+        For swing mode: only trail when a 1-minute candle completes.
+        For ATR mode: trail on every tick.
         """
         if time.time()-self._sl_mod_ts < 8: return
+        
+        # Swing mode: only trail on candle close
+        mode = str((self.cfg or {}).get("trail_mode") or "atr").lower()
+        if mode == "swing":
+            if time.time() - self._last_candle_close_ts > 2.0:
+                return
         with self._df_lock:
             df = self.opt_df.copy()
         if len(df) < 8: return
