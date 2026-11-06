@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 from typing import Optional
 
 # Maximum price drift from the signal entry, as a fraction of the
-# account risk (entry * sl_pct). 0.35 = at most 35% of the stop distance.
-DEFAULT_MAX_DRIFT_FRAC = 0.35
+# account risk (entry * sl_pct). 0.50 = at most 50% of the stop distance.
+# Increased tolerance for semi-auto approval where user explicitly accepts
+# the current market price.
+DEFAULT_MAX_DRIFT_FRAC = 0.50
 
 # Maximum signal age (seconds) at the moment we act on it.
 DEFAULT_MAX_AGE_SEC = 90

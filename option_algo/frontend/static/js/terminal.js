@@ -970,6 +970,17 @@ function bindPendingActions(el) {
 async function approvePendingTrade(id) {
   if (!id) return;
   toast("Approving trade…", "processing");
+  
+  // Hide pending card immediately for better UX
+  const card = document.querySelector(`.term-pending-card[data-trade-id="${id}"]`);
+  if (card) card.remove();
+  const list = $("pending-list");
+  if (list && !list.querySelectorAll(".term-pending-card").length) {
+    list.innerHTML = '<div class="term-empty">No pending trades</div>';
+  }
+  const count = $("pending-count");
+  if (count) count.textContent = "0";
+  
   const r = await apiFetch("/api/users/pending-trades/" + encodeURIComponent(id) + "/approve", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
   });
@@ -983,9 +994,9 @@ async function approvePendingTrade(id) {
     return;
   }
   toast("Trade approved", "ok");
-  refreshPendingTrades();
   wsSend({ action: "positions" });
   setTimeout(loadTrades, 900);
+  refreshPendingTrades();
 }
 
 async function rejectPendingTrade(id) {

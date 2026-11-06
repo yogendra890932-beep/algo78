@@ -1532,8 +1532,15 @@ def test_no_late_entry():
 
         r = late_entry_reason(100.0, 95.0, None, 102.0, 0.05, 1.5,
                               signal_ts=fresh, now=now, symbol="NIFTY")
+        if not r:
+            _ok("chasing entry within 50% drift budget is accepted")
+        else:
+            _fail(f"chasing entry rejected: {r!r}")
+
+        r = late_entry_reason(100.0, 95.0, None, 103.0, 0.05, 1.5,
+                              signal_ts=fresh, now=now, symbol="NIFTY")
         if "late entry" in r:
-            _ok("chasing entry beyond the drift budget is rejected")
+            _ok("chasing entry beyond 50% drift budget is rejected")
         else:
             _fail(f"chasing entry accepted: {r!r}")
 
