@@ -49,7 +49,7 @@ from backend.db.models import (
 )
 from backend.services.paper_trading import get_paper_book
 from backend.services.tick_size import round_to_tick
-from backend.services.audit_log import log_event
+# Audit logging disabled for trade signals
 from backend.shared.entry_timing import late_entry_reason
 
 
@@ -574,21 +574,6 @@ class SemiAutoExecutor:
                 await db.refresh(pending_trade)
                 trade_id = pending_trade.id
 
-                # Audit log
-                await log_event(
-                    db,
-                    self.user_id,
-                    "SIGNAL_GENERATED",
-                    f"Pending trade created: {self.signal.symbol} "
-                    f"{self.signal.opt_type} @ ₹{self.signal.entry_price}",
-                    metadata={
-                        "signal_id": self.signal.signal_id,
-                        "pending_trade_id": trade_id,
-                        "strategy": self.signal.strategy_name,
-                        "expires_at": expires_at.isoformat(),
-                    },
-                )
-
             return ExecutionResult(
                 status=ExecutionStatus.PENDING_APPROVAL,
                 message=f"Pending trade #{trade_id} created — waiting for approval",
@@ -911,11 +896,6 @@ class PendingTradeManager:
                 trade.status = PendingTradeStatus.EXPIRED
                 db.add(trade)
                 await db.commit()
-                await log_event(
-                    db, user_id, "SIGNAL_EXPIRED",
-                    f"Pending trade #{trade_id} expired",
-                    metadata={"signal_id": trade.signal_id},
-                )
                 return ExecutionResult(
                     status=ExecutionStatus.EXPIRED,
                     message="Pending trade has expired",
@@ -939,11 +919,6 @@ class PendingTradeManager:
                         trade.status = PendingTradeStatus.REJECTED
                         trade.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
                         db.add(trade)
-                        await log_event(
-                            db, user_id, "SIGNAL_REJECTED_LATE",
-                            f"Trade #{trade_id} rejected at approval: {reason}",
-                            metadata={"signal_id": trade.signal_id},
-                        )
                         await db.commit()
                         print(f"[execution_layer] PENDING #{trade_id} rejected "
                               f"at approval — {reason}")
@@ -958,17 +933,6 @@ class PendingTradeManager:
                 trade.status = PendingTradeStatus.APPROVED
                 trade.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(trade)
-
-                # Audit
-                await log_event(
-                    db, user_id, "SIGNAL_APPROVED",
-                    f"Trade #{trade_id} approved: {trade.symbol} "
-                    f"{trade.opt_type} @ ₹{trade.entry_price}",
-                    metadata={
-                        "signal_id": trade.signal_id,
-                        "pending_trade_id": trade_id,
-                    },
-                )
                 await db.commit()
 
                 # Place the order using the engine's order placement
@@ -991,11 +955,6 @@ class PendingTradeManager:
                         pending_trade_id=trade_id,
                     )
             except Exception as e:
-                await log_event(
-                    db, user_id, "SIGNAL_APPROVED_FAILED",
-                    f"Trade #{trade_id} approval failed: {e}",
-                    metadata={"signal_id": trade.signal_id, "error": str(e)},
-                )
                 return ExecutionResult(
                     status=ExecutionStatus.FAILED,
                     message=f"Trade execution failed: {e}",
@@ -1030,12 +989,6 @@ class PendingTradeManager:
 
             trade.status = PendingTradeStatus.REJECTED
             db.add(trade)
-            await log_event(
-                db, user_id, "SIGNAL_REJECTED",
-                f"Trade #{trade_id} rejected by user: {trade.symbol} "
-                f"{trade.opt_type} @ ₹{trade.entry_price}",
-                metadata={"signal_id": trade.signal_id},
-            )
             await db.commit()
 
             return ExecutionResult(
@@ -1065,14 +1018,6 @@ class PendingTradeManager:
             for trade in expired:
                 trade.status = PendingTradeStatus.EXPIRED
                 db.add(trade)
-                await log_event(
-                    db, trade.user_id, "SIGNAL_EXPIRED",
-                    f"Pending trade #{trade.id} expired (timeout)",
-                    metadata={
-                        "signal_id": trade.signal_id,
-                        "expires_at": trade.expires_at.isoformat() if trade.expires_at else None,
-                    },
-                )
             if expired:
                 await db.commit()
                 print(f"[execution_layer] Expired {len(expired)} stale pending trade(s)")
@@ -1086,7 +1031,7 @@ class PendingTradeManager:
         """
         from backend.db.database import get_sync_session
         from sqlalchemy import select as _select
-        from backend.services.audit_log import log_event
+        # Audit logging disabled for trade signals
         
         with get_sync_session() as db:
             # One pending trade at a time: if the user already has a
