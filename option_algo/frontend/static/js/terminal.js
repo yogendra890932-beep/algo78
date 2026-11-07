@@ -2816,7 +2816,9 @@ function bindToolbar() {
 
   const toggleOverlay = (key) => (ev) => {
     state.overlays[key] = ev.target.checked;
-    drawChart();
+    // Only re-render premium chart; underlying chart overlays are computed
+    // from underlying candles and should not change when toggling indicators
+    if (state.chart) state.chart.fullRender();
   };
   $("ov-ema").addEventListener("change", toggleOverlay("ema"));
   $("ov-vwap").addEventListener("change", toggleOverlay("vwap"));
