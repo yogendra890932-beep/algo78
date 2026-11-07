@@ -2814,16 +2814,34 @@ function bindToolbar() {
     });
   });
 
-  const toggleOverlay = (key) => (ev) => {
+  const toggleOverlay = (key, bothCharts) => (ev) => {
     state.overlays[key] = ev.target.checked;
-    // Only re-render premium chart; underlying chart overlays are computed
-    // from underlying candles and should not change when toggling indicators
     if (state.chart) state.chart.fullRender();
+    if (bothCharts && state.underlyingChart) {
+      // EMA/BB apply to both charts; re-render underlying with new overlay state
+      state.underlyingChart.preserveView();
+      state.underlyingChart.setData(underlyingShownCandles());
+      setTimeout(() => {
+        if (state.underlyingChart && state.underlyingChart._userRange) {
+          try {
+            const ts = state.underlyingChart.chart.timeScale();
+            const list = underlyingShownCandles();
+            const lastIdx = list.length - 1;
+            const r = state.underlyingChart._userRange;
+            const to = lastIdx + r.rightGap;
+            const from = to - r.span;
+            ts.setVisibleLogicalRange({ from, to });
+          } catch (e) {}
+        }
+      }, 0);
+    }
   };
-  $("ov-ema").addEventListener("change", toggleOverlay("ema"));
-  $("ov-vwap").addEventListener("change", toggleOverlay("vwap"));
-  $("ov-bb").addEventListener("change", toggleOverlay("bb"));
-  $("ov-vol").addEventListener("change", toggleOverlay("vol"));
+  // EMA and Bollinger Bands apply to both charts
+  $("ov-ema").addEventListener("change", toggleOverlay("ema", true));
+  $("ov-bb").addEventListener("change", toggleOverlay("bb", true));
+  // VWAP and Volume only affect premium chart
+  $("ov-vwap").addEventListener("change", toggleOverlay("vwap", false));
+  $("ov-vol").addEventListener("change", toggleOverlay("vol", false));
 
   document.querySelectorAll(".term-mode").forEach((btn) => {
     btn.addEventListener("click", () => {
