@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Advanced Trading Terminal — Optiscalper</title>
-  <link rel="stylesheet" href="/static/css/terminal.css?v=20261108-2"/>
+  <link rel="stylesheet" href="/static/css/terminal.css?v=20261108-3"/>
 </head>
 <body class="term-body">
 
@@ -131,6 +131,22 @@
         <div class="term-drag-preview" id="term-drag-preview" hidden></div>
         <div class="term-chart-drag-hint" id="drag-hint"></div>
       </div>
+      
+      <!-- Drawing Tools Panel (right of charts) -->
+      <div class="term-chart-col term-drawing-col" id="drawing-col">
+        <div class="term-drawing-panel term-drawing-vertical" id="drawing-panel">
+          <div class="term-drawing-tools">
+            <button class="term-draw-tool active" data-tool="cursor" title="Cursor (Esc)">↖</button>
+            <button class="term-draw-tool" data-tool="trendline" title="Trend Line">╱</button>
+            <button class="term-draw-tool" data-tool="horizontal" title="Horizontal Line">─</button>
+            <button class="term-draw-tool" data-tool="vertical" title="Vertical Line">│</button>
+            <button class="term-draw-tool" data-tool="fibonacci" title="Fibonacci Retracement">⚡</button>
+            <button class="term-draw-tool" data-tool="ray" title="Ray Line">→</button>
+            <div class="term-draw-separator"></div>
+            <button class="term-draw-tool term-draw-clear" id="clear-drawings" title="Clear All Drawings">🗑</button>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="term-chart-legend" id="chart-legend"></div>
 
@@ -159,22 +175,6 @@
             <thead><tr><th>Time</th><th>Event</th><th>Message</th></tr></thead>
             <tbody id="event-body"><tr><td colspan="3" class="term-empty">No execution events yet</td></tr></tbody>
           </table>
-        </div>
-      </div>
-      
-      <!-- Drawing Tools Panel (right of charts) -->
-      <div class="term-chart-col term-drawing-col" id="drawing-col">
-        <div class="term-drawing-panel term-drawing-vertical" id="drawing-panel">
-          <div class="term-drawing-tools">
-            <button class="term-draw-tool active" data-tool="cursor" title="Cursor (Esc)">↖</button>
-            <button class="term-draw-tool" data-tool="trendline" title="Trend Line">╱</button>
-            <button class="term-draw-tool" data-tool="horizontal" title="Horizontal Line">─</button>
-            <button class="term-draw-tool" data-tool="vertical" title="Vertical Line">│</button>
-            <button class="term-draw-tool" data-tool="fibonacci" title="Fibonacci Retracement">⚡</button>
-            <button class="term-draw-tool" data-tool="ray" title="Ray Line">→</button>
-            <div class="term-draw-separator"></div>
-            <button class="term-draw-tool term-draw-clear" id="clear-drawings" title="Clear All Drawings">🗑</button>
-          </div>
         </div>
       </div>
     </div>

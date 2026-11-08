@@ -130,9 +130,13 @@
 .term-pill-idle   { color: var(--term-muted); }
 
 /* ── Drawing Tools Panel (vertical, right of charts) ───────── */
+.term-chart-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
 .term-chart-col.term-drawing-col {
-  flex: 0 0 auto;
-  width: 60px;
+  flex: 0 0 60px;
   display: none;
 }
 .term-chart-col.term-drawing-col.visible {
