@@ -129,18 +129,25 @@
 .term-pill-live   { color: var(--term-accent-2); border-color: rgba(34,211,238,0.5); background: rgba(34,211,238,0.08); }
 .term-pill-idle   { color: var(--term-muted); }
 
-/* ── Drawing Tools Panel (vertical, right of charts) ───────── */
+/* ── Drawing Tools Panel (vertical, left of charts) ───────── */
 .term-chart-wrap {
   display: flex;
   flex-direction: row;
   align-items: stretch;
 }
 .term-chart-col.term-drawing-col {
+  order: -1;  /* Always first (left side) */
   flex: 0 0 60px;
   display: none;
 }
 .term-chart-col.term-drawing-col.visible {
   display: flex;
+}
+.term-chart-col#underlying-col {
+  order: 0;
+}
+.term-chart-col#premium-col {
+  order: 0;
 }
 .term-drawing-panel.term-drawing-vertical {
   flex: 1 1 auto;
