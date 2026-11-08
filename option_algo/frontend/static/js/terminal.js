@@ -2845,13 +2845,17 @@ function bindToolbar() {
 
   // Drawing tools toggle
   const drawToggle = $("term-draw-toggle");
-  const drawingPanel = $("drawing-panel");
-  if (drawToggle && drawingPanel) {
+  const drawingCol = document.getElementById("drawing-col");
+  if (drawToggle && drawingCol) {
     drawToggle.addEventListener("click", () => {
-      const hidden = drawingPanel.style.display === "none" || drawingPanel.style.display === "";
-      drawingPanel.style.display = hidden ? "block" : "none";
+      const hidden = !drawingCol.classList.contains("visible");
+      drawingCol.classList.toggle("visible");
       drawToggle.style.opacity = hidden ? "1" : "0.6";
-      if (state.chart) state.chart.resize();
+      // Resize charts when panel is toggled
+      setTimeout(() => {
+        if (state.chart) state.chart.resize();
+        if (state.underlyingChart) state.underlyingChart.resize();
+      }, 10);
     });
   }
 

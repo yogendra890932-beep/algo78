@@ -129,68 +129,85 @@
 .term-pill-live   { color: var(--term-accent-2); border-color: rgba(34,211,238,0.5); background: rgba(34,211,238,0.08); }
 .term-pill-idle   { color: var(--term-muted); }
 
-/* ── Drawing Tools Panel ────────────────────────────────────── */
-.term-drawing-panel {
+/* ── Drawing Tools Panel (vertical, right of charts) ───────── */
+.term-chart-col.term-drawing-col {
   flex: 0 0 auto;
+  width: 60px;
+  display: none;
+}
+.term-chart-col.term-drawing-col.visible {
+  display: flex;
+}
+.term-drawing-panel.term-drawing-vertical {
+  flex: 1 1 auto;
   background: rgba(17,22,36,0.96);
-  border-bottom: 1px solid var(--term-border);
-  padding: 8px 20px;
+  border: 1px solid var(--term-border);
+  border-radius: calc(var(--term-radius) - 3px);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  padding: 10px 4px;
+  height: 100%;
+  min-height: 300px;
 }
-.term-drawing-tools {
+.term-drawing-vertical .term-drawing-tools {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  justify-content: center;
+  gap: 6px;
+  width: 100%;
 }
-.term-draw-tool {
+.term-drawing-vertical .term-draw-tool {
   background: var(--term-panel);
   border: 1px solid var(--term-border);
   color: var(--term-muted);
-  padding: 6px 10px;
+  padding: 8px 6px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 16px;
-  min-width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
 }
-.term-draw-tool:hover {
+.term-drawing-vertical .term-draw-tool:hover {
   background: var(--term-panel-2);
   color: var(--term-text);
 }
-.term-draw-tool.active {
+.term-drawing-vertical .term-draw-tool.active {
   background: var(--term-green);
   color: #fff;
   border-color: var(--term-green);
 }
-.term-draw-tool.term-draw-clear:hover {
+.term-drawing-vertical .term-draw-tool.term-draw-clear:hover {
   background: var(--term-red);
   color: #fff;
   border-color: var(--term-red);
 }
-.term-draw-separator {
-  width: 1px;
-  height: 24px;
+.term-drawing-vertical .term-draw-separator {
+  width: 24px;
+  height: 1px;
   background: var(--term-border);
-  margin: 0 4px;
+  margin: 4px 0;
 }
 .term-draw-toggle {
   font-size: 16px;
   padding: 6px 8px;
 }
 
-/* Drawing panel responsive */
+/* Responsive: hide drawing panel on small screens */
 @media (max-width: 768px) {
-  .term-drawing-panel { padding: 6px 12px; }
-  .term-draw-tool { padding: 4px 8px; min-width: 32px; height: 32px; font-size: 14px; }
+  .term-chart-col.term-drawing-col {
+    display: none !important;
+  }
+  .term-drawing-vertical .term-draw-tool {
+    width: 38px;
+    height: 38px;
+    font-size: 14px;
+    padding: 6px 4px;
+  }
 }
 
 /* ── Layout grid ──────────────────────────────────────────────── */
