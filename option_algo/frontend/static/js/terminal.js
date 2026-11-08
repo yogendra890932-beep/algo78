@@ -2843,6 +2843,21 @@ function bindToolbar() {
   $("ov-vwap").addEventListener("change", toggleOverlay("vwap", false));
   $("ov-vol").addEventListener("change", toggleOverlay("vol", false));
 
+  // Drawing tools toggle
+  const drawToggle = $("term-draw-toggle");
+  const drawingPanel = $("drawing-panel");
+  if (drawToggle && drawingPanel) {
+    drawToggle.addEventListener("click", () => {
+      const hidden = drawingPanel.style.display === "none" || drawingPanel.style.display === "";
+      drawingPanel.style.display = hidden ? "block" : "none";
+      drawToggle.style.opacity = hidden ? "1" : "0.6";
+      if (state.chart) state.chart.resize();
+    });
+  }
+
+  // Drawing tools
+  initDrawingTools();
+
   document.querySelectorAll(".term-mode").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".term-mode").forEach((b) => b.classList.remove("term-mode-active"));
@@ -2890,6 +2905,211 @@ function bindToolbar() {
 }
 
 /* ─────────────── Init ─────────────── */
+/* ─────────────── Drawing Tools ─────────────── */
+const DRAWING_TOOLS = ["cursor", "trendline", "horizontal", "vertical", "fibonacci", "ray"];
+let drawingManager = null;
+
+function initDrawingTools() {
+  if (!state.chart || !state.chart.chart) return;
+  
+  drawingManager = new DrawingManager(state.chart.chart, state.chart.wrap);
+  
+  // Tool selection
+  document.querySelectorAll(".term-draw-tool[data-tool]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tool = btn.dataset.tool;
+      if (tool === "cursor") {
+        drawingManager.setTool("cursor");
+      } else {
+        drawingManager.setTool(tool);
+      }
+    });
+  });
+  
+  // Clear drawings
+  const clearBtn = document.getElementById("clear-drawings");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      if (drawingManager && confirm("Clear all drawings?")) {
+        drawingManager.clearAll();
+      }
+    });
+  }
+  
+  // Keyboard shortcuts
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && drawingManager) {
+      drawingManager.setTool("cursor");
+      document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
+      document.querySelector('.term-draw-tool[data-tool="cursor"]').classList.add("active");
+    }
+  });
+}
+
+class DrawingManager {
+  constructor(chart, wrap) {
+    this.chart = chart;
+    this.wrap = wrap;
+    this.currentTool = "cursor";
+    this.drawings = [];
+    this.isDrawing = false;
+    this.startPoint = null;
+    this.endPoint = null;
+    this.activeShape = null;
+    
+    this.setupInteractions();
+  }
+  
+  setupInteractions() {
+    this.chart.subscribeClick((param) => {
+      if (this.currentTool === "cursor" || !param.point || param.point.x === undefined) return;
+      
+      const time = param.time;
+      const price = param.price;
+      
+      if (!this.isDrawing) {
+        // Start drawing
+        this.isDrawing = true;
+        this.startPoint = { time, price };
+        this.createShape(time, price);
+      } else {
+        // Finish drawing
+        this.endPoint = { time, price };
+        this.finishShape(time, price);
+        this.isDrawing = false;
+        this.startPoint = null;
+        this.endPoint = null;
+        
+        // Auto-switch back to cursor after completing a drawing (except fibonacci)
+        if (this.currentTool !== "fibonacci") {
+          this.setTool("cursor");
+          document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
+          document.querySelector('.term-draw-tool[data-tool="cursor"]').classList.add("active");
+        }
+      }
+    });
+  }
+  
+  createShape(time, price) {
+    const C = LightweightCharts;
+    
+    switch (this.currentTool) {
+      case "trendline":
+      case "ray":
+        this.activeShape = this.chart.addLineSeries({
+          color: "#f59e0b",
+          lineWidth: 2,
+          crosshairMarkerVisible: false,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        this.activeShape.setData([
+          { time, value: price },
+          { time, value: price }
+        ]);
+        break;
+        
+      case "horizontal":
+        this.activeShape = this.chart.addLineSeries({
+          color: "#22d3ee",
+          lineWidth: 2,
+          lineStyle: 2,
+          crosshairMarkerVisible: false,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        this.activeShape.setData([
+          { time: this.getChartStartTime(), value: price },
+          { time: this.getChartEndTime(), value: price }
+        ]);
+        break;
+        
+      case "vertical":
+        this.activeShape = null;
+        break;
+        
+      case "fibonacci":
+        this.drawFibonacci(time, price);
+        break;
+    }
+    
+    if (this.activeShape) {
+      this.drawings.push(this.activeShape);
+    }
+  }
+  
+  finishShape(time, price) {
+    if (!this.activeShape) return;
+    
+    switch (this.currentTool) {
+      case "trendline":
+      case "ray":
+        this.activeShape.setData([
+          { time: this.startPoint.time, value: this.startPoint.price },
+          { time, value: price }
+        ]);
+        break;
+    }
+    
+    this.activeShape = null;
+  }
+  
+  drawFibonacci(time, price) {
+    const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+    const colors = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#6366f1"];
+    
+    levels.forEach((level, i) => {
+      const levelPrice = price;
+      const line = this.chart.addLineSeries({
+        color: colors[i],
+        lineWidth: 1,
+        lineStyle: i === 0 || i === levels.length - 1 ? 0 : 2,
+        crosshairMarkerVisible: false,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      line.setData([
+        { time: this.getChartStartTime(), value: levelPrice },
+        { time: this.getChartEndTime(), value: levelPrice }
+      ]);
+      this.drawings.push(line);
+    });
+  }
+  
+  getChartStartTime() {
+    const now = new Date();
+    return Math.floor((now.getTime() - 30 * 24 * 60 * 60 * 1000) / 1000);
+  }
+  
+  getChartEndTime() {
+    const now = new Date();
+    return Math.floor((now.getTime() + 30 * 24 * 60 * 60 * 1000) / 1000);
+  }
+  
+  setTool(tool) {
+    this.currentTool = tool;
+    this.isDrawing = false;
+    this.startPoint = null;
+    this.endPoint = null;
+    this.activeShape = null;
+    
+    if (tool === "cursor") {
+      this.chart.applyOptions({ crosshair: { mode: LightweightCharts.CrosshairMode.Normal } });
+    } else {
+      this.chart.applyOptions({ crosshair: { mode: LightweightCharts.CrosshairMode.Magnet } });
+    }
+  }
+  
+  clearAll() {
+    this.drawings.forEach(shape => {
+      try { this.chart.removeSeries(shape); } catch (e) {}
+    });
+    this.drawings = [];
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   console.log("[Terminal] DOMContentLoaded, checking auth...");
   const token = getToken();

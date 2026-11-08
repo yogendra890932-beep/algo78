@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Advanced Trading Terminal — Optiscalper</title>
-  <link rel="stylesheet" href="/static/css/terminal.css?v=20261107-1"/>
+  <link rel="stylesheet" href="/static/css/terminal.css?v=20261108-1"/>
 </head>
 <body class="term-body">
 
@@ -45,10 +45,25 @@
   <div class="term-top-actions">
     <button id="term-quick-scalp" class="term-btn term-btn-ghost" title="Quick Scalp off — signals only in STRONG_TREND. Click to allow DISTRIBUTION/COMPRESSION too.">Quick Scalp: Off</button>
     <button id="term-voice-toggle" class="term-btn term-btn-ghost" title="Voice alerts off — click to enable">Voice: Off</button>
+    <button id="term-draw-toggle" class="term-btn term-btn-ghost" title="Toggle drawing tools">📐</button>
     <button id="term-toggle-left" class="term-btn term-btn-ghost" title="Show / hide left panel (watchlist)">Watchlist</button>
     <span id="term-user-label" class="term-user">--</span>
   </div>
 </header>
+
+<!-- ═══════════════ DRAWING TOOLS PANEL ═══════════════ -->
+<div class="term-drawing-panel" id="drawing-panel" style="display:none">
+  <div class="term-drawing-tools">
+    <button class="term-draw-tool active" data-tool="cursor" title="Cursor (Esc)">↖</button>
+    <button class="term-draw-tool" data-tool="trendline" title="Trend Line">╱</button>
+    <button class="term-draw-tool" data-tool="horizontal" title="Horizontal Line">─</button>
+    <button class="term-draw-tool" data-tool="vertical" title="Vertical Line">│</button>
+    <button class="term-draw-tool" data-tool="fibonacci" title="Fibonacci Retracement">⚡</button>
+    <button class="term-draw-tool" data-tool="ray" title="Ray Line">→</button>
+    <div class="term-draw-separator"></div>
+    <button class="term-draw-tool term-draw-clear" id="clear-drawings" title="Clear All Drawings">🗑</button>
+  </div>
+</div>
 
 <!-- ═══════════════ MAIN GRID ═══════════════ -->
 <main class="term-grid">

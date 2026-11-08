@@ -129,6 +129,70 @@
 .term-pill-live   { color: var(--term-accent-2); border-color: rgba(34,211,238,0.5); background: rgba(34,211,238,0.08); }
 .term-pill-idle   { color: var(--term-muted); }
 
+/* ── Drawing Tools Panel ────────────────────────────────────── */
+.term-drawing-panel {
+  flex: 0 0 auto;
+  background: rgba(17,22,36,0.96);
+  border-bottom: 1px solid var(--term-border);
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.term-drawing-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.term-draw-tool {
+  background: var(--term-panel);
+  border: 1px solid var(--term-border);
+  color: var(--term-muted);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  min-width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.term-draw-tool:hover {
+  background: var(--term-panel-2);
+  color: var(--term-text);
+}
+.term-draw-tool.active {
+  background: var(--term-green);
+  color: #fff;
+  border-color: var(--term-green);
+}
+.term-draw-tool.term-draw-clear:hover {
+  background: var(--term-red);
+  color: #fff;
+  border-color: var(--term-red);
+}
+.term-draw-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--term-border);
+  margin: 0 4px;
+}
+.term-draw-toggle {
+  font-size: 16px;
+  padding: 6px 8px;
+}
+
+/* Drawing panel responsive */
+@media (max-width: 768px) {
+  .term-drawing-panel { padding: 6px 12px; }
+  .term-draw-tool { padding: 4px 8px; min-width: 32px; height: 32px; font-size: 14px; }
+}
+
 /* ── Layout grid ──────────────────────────────────────────────── */
 .term-grid {
   flex: none;
