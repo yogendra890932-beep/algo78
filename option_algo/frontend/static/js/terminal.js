@@ -2851,6 +2851,13 @@ function bindToolbar() {
       const hidden = !drawingCol.classList.contains("visible");
       drawingCol.classList.toggle("visible");
       drawToggle.style.opacity = hidden ? "1" : "0.6";
+      
+      // Initialize drawing manager on first show if not already done
+      if (hidden && !drawingManager && state.chart && state.chart.chart) {
+        console.log("[DrawingTools] Initializing on first panel show");
+        initDrawingTools();
+      }
+      
       // Resize charts when panel is toggled
       setTimeout(() => {
         if (state.chart) state.chart.resize();
@@ -2979,19 +2986,33 @@ class DrawingManager {
   }
   
   setupInteractions() {
+    console.log("[DrawingManager] Setting up interactions...");
+    
     this.chart.subscribeClick((param) => {
-      if (this.currentTool === "cursor" || !param.point || param.point.x === undefined) return;
+      console.log("[DrawingManager] Click event:", param);
+      
+      if (this.currentTool === "cursor") {
+        console.log("[DrawingManager] In cursor mode, ignoring click");
+        return;
+      }
+      if (!param.point || param.point.x === undefined) {
+        console.log("[DrawingManager] Invalid point:", param.point);
+        return;
+      }
       
       const time = param.time;
       const price = param.price;
+      console.log("[DrawingManager] Click at time:", time, "price:", price, "tool:", this.currentTool);
       
       if (!this.isDrawing) {
         // Start drawing
+        console.log("[DrawingManager] Starting drawing");
         this.isDrawing = true;
         this.startPoint = { time, price };
         this.createShape(time, price);
       } else {
         // Finish drawing
+        console.log("[DrawingManager] Finishing drawing");
         this.endPoint = { time, price };
         this.finishShape(time, price);
         this.isDrawing = false;
@@ -3002,10 +3023,13 @@ class DrawingManager {
         if (this.currentTool !== "fibonacci") {
           this.setTool("cursor");
           document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
-          document.querySelector('.term-draw-tool[data-tool="cursor"]').classList.add("active");
+          const cursorBtn = document.querySelector('.term-draw-tool[data-tool="cursor"]');
+          if (cursorBtn) cursorBtn.classList.add("active");
         }
       }
     });
+    
+    console.log("[DrawingManager] Click handler registered");
   }
   
   createShape(time, price) {
