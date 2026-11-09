@@ -2914,12 +2914,24 @@ const DRAWING_TOOLS = ["cursor", "trendline", "horizontal", "vertical", "fibonac
 let drawingManager = null;
 
 function initDrawingTools() {
-  if (!state.chart || !state.chart.chart) return;
+  if (!state.chart || !state.chart.chart) {
+    console.log("[DrawingTools] Chart not ready");
+    return;
+  }
   
+  const panel = document.getElementById("drawing-panel");
+  if (!panel) {
+    console.log("[DrawingTools] Panel not found");
+    return;
+  }
+  
+  console.log("[DrawingTools] Initializing...");
   drawingManager = new DrawingManager(state.chart.chart, state.chart.wrap);
   
   // Tool selection
-  document.querySelectorAll(".term-draw-tool[data-tool]").forEach(btn => {
+  const tools = document.querySelectorAll(".term-draw-tool[data-tool]");
+  console.log("[DrawingTools] Found", tools.length, "tools");
+  tools.forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
@@ -2947,7 +2959,8 @@ function initDrawingTools() {
     if (e.key === "Escape" && drawingManager) {
       drawingManager.setTool("cursor");
       document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
-      document.querySelector('.term-draw-tool[data-tool="cursor"]').classList.add("active");
+      const cursorBtn = document.querySelector('.term-draw-tool[data-tool="cursor"]');
+      if (cursorBtn) cursorBtn.classList.add("active");
     }
   });
 }
