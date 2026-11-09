@@ -3000,8 +3000,17 @@ class DrawingManager {
         return;
       }
       
-      const time = param.time;
-      const price = param.price;
+      // Convert logical coordinate to time and price
+      const time = this.chart.coordinateToTime(param.point.x);
+      // Get the main candlestick series for price conversion
+      const mainSeries = this.series && this.series.main ? this.series.main : this.chart.series();
+      const price = mainSeries && mainSeries.coordinateToPrice ? mainSeries.coordinateToPrice(param.point.y) : null;
+      
+      if (time === null || price === null) {
+        console.log("[DrawingManager] Could not convert coordinates - time:", time, "price:", price);
+        return;
+      }
+      
       console.log("[DrawingManager] Click at time:", time, "price:", price, "tool:", this.currentTool);
       
       if (!this.isDrawing) {
@@ -3035,6 +3044,19 @@ class DrawingManager {
   createShape(time, price) {
     const C = LightweightCharts;
     
+    // Convert time to proper format for Lightweight Charts
+    const timeObj = new Date(time * 1000);
+    const formattedTime = {
+      year: timeObj.getUTCFullYear(),
+      month: timeObj.getUTCMonth() + 1,
+      day: timeObj.getUTCDate(),
+      hour: timeObj.getUTCHours(),
+      minute: timeObj.getUTCMinutes(),
+      second: timeObj.getUTCSeconds()
+    };
+    
+    console.log("[DrawingManager] Creating shape with time:", formattedTime, "price:", price);
+    
     switch (this.currentTool) {
       case "trendline":
       case "ray":
@@ -3046,8 +3068,8 @@ class DrawingManager {
           lastValueVisible: false,
         });
         this.activeShape.setData([
-          { time, value: price },
-          { time, value: price }
+          { time: formattedTime, value: price },
+          { time: formattedTime, value: price }
         ]);
         break;
         
@@ -3060,9 +3082,11 @@ class DrawingManager {
           priceLineVisible: false,
           lastValueVisible: false,
         });
+        const startTime = this.getChartStartTime();
+        const endTime = this.getChartEndTime();
         this.activeShape.setData([
-          { time: this.getChartStartTime(), value: price },
-          { time: this.getChartEndTime(), value: price }
+          { time: startTime, value: price },
+          { time: endTime, value: price }
         ]);
         break;
         
@@ -3120,12 +3144,28 @@ class DrawingManager {
   
   getChartStartTime() {
     const now = new Date();
-    return Math.floor((now.getTime() - 30 * 24 * 60 * 60 * 1000) / 1000);
+    const startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return {
+      year: startTime.getUTCFullYear(),
+      month: startTime.getUTCMonth() + 1,
+      day: startTime.getUTCDate(),
+      hour: startTime.getUTCHours(),
+      minute: startTime.getUTCMinutes(),
+      second: startTime.getUTCSeconds()
+    };
   }
   
   getChartEndTime() {
     const now = new Date();
-    return Math.floor((now.getTime() + 30 * 24 * 60 * 60 * 1000) / 1000);
+    const endTime = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    return {
+      year: endTime.getUTCFullYear(),
+      month: endTime.getUTCMonth() + 1,
+      day: endTime.getUTCDate(),
+      hour: endTime.getUTCHours(),
+      minute: endTime.getUTCMinutes(),
+      second: endTime.getUTCSeconds()
+    };
   }
   
   setTool(tool) {
