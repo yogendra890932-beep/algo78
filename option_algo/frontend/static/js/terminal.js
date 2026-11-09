@@ -2860,7 +2860,6 @@ function bindToolbar() {
   }
 
   // Drawing tools
-  initDrawingTools();
 
   document.querySelectorAll(".term-mode").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3141,6 +3140,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPnlToggle();
   state.chart = new LwcChart($("term-chart"), $("premium-col"));
   state.underlyingChart = new UnderlyingChart($("term-chart-underlying"), $("underlying-col"));
+  // Initialize drawing tools after charts are ready
+  setTimeout(initDrawingTools, 100);
   // Initialize drawing managers for both charts
   window.addEventListener("resize", resizeCharts);
   updateCandleTimer();
