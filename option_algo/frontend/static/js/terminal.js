@@ -799,6 +799,127 @@ function renderSelectedSymbol(info) {
   const chgTxt = under.change_pct == null ? "--" : sign(under.change_pct) + under.change_pct.toFixed(2) + "%";
   $("sym-change").textContent = chgTxt;
   $("sym-change").className = "term-change " + clsChg(under.change_pct);
+  
+  // Update momentum panel
+  updateMomentum(under);
+}
+
+function updateMomentum(under) {
+  if (!under || !under.ltp) {
+    $("mom-trend").textContent = "--";
+    $("mom-strength").textContent = "--";
+    $("mom-adx").textContent = "--";
+    $("mom-rsi").textContent = "--";
+    $("mom-vol").textContent = "--";
+    $("mom-hold-signal").querySelector(".term-hold-text").textContent = "Hold Signal: --";
+    return;
+  }
+  
+  // Calculate momentum indicators from underlying data
+  const candles = state.underlyingCandles || [];
+  const ltp = under.ltp;
+  const change = under.change_pct || 0;
+  
+  // Trend direction based on price change
+  const trendEl = $("mom-trend");
+  if (change > 0.5) {
+    trendEl.textContent = "BULLISH ▲";
+    trendEl.className = "term-mom-value term-mom-bullish";
+  } else if (change < -0.5) {
+    trendEl.textContent = "BEARISH ▼";
+    trendEl.className = "term-mom-value term-mom-bearish";
+  } else {
+    trendEl.textContent = "NEUTRAL ─";
+    trendEl.className = "term-mom-value term-mom-neutral";
+  }
+  
+  // Momentum strength (based on rate of change)
+  const strength = Math.abs(change);
+  const strengthEl = $("mom-strength");
+  if (strength > 1.5) {
+    strengthEl.textContent = "STRONG";
+    strengthEl.className = "term-mom-value term-mom-strong";
+  } else if (strength > 0.5) {
+    strengthEl.textContent = "MODERATE";
+    strengthEl.className = "term-mom-value term-mom-bullish";
+  } else {
+    strengthEl.textContent = "WEAK";
+    strengthEl.className = "term-mom-value term-mom-neutral";
+  }
+  
+  // Simplified ADX estimate (would need full calculation in production)
+  const adxEl = $("mom-adx");
+  if (candles.length >= 14) {
+    // Rough estimate based on trend consistency
+    const upCandles = candles.slice(-14).filter(c => c.close >= c.open).length;
+    const adx = Math.round((upCandles / 14) * 50);
+    adxEl.textContent = adx;
+    adxEl.className = adx > 25 ? "term-mom-value term-mom-strong" : "term-mom-value term-mom-neutral";
+  } else {
+    adxEl.textContent = "--";
+  }
+  
+  // RSI estimate
+  const rsiEl = $("mom-rsi");
+  if (candles.length >= 14) {
+    const gains = [];
+    const losses = [];
+    const closes = candles.slice(-15).map(c => c.close);
+    for (let i = 1; i < closes.length; i++) {
+      const diff = closes[i] - closes[i-1];
+      gains.push(diff > 0 ? diff : 0);
+      losses.push(diff < 0 ? -diff : 0);
+    }
+    const avgGain = gains.reduce((a,b) => a+b, 0) / 14;
+    const avgLoss = losses.reduce((a,b) => a+b, 0) / 14;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    const rsi = Math.round(100 - (100 / (1 + rs)));
+    rsiEl.textContent = rsi;
+    if (rsi > 70) {
+      rsiEl.className = "term-mom-value term-mom-bearish";
+    } else if (rsi < 30) {
+      rsiEl.className = "term-mom-value term-mom-bullish";
+    } else {
+      rsiEl.className = "term-mom-value term-mom-neutral";
+    }
+  } else {
+    rsiEl.textContent = "--";
+  }
+  
+  // Volatility (ATR-based)
+  const volEl = $("mom-vol");
+  if (candles.length >= 14) {
+    const trueRanges = candles.slice(-14).map(c => c.high - c.low);
+    const atr = trueRanges.reduce((a,b) => a+b, 0) / 14;
+    const atrPct = (atr / ltp) * 100;
+    volEl.textContent = atrPct.toFixed(2) + "%";
+    volEl.className = atrPct > 2 ? "term-mom-value term-mom-strong" : "term-mom-value term-mom-neutral";
+  } else {
+    volEl.textContent = "--";
+  }
+  
+  // Hold signal recommendation
+  const holdEl = $("mom-hold-signal");
+  const holdText = holdEl.querySelector(".term-hold-text");
+  const rsiVal = parseInt(rsiEl.textContent) || 50;
+  const trendText = trendEl.textContent;
+  
+  if (trendText.includes("BULLISH") && rsiVal < 70 && strength > 0.5) {
+    holdText.textContent = "✅ HOLD - Strong uptrend, room to run";
+    holdEl.classList.remove("disabled");
+  } else if (trendText.includes("BEARISH") && rsiVal > 30 && strength > 0.5) {
+    holdText.textContent = "✅ HOLD - Strong downtrend, room to run";
+    holdEl.classList.remove("disabled");
+  } else if (rsiVal > 70) {
+    holdText.textContent = "⚠️ EXIT SOON - Overbought, reversal likely";
+    holdEl.classList.add("disabled");
+  } else if (rsiVal < 30) {
+    holdText.textContent = "⚠️ EXIT SOON - Oversold, bounce likely";
+    holdEl.classList.add("disabled");
+  } else {
+    holdText.textContent = "⏸ HOLD - Wait for clearer signal";
+    holdEl.classList.remove("disabled");
+  }
 }
 
 function renderActiveOption(premiumState) {

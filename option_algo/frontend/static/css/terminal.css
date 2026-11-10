@@ -312,6 +312,37 @@
 
 /* ── Selected symbol ──────────────────────────────────────────── */
 .term-sym-info { display: flex; flex-direction: column; gap: 6px; }
+
+/* Market Momentum Panel */
+.term-momentum { display: flex; flex-direction: column; gap: 8px; padding: 2px 0; }
+.term-mom-row {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px;
+}
+.term-mom-label { color: var(--term-muted); }
+.term-mom-value {
+  font-weight: 600; font-size: 13px;
+  min-width: 60px; text-align: right;
+}
+.term-mom-bullish { color: var(--term-green); }
+.term-mom-bearish { color: var(--term-red); }
+.term-mom-neutral { color: var(--term-muted); }
+.term-mom-strong { color: var(--term-accent); }
+.term-mom-hold {
+  margin-top: 8px; padding: 8px;
+  background: rgba(34,197,94,0.08);
+  border: 1px solid rgba(34,197,94,0.3);
+  border-radius: 6px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px;
+}
+.term-hold-icon { font-size: 16px; }
+.term-hold-text { font-weight: 600; color: var(--term-green); }
+.term-mom-hold.disabled {
+  background: rgba(239,68,68,0.08);
+  border-color: rgba(239,68,68,0.3);
+}
+.term-mom-hold.disabled .term-hold-text { color: var(--term-red); }
 .term-sym-row { display: flex; justify-content: space-between; align-items: center; }
 .term-sym-name { font-weight: 800; font-size: 16px; }
 .term-sym-lot  { color: var(--term-muted); font-size: 11px; }
