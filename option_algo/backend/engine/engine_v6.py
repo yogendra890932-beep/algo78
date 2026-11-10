@@ -1321,6 +1321,10 @@ class SymbolEngine:
             self._cur_candle["high"]    = max(self._cur_candle["high"], ltp)
             self._cur_candle["low"]     = min(self._cur_candle["low"],  ltp)
             self._cur_candle["volume"]  = self._cur_candle.get("volume", 0) + ltq
+            
+            # Trend-follow can enter on forming candle (before close)
+            self._eval_trend_follow_live()
+        
         if self.position:
             self._manage_position(ltp)
 
@@ -1905,13 +1909,16 @@ class SymbolEngine:
     # STRATEGY 2 — TREND FOLLOW
     # ================================================================
 
-    def _eval_trend_follow(self):
+    def _eval_trend_follow(self, live=False):
         """
         Momentum entry — TRENDING regime only.
         Premium EMA9>EMA15>EMA21 stack + EMA9 slope positive + premium > EMA9
         by 0.1% + 3-bar momentum positive + last candle bullish (premium rising).
         Same conditions for CE and PE since opt_df is the premium series.
         SL: below EMA15.
+        
+        When live=True: evaluates on the current forming candle (before close).
+        When live=False: evaluates on the last closed candle (default behavior).
         """
         if self.position or not self.instrument_key or not self.direction: return
         i = self._get_opt_ind()
@@ -1934,9 +1941,32 @@ class SymbolEngine:
         cur_ltp = self._cur_candle.get("close") or i["last_close"]
         sl = round(max(i["ema_mid"]*0.997, cur_ltp*(1-self.cfg.get("sl_pct",0.004))), 2)
 
-        print(_now(), f"[{self.symbol}] ✅ TREND {self.opt_type} @ {cur_ltp:.2f} "
+        entry_type = "LIVE" if live else "CLOSE"
+        print(_now(), f"[{self.symbol}] ✅ TREND {entry_type} {self.opt_type} @ {cur_ltp:.2f} "
               f"SL {sl:.2f} slope={i['ema9_slope']:.3f} [{self._regime.regime}]")
         self._place_trade(cur_ltp, sl, "trend_follow")
+
+    def _eval_trend_follow_live(self):
+        """
+        Live trend-follow entry on the FORMING candle (before it closes).
+        Same conditions as _eval_trend_follow but uses current tick data.
+        Called on every tick during the candle to catch early entries.
+        """
+        # Only evaluate if we're in the middle of a candle (not at close)
+        now_min = _ist_min()
+        if self._cur_min != now_min or not self._cur_candle.get("open"):
+            return  # Not in a forming candle
+        
+        # Quick checks before full evaluation
+        if self.position or not self.instrument_key or not self.direction:
+            return
+        
+        # Check if we already fired on this candle (avoid duplicate entries)
+        if hasattr(self, '_trend_follow_fired_min') and self._trend_follow_fired_min == self._cur_min:
+            return
+        
+        # Run the same evaluation as regular trend_follow but with live=True
+        self._eval_trend_follow(live=True)
 
     # ================================================================
     # STRATEGY 3 — BREAKOUT
