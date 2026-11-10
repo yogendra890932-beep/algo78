@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Advanced Trading Terminal — Optiscalper</title>
-  <link rel="stylesheet" href="/static/css/terminal.css?v=20261110-1"/>
+  <link rel="stylesheet" href="/static/css/terminal.css?v=20261110-2"/>
 </head>
 <body class="term-body">
 
@@ -67,6 +67,7 @@
     <section class="term-card" id="momentum-card">
       <div class="term-card-head"><span>Market Momentum</span></div>
       <div class="term-momentum">
+        <div class="term-mom-section-title">Price Action</div>
         <div class="term-mom-row">
           <span class="term-mom-label">Trend</span>
           <span class="term-mom-value term-mom-bullish" id="mom-trend">--</span>
@@ -76,17 +77,36 @@
           <span class="term-mom-value" id="mom-strength">--</span>
         </div>
         <div class="term-mom-row">
-          <span class="term-mom-label">ADX</span>
-          <span class="term-mom-value" id="mom-adx">--</span>
-        </div>
-        <div class="term-mom-row">
           <span class="term-mom-label">RSI</span>
           <span class="term-mom-value" id="mom-rsi">--</span>
         </div>
+        
+        <div class="term-mom-section-title">Option Chain</div>
         <div class="term-mom-row">
-          <span class="term-mom-label">Volatility</span>
-          <span class="term-mom-value" id="mom-vol">--</span>
+          <span class="term-mom-label">PCR (OI)</span>
+          <span class="term-mom-value" id="mom-pcr-oi">--</span>
         </div>
+        <div class="term-mom-row">
+          <span class="term-mom-label">PCR (Vol)</span>
+          <span class="term-mom-value" id="mom-pcr-vol">--</span>
+        </div>
+        <div class="term-mom-row">
+          <span class="term-mom-label">Max Pain</span>
+          <span class="term-mom-value" id="mom-max-pain">--</span>
+        </div>
+        <div class="term-mom-row">
+          <span class="term-mom-label">Call Wall</span>
+          <span class="term-mom-value" id="mom-call-wall">--</span>
+        </div>
+        <div class="term-mom-row">
+          <span class="term-mom-label">Put Wall</span>
+          <span class="term-mom-value" id="mom-put-wall">--</span>
+        </div>
+        <div class="term-mom-row">
+          <span class="term-mom-label">OI Change</span>
+          <span class="term-mom-value" id="mom-oi-change">--</span>
+        </div>
+        
         <div class="term-mom-hold" id="mom-hold-signal">
           <span class="term-hold-icon">⏸</span>
           <span class="term-hold-text">Hold Signal: --</span>
@@ -342,6 +362,6 @@ async function apiFetch(url, options = {}) {
   }
 }
 </script>
-<script src="/static/js/terminal.js?v=20261110-1"></script>
+<script src="/static/js/terminal.js?v=20261110-2"></script>
 </body>
 </html>
