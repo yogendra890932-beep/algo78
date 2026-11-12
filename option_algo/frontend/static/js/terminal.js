@@ -856,19 +856,21 @@ function updateMomentum(under) {
   
   // Simplified ADX estimate (would need full calculation in production)
   const adxEl = $("mom-adx");
-  if (candles.length >= 14) {
-    // Rough estimate based on trend consistency
-    const upCandles = candles.slice(-14).filter(c => c.close >= c.open).length;
-    const adx = Math.round((upCandles / 14) * 50);
-    adxEl.textContent = adx;
-    adxEl.className = adx > 25 ? "term-mom-value term-mom-strong" : "term-mom-value term-mom-neutral";
-  } else {
-    adxEl.textContent = "--";
+  if (adxEl) {
+    if (candles.length >= 14) {
+      // Rough estimate based on trend consistency
+      const upCandles = candles.slice(-14).filter(c => c.close >= c.open).length;
+      const adx = Math.round((upCandles / 14) * 50);
+      adxEl.textContent = adx;
+      adxEl.className = adx > 25 ? "term-mom-value term-mom-strong" : "term-mom-value term-mom-neutral";
+    } else {
+      adxEl.textContent = "--";
+    }
   }
   
   // RSI estimate
   const rsiEl = $("mom-rsi");
-  if (candles.length >= 14) {
+  if (rsiEl && candles.length >= 14) {
     const gains = [];
     const losses = [];
     const closes = candles.slice(-15).map(c => c.close);
@@ -889,26 +891,28 @@ function updateMomentum(under) {
     } else {
       rsiEl.className = "term-mom-value term-mom-neutral";
     }
-  } else {
+  } else if (rsiEl) {
     rsiEl.textContent = "--";
   }
   
   // Volatility (ATR-based)
   const volEl = $("mom-vol");
-  if (candles.length >= 14) {
-    const trueRanges = candles.slice(-14).map(c => c.high - c.low);
-    const atr = trueRanges.reduce((a,b) => a+b, 0) / 14;
-    const atrPct = (atr / ltp) * 100;
-    volEl.textContent = atrPct.toFixed(2) + "%";
-    volEl.className = atrPct > 2 ? "term-mom-value term-mom-strong" : "term-mom-value term-mom-neutral";
-  } else {
-    volEl.textContent = "--";
+  if (volEl) {
+    if (candles.length >= 14) {
+      const trueRanges = candles.slice(-14).map(c => c.high - c.low);
+      const atr = trueRanges.reduce((a,b) => a+b, 0) / 14;
+      const atrPct = (atr / ltp) * 100;
+      volEl.textContent = atrPct.toFixed(2) + "%";
+      volEl.className = atrPct > 2 ? "term-mom-value term-mom-strong" : "term-mom-value term-mom-neutral";
+    } else {
+      volEl.textContent = "--";
+    }
   }
   
   // Hold signal recommendation
   const holdEl = $("mom-hold-signal");
   const holdText = holdEl.querySelector(".term-hold-text");
-  const rsiVal = parseInt(rsiEl.textContent) || 50;
+  const rsiVal = rsiEl ? (parseInt(rsiEl.textContent) || 50) : 50;
   const trendText = trendEl.textContent;
   
   if (trendText.includes("BULLISH") && rsiVal < 70 && strength > 0.5) {
@@ -3324,115 +3328,89 @@ let optionChainLastFetch = 0;
 
 async function fetchOptionChainData(symbol) {
   const now = Date.now();
-  // Cache for 30 seconds to avoid excessive API calls
   if (optionChainCache && (now - optionChainLastFetch) < 30000) {
     updateOptionChainMetrics(optionChainCache);
     return;
   }
-  
   try {
-    // Try to fetch from API if available
-    const response = await apiFetch('/api/oc/' + encodeURIComponent(symbol) + '/analysis');
+    const response = await apiFetch('/api/oc/analysis');
     if (response && response.ok) {
-      optionChainCache = await response.json();
-      optionChainLastFetch = now;
-      updateOptionChainMetrics(optionChainCache);
+      const payload = await response.json();
+      const analysis = payload && payload.analysis ? payload.analysis : null;
+      if (analysis) {
+        optionChainCache = analysis;
+        optionChainLastFetch = now;
+        updateOptionChainMetrics(analysis);
+        return;
+      }
     }
-  } catch (e) {
-    // API not available, use simulated data based on current state
-    const simulated = simulateOptionChainAnalysis();
-    optionChainCache = simulated;
-    optionChainLastFetch = now;
-    updateOptionChainMetrics(simulated);
-  }
+  } catch (e) { }
+  // No live OC analysis available → clear the option-chain fields.
+  optionChainCache = null;
+  optionChainLastFetch = now;
+  clearOptionChainMetrics();
 }
 
-function simulateOptionChainAnalysis() {
-  const candles = state.underlyingCandles || [];
-  const ltp = state.underlyingLTP || 0;
-  
-  if (!ltp || candles.length < 10) {
-    return null;
-  }
-  
-  const roundLot = Math.round(ltp / 50) * 50;
-  const strikes = [];
-  for (let i = -5; i <= 5; i++) {
-    const strike = roundLot + (i * 50);
-    const distance = Math.abs(strike - ltp);
-    const baseOI = Math.max(1000, 10000 - distance * 100);
-    const callOI = baseOI * (1 + Math.random() * 0.5);
-    const putOI = baseOI * (1 + Math.random() * 0.5);
-    const callVol = callOI * (0.3 + Math.random() * 0.4);
-    const putVol = putOI * (0.3 + Math.random() * 0.4);
-    const callChange = (Math.random() - 0.4) * 1000;
-    const putChange = (Math.random() - 0.4) * 1000;
-    
-    strikes.push({
-      strike,
-      callOI: Math.round(callOI),
-      putOI: Math.round(putOI),
-      callVol: Math.round(callVol),
-      putVol: Math.round(putVol),
-      callChangeOI: Math.round(callChange),
-      putChangeOI: Math.round(putChange)
-    });
-  }
-  
-  const totalCallOI = strikes.reduce((sum, s) => sum + s.callOI, 0);
-  const totalPutOI = strikes.reduce((sum, s) => sum + s.putOI, 0);
-  const totalCallVol = strikes.reduce((sum, s) => sum + s.callVol, 0);
-  const totalPutVol = strikes.reduce((sum, s) => sum + s.putVol, 0);
-  
-  const pcrOI = totalPutOI / totalCallOI;
-  const pcrVol = totalPutVol / totalCallVol;
-  
-  const maxPainStrike = strikes.reduce((max, s) => {
-    const pain = s.callOI + s.putOI;
-    return pain > (max.pain || 0) ? { strike: s.strike, pain } : max;
-  }, {}).strike;
-  
-  const callWallStrike = strikes.reduce((max, s) => {
-    return s.callOI > max.oi ? { strike: s.strike, oi: s.callOI } : max;
-  }, {}).strike;
-  
-  const putWallStrike = strikes.reduce((max, s) => {
-    return s.putOI > max.oi ? { strike: s.strike, oi: s.putOI } : max;
-  }, {}).strike;
-  
-  const netCallChange = strikes.reduce((sum, s) => sum + s.callChangeOI, 0);
-  const netPutChange = strikes.reduce((sum, s) => sum + s.putChangeOI, 0);
-  const oiChangeBias = netCallChange > netPutChange ? 'CALL' : 'PUT';
-  
-  return { pcrOI, pcrVol, maxPain: maxPainStrike, callWall: callWallStrike, putWall: putWallStrike, oiChangeBias, netCallChange, netPutChange, strikes };
+function clearOptionChainMetrics() {
+  ['mom-pcr-oi','mom-pcr-vol','mom-max-pain','mom-call-wall','mom-put-wall','mom-oi-change'].forEach((id) => {
+    const el = $(id);
+    if (el) { el.textContent = '--'; el.className = 'term-mom-value term-mom-neutral'; }
+  });
 }
 
-function updateOptionChainMetrics(data) {
-  if (!data) return;
-  
-  const pcrOiEl = $('mom-pcr-oi');
-  const pcrOI = data.pcrOI || 1;
-  pcrOiEl.textContent = pcrOI.toFixed(2);
-  pcrOiEl.className = pcrOI > 1.3 ? 'term-mom-value term-mom-bullish' : 
-                      pcrOI < 0.7 ? 'term-mom-value term-mom-bearish' : 
-                      'term-mom-value term-mom-neutral';
-  
-  const pcrVolEl = $('mom-pcr-vol');
-  const pcrVol = data.pcrVol || 1;
-  pcrVolEl.textContent = pcrVol.toFixed(2);
-  pcrVolEl.className = pcrVol > 1.2 ? 'term-mom-value term-mom-bullish' : 
-                        pcrVol < 0.8 ? 'term-mom-value term-mom-bearish' : 
-                        'term-mom-value term-mom-neutral';
-  
-  $('mom-max-pain').textContent = data.maxPain || '--';
-  $('mom-call-wall').textContent = data.callWall || '--';
-  $('mom-put-wall').textContent = data.putWall || '--';
-  
+function updateOptionChainMetrics(a) {
+  if (!a) { clearOptionChainMetrics(); return; }
+
+  // PCR (OI) — overall put/call open-interest ratio
+  const pcrEl = $('mom-pcr-oi');
+  if (pcrEl) {
+    if (a.pcr != null) {
+      const v = Number(a.pcr);
+      pcrEl.textContent = v.toFixed(2);
+      pcrEl.className = v > 1.3 ? 'term-mom-value term-mom-bullish' :
+                          v < 0.7 ? 'term-mom-value term-mom-bearish' :
+                          'term-mom-value term-mom-neutral';
+    } else { pcrEl.textContent = '--'; }
+  }
+
+  // ATM PCR
+  const atmEl = $('mom-pcr-vol');
+  if (atmEl) {
+    if (a.atm_pcr != null) {
+      const v = Number(a.atm_pcr);
+      atmEl.textContent = v.toFixed(2);
+      atmEl.className = v > 1.2 ? 'term-mom-value term-mom-bullish' :
+                          v < 0.8 ? 'term-mom-value term-mom-bearish' :
+                          'term-mom-value term-mom-neutral';
+    } else { atmEl.textContent = '--'; }
+  }
+
+  // Max Pain
+  const mpEl = $('mom-max-pain');
+  if (mpEl) mpEl.textContent = (a.max_pain != null) ? a.max_pain : '--';
+
+  // Call Wall = resistance
+  const cwEl = $('mom-call-wall');
+  if (cwEl) cwEl.textContent = (a.resistance != null) ? a.resistance : '--';
+
+  // Put Wall = support
+  const pwEl = $('mom-put-wall');
+  if (pwEl) pwEl.textContent = (a.support != null) ? a.support : '--';
+
+  // OI bias = dominant side / oi momentum
   const oiEl = $('mom-oi-change');
-  oiEl.textContent = data.oiChangeBias || '--';
-  oiEl.className = data.oiChangeBias === 'CALL' ? 'term-mom-value term-mom-bullish' : 
-                   data.oiChangeBias === 'PUT' ? 'term-mom-value term-mom-bearish' : 
-                   'term-mom-value term-mom-neutral';
+  if (oiEl) {
+    const side = (a.dominant_side || a.oi_momentum || '').toString().toUpperCase();
+    let label = side || '--';
+    let cls = 'term-mom-value term-mom-neutral';
+    if (side.indexOf('CALL') >= 0 || side.indexOf('CE') >= 0 || side.indexOf('BULL') >= 0) {
+      cls = 'term-mom-value term-mom-bullish';
+    } else if (side.indexOf('PUT') >= 0 || side.indexOf('PE') >= 0 || side.indexOf('BEAR') >= 0) {
+      cls = 'term-mom-value term-mom-bearish';
+    }
+    oiEl.textContent = label;
+    oiEl.className = cls;
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {

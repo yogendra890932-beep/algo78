@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Advanced Trading Terminal — Optiscalper</title>
-  <link rel="stylesheet" href="/static/css/terminal.css?v=20261110-2"/>
+  <link rel="stylesheet" href="/static/css/terminal.css?v=20261112-1"/>
 </head>
 <body class="term-body">
 
@@ -87,7 +87,7 @@
           <span class="term-mom-value" id="mom-pcr-oi">--</span>
         </div>
         <div class="term-mom-row">
-          <span class="term-mom-label">PCR (Vol)</span>
+          <span class="term-mom-label">ATM PCR</span>
           <span class="term-mom-value" id="mom-pcr-vol">--</span>
         </div>
         <div class="term-mom-row">
@@ -95,15 +95,15 @@
           <span class="term-mom-value" id="mom-max-pain">--</span>
         </div>
         <div class="term-mom-row">
-          <span class="term-mom-label">Call Wall</span>
+          <span class="term-mom-label">Resistance</span>
           <span class="term-mom-value" id="mom-call-wall">--</span>
         </div>
         <div class="term-mom-row">
-          <span class="term-mom-label">Put Wall</span>
+          <span class="term-mom-label">Support</span>
           <span class="term-mom-value" id="mom-put-wall">--</span>
         </div>
         <div class="term-mom-row">
-          <span class="term-mom-label">OI Change</span>
+          <span class="term-mom-label">OI Bias</span>
           <span class="term-mom-value" id="mom-oi-change">--</span>
         </div>
         
@@ -362,6 +362,6 @@ async function apiFetch(url, options = {}) {
   }
 }
 </script>
-<script src="/static/js/terminal.js?v=20261110-2"></script>
+<script src="/static/js/terminal.js?v=20261112-1"></script>
 </body>
 </html>
