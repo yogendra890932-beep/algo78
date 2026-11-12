@@ -3064,7 +3064,7 @@ function initDrawingTools() {
   }
   
   console.log("[DrawingTools] Initializing...");
-  drawingManager = new DrawingManager(state.chart.chart, state.chart.wrap);
+  drawingManager = new DrawingManager(state.chart);
   
   // Tool selection
   const tools = document.querySelectorAll(".term-draw-tool[data-tool]");
@@ -3103,222 +3103,222 @@ function initDrawingTools() {
   });
 }
 
+/* Lightweight Charts v4 drawing tools.
+   Time axis values are numeric epoch seconds (what barToLwc emits), so all
+   drawing shapes use plain numbers. coordinateToTime lives on timeScale(),
+   coordinateToPrice on a series — never on the chart object itself. */
 class DrawingManager {
-  constructor(chart, wrap) {
-    this.chart = chart;
-    this.wrap = wrap;
+  constructor(engine) {
+    // engine = LwcChart instance (has .chart and .chart.series.main).
+    this.engine = engine;
+    this.chart = engine.chart;
+    this.wrap = engine.wrap;
     this.currentTool = "cursor";
     this.drawings = [];
     this.isDrawing = false;
     this.startPoint = null;
     this.endPoint = null;
     this.activeShape = null;
-    
     this.setupInteractions();
   }
-  
+
+  _series() {
+    return (this.engine && this.engine.series && this.engine.series.main) || null;
+  }
+
+  // Normalise Time (BusinessDay | string | number) to epoch seconds.
+  _toNum(t) {
+    if (t == null) return null;
+    if (typeof t === "number") return t;
+    if (typeof t === "object" && t.year != null) {
+      return Math.floor(Date.UTC(t.year, (t.month || 1) - 1, t.day || 1,
+        t.hour || 0, t.minute || 0, t.second || 0) / 1000);
+    }
+    const n = toLwcTime(t);
+    return n == null ? null : n;
+  }
+
+  _visibleRangeTimes() {
+    // Fall back to the loaded candle span when the visible range can't resolve.
+    const candles = state.candles || [];
+    let from = candles.length ? this._toNum(toLwcTime(barTime(candles[0]))) : null;
+    let to = candles.length ? this._toNum(toLwcTime(barTime(candles[candles.length - 1]))) : null;
+    try {
+      const lr = this.chart.timeScale().getVisibleLogicalRange();
+      const ts = this.chart.timeScale();
+      if (lr && typeof ts.coordinateToTime === "function") {
+        const w = this.wrap ? this.wrap.clientWidth : 0;
+        const t1 = this._toNum(ts.coordinateToTime(4));
+        const t2 = this._toNum(ts.coordinateToTime(Math.max(4, w - 4)));
+        if (t1 != null && t2 != null) { from = t1; to = t2; }
+      }
+    } catch (e) { }
+    if (from == null || to == null) {
+      const now = Math.floor(Date.now() / 1000);
+      from = now - 86400; to = now + 86400;
+    }
+    return { from, to };
+  }
+
   setupInteractions() {
-    console.log("[DrawingManager] Setting up interactions...");
-    
     this.chart.subscribeClick((param) => {
-      console.log("[DrawingManager] Click event:", param);
-      
-      if (this.currentTool === "cursor") {
-        console.log("[DrawingManager] In cursor mode, ignoring click");
-        return;
-      }
-      if (!param.point || param.point.x === undefined) {
-        console.log("[DrawingManager] Invalid point:", param.point);
-        return;
-      }
-      
-      // Convert logical coordinate to time and price
-      const time = this.chart.coordinateToTime(param.point.x);
-      // Get the main candlestick series for price conversion
-      const mainSeries = this.series && this.series.main ? this.series.main : this.chart.series();
-      const price = mainSeries && mainSeries.coordinateToPrice ? mainSeries.coordinateToPrice(param.point.y) : null;
-      
-      if (time === null || price === null) {
-        console.log("[DrawingManager] Could not convert coordinates - time:", time, "price:", price);
-        return;
-      }
-      
-      console.log("[DrawingManager] Click at time:", time, "price:", price, "tool:", this.currentTool);
-      
+      if (this.currentTool === "cursor") return;
+      if (!param || !param.point) return;
+      const x = param.point.x, y = param.point.y;
+      if (x == null || y == null) return;
+
+      let time = null;
+      try { time = this._toNum(this.chart.timeScale().coordinateToTime(x)); } catch (e) { }
+      const s = this._series();
+      let price = null;
+      try { if (s && s.coordinateToPrice) price = s.coordinateToPrice(y); } catch (e) { }
+      if (time == null || price == null) return;
+
       if (!this.isDrawing) {
-        // Start drawing
-        console.log("[DrawingManager] Starting drawing");
         this.isDrawing = true;
         this.startPoint = { time, price };
         this.createShape(time, price);
       } else {
-        // Finish drawing
-        console.log("[DrawingManager] Finishing drawing");
         this.endPoint = { time, price };
         this.finishShape(time, price);
         this.isDrawing = false;
         this.startPoint = null;
         this.endPoint = null;
-        
-        // Auto-switch back to cursor after completing a drawing (except fibonacci)
-        if (this.currentTool !== "fibonacci") {
-          this.setTool("cursor");
-          document.querySelectorAll(".term-draw-tool").forEach(b => b.classList.remove("active"));
-          const cursorBtn = document.querySelector('.term-draw-tool[data-tool="cursor"]');
-          if (cursorBtn) cursorBtn.classList.add("active");
-        }
+        if (this.currentTool !== "fibonacci") this._resetToCursor();
       }
     });
-    
-    console.log("[DrawingManager] Click handler registered");
   }
-  
+
+  _resetToCursor() {
+    this.setTool("cursor");
+    document.querySelectorAll(".term-draw-tool").forEach((b) => b.classList.remove("active"));
+    const c = document.querySelector('.term-draw-tool[data-tool="cursor"]');
+    if (c) c.classList.add("active");
+  }
+
   createShape(time, price) {
-    const C = LightweightCharts;
-    
-    // Convert time to proper format for Lightweight Charts
-    const timeObj = new Date(time * 1000);
-    const formattedTime = {
-      year: timeObj.getUTCFullYear(),
-      month: timeObj.getUTCMonth() + 1,
-      day: timeObj.getUTCDate(),
-      hour: timeObj.getUTCHours(),
-      minute: timeObj.getUTCMinutes(),
-      second: timeObj.getUTCSeconds()
-    };
-    
-    console.log("[DrawingManager] Creating shape with time:", formattedTime, "price:", price);
-    
     switch (this.currentTool) {
       case "trendline":
       case "ray":
         this.activeShape = this.chart.addLineSeries({
-          color: "#f59e0b",
-          lineWidth: 2,
-          crosshairMarkerVisible: false,
-          priceLineVisible: false,
-          lastValueVisible: false,
+          color: "#f59e0b", lineWidth: 2,
+          crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false
         });
-        this.activeShape.setData([
-          { time: formattedTime, value: price },
-          { time: formattedTime, value: price }
-        ]);
-        break;
-        
-      case "horizontal":
-        this.activeShape = this.chart.addLineSeries({
-          color: "#22d3ee",
-          lineWidth: 2,
-          lineStyle: 2,
-          crosshairMarkerVisible: false,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        });
-        const startTime = this.getChartStartTime();
-        const endTime = this.getChartEndTime();
-        this.activeShape.setData([
-          { time: startTime, value: price },
-          { time: endTime, value: price }
-        ]);
-        break;
-        
-      case "vertical":
-        this.activeShape = null;
-        break;
-        
-      case "fibonacci":
-        this.drawFibonacci(time, price);
-        break;
-    }
-    
-    if (this.activeShape) {
-      this.drawings.push(this.activeShape);
-    }
-  }
-  
-  finishShape(time, price) {
-    if (!this.activeShape) return;
-    
-    switch (this.currentTool) {
-      case "trendline":
-      case "ray":
         this.activeShape.setData([
           { time: this.startPoint.time, value: this.startPoint.price },
-          { time, value: price }
+          { time: this.startPoint.time, value: this.startPoint.price }
         ]);
+        this.drawings.push(this.activeShape);
+        break;
+
+      case "horizontal":
+        this.activeShape = this.chart.addLineSeries({
+          color: "#22d3ee", lineWidth: 2, lineStyle: 2,
+          crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false
+        });
+        {
+          const r = this._visibleRangeTimes();
+          this.activeShape.setData([
+            { time: r.from, value: price },
+            { time: r.to, value: price }
+          ]);
+        }
+        this.drawings.push(this.activeShape);
+        this.activeShape = null;
+        this.isDrawing = false;
+        this._resetToCursor();
+        break;
+
+      case "vertical": {
+        // Vertical marker: a 2-point line spanning the visible price band.
+        const candles = state.candles || [];
+        let maxP = -Infinity, minP = Infinity;
+        for (const c of candles) {
+          if (c.high > maxP) maxP = +c.high;
+          if (c.low < minP) minP = +c.low;
+        }
+        if (!isFinite(maxP) || !isFinite(minP)) { maxP = price * 1.05; minP = price * 0.95; }
+        this.activeShape = this.chart.addLineSeries({
+          color: "#a855f7", lineWidth: 2, lineStyle: 2,
+          crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false
+        });
+        // Two points cannot share identical time; nudge by 1s each side.
+        this.activeShape.setData([
+          { time: time - 1, value: minP },
+          { time: time + 1, value: maxP }
+        ]);
+        this.drawings.push(this.activeShape);
+        this.activeShape = null;
+        this.isDrawing = false;
+        this._resetToCursor();
+        break;
+      }
+
+      case "fibonacci":
+        this.drawFibonacci(time, price);
+        this.activeShape = null;
+        this.isDrawing = false;
+        this._resetToCursor();
         break;
     }
-    
+  }
+
+  finishShape(time, price) {
+    if (!this.activeShape) return;
+    if (this.currentTool === "trendline" || this.currentTool === "ray") {
+      this.activeShape.setData([
+        { time: this.startPoint.time, value: this.startPoint.price },
+        { time: time, value: price }
+      ]);
+    }
     this.activeShape = null;
   }
-  
-  drawFibonacci(time, price) {
+
+  drawFibonacci(startTime, startPrice) {
     const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
     const colors = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#6366f1"];
-    
-    levels.forEach((level, i) => {
-      const levelPrice = price;
+    const r = this._visibleRangeTimes();
+    // Anchor fibs on the visible band around the click price.
+    const candles = state.candles || [];
+    let maxP = -Infinity, minP = Infinity;
+    for (const c of candles) {
+      if (+c.high > maxP) maxP = +c.high;
+      if (+c.low < minP) minP = +c.low;
+    }
+    if (!isFinite(maxP) || !isFinite(minP)) { maxP = startPrice * 1.05; minP = startPrice * 0.95; }
+    const span = maxP - minP || (startPrice * 0.02);
+    levels.forEach((lvl, i) => {
+      const p = maxP - span * lvl;
       const line = this.chart.addLineSeries({
-        color: colors[i],
-        lineWidth: 1,
-        lineStyle: i === 0 || i === levels.length - 1 ? 0 : 2,
-        crosshairMarkerVisible: false,
-        priceLineVisible: false,
-        lastValueVisible: false,
+        color: colors[i], lineWidth: 1,
+        lineStyle: (i === 0 || i === levels.length - 1) ? 0 : 2,
+        crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: false
       });
-      line.setData([
-        { time: this.getChartStartTime(), value: levelPrice },
-        { time: this.getChartEndTime(), value: levelPrice }
-      ]);
+      line.setData([{ time: r.from, value: p }, { time: r.to, value: p }]);
       this.drawings.push(line);
     });
   }
-  
-  getChartStartTime() {
-    const now = new Date();
-    const startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    return {
-      year: startTime.getUTCFullYear(),
-      month: startTime.getUTCMonth() + 1,
-      day: startTime.getUTCDate(),
-      hour: startTime.getUTCHours(),
-      minute: startTime.getUTCMinutes(),
-      second: startTime.getUTCSeconds()
-    };
-  }
-  
-  getChartEndTime() {
-    const now = new Date();
-    const endTime = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    return {
-      year: endTime.getUTCFullYear(),
-      month: endTime.getUTCMonth() + 1,
-      day: endTime.getUTCDate(),
-      hour: endTime.getUTCHours(),
-      minute: endTime.getUTCMinutes(),
-      second: endTime.getUTCSeconds()
-    };
-  }
-  
+
   setTool(tool) {
     this.currentTool = tool;
     this.isDrawing = false;
     this.startPoint = null;
     this.endPoint = null;
     this.activeShape = null;
-    
-    if (tool === "cursor") {
-      this.chart.applyOptions({ crosshair: { mode: LightweightCharts.CrosshairMode.Normal } });
-    } else {
-      this.chart.applyOptions({ crosshair: { mode: LightweightCharts.CrosshairMode.Magnet } });
-    }
+    try {
+      this.chart.applyOptions({
+        crosshair: { mode: tool === "cursor" ? LightweightCharts.CrosshairMode.Normal : LightweightCharts.CrosshairMode.Magnet }
+      });
+    } catch (e) { }
   }
-  
+
   clearAll() {
-    this.drawings.forEach(shape => {
-      try { this.chart.removeSeries(shape); } catch (e) {}
-    });
+    this.drawings.forEach((shape) => { try { this.chart.removeSeries(shape); } catch (e) { } });
     this.drawings = [];
+    this.isDrawing = false;
+    this.activeShape = null;
+    this.startPoint = null;
+    this.endPoint = null;
   }
 }
 
